@@ -51,10 +51,6 @@ export default {
     ],
     script: [
       {
-        type: "text/javascript",
-        src: "js/tailwindcss.js",
-      },
-      {
         src: "https://www.googletagmanager.com/gtag/js?id=G-LXD5LJXP2Y",
         async: true,
       },
@@ -80,7 +76,12 @@ export default {
   },
 
   // Global CSS: https://go.nuxtjs.dev/config-css
-  css: ["@/assets/sass/global.scss", "@/assets/sass/base.scss"],
+  css: [
+    "@/assets/sass/global.scss",
+    "@/assets/sass/base.scss",
+    // Last, so utilities win ties the way the old runtime-injected CDN did.
+    "@/assets/css/tailwind.css",
+  ],
 
   // Plugins to run before rendering page: https://go.nuxtjs.dev/config-plugins
   plugins: [
@@ -149,6 +150,12 @@ export default {
 
   // Build Configuration: https://go.nuxtjs.dev/config-build
   build: {
+    postcss: {
+      plugins: {
+        tailwindcss: {},
+        autoprefixer: {},
+      },
+    },
     extend(config) {
       config.module.rules.push({
         test: /\.md$/i,
