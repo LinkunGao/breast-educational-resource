@@ -33,7 +33,7 @@ export default {
   },
   computed: {
     mdAndUp() {
-      return this.$vuetify.breakpoint.mdAndUp;
+      return this.$breakpoint.mdAndUp;
     },
   },
   components: { PanelControls },

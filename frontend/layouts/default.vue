@@ -53,7 +53,7 @@ export default {
   computed: {
     mdAndUp() {
       // this.loadApp = false;
-      return this.$vuetify.breakpoint.mdAndUp;
+      return this.$breakpoint.mdAndUp;
     },
   },
 

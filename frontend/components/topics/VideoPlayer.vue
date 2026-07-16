@@ -3,7 +3,7 @@
     <div
       v-if="videoFound"
       class="container-default video-player flexbox --vertical"
-      :class="$vuetify.breakpoint.mdAndUp ? 'full-height' : ''"
+      :class="$breakpoint.mdAndUp ? 'full-height' : ''"
     >
       <div class="video-player-container">
         <video :src="selectedVideo.link" autoplay controls></video>
@@ -79,9 +79,9 @@ export default {
       this.$emit("close-video");
     },
     getVideoStyle() {
-      return this.$vuetify.breakpoint.mdAndUp
+      return this.$breakpoint.mdAndUp
         ? "display-video"
-        : "display-video --" + this.$vuetify.breakpoint.name;
+        : "display-video --" + this.$breakpoint.name;
     },
   },
 

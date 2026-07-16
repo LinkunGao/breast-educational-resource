@@ -4,7 +4,7 @@
     <div
       v-if="section == 'team'"
       class="container-default research-page flexbox --vertical"
-      :class="$vuetify.breakpoint.mdAndUp ? 'full-height' : ''"
+      :class="$breakpoint.mdAndUp ? 'full-height' : ''"
     >
       <div class="pt-1 heading">
         <h3 class="heading__main">Our Team</h3>
@@ -31,7 +31,7 @@ export default {
   },
   computed: {
     mdAndUp() {
-      return this.$vuetify.breakpoint.mdAndUp;
+      return this.$breakpoint.mdAndUp;
     },
   },
   created() {

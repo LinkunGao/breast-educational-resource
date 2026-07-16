@@ -3,7 +3,7 @@
     <v-overlay
       color="black"
       :value="showVideo"
-      :absolute="$vuetify.breakpoint.mdAndUp ? true : false"
+      :absolute="$breakpoint.mdAndUp ? true : false"
       opacity="1"
     >
       <div>
@@ -31,7 +31,7 @@ export default {
     closeVideo() {
       this.showVideo = false;
       /* Scroll back to the point where user clicked on video icon - for small devices */
-      if (!this.$vuetify.breakpoint.mdAndUp)
+      if (!this.$breakpoint.mdAndUp)
         this.$vuetify.goTo(this.lastOffset, {});
     },
   },

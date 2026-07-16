@@ -33,7 +33,7 @@ export default {
       return "bg-pink-success";
     },
     panelHeightStyle() {
-      if (this.$vuetify.breakpoint.mdAndUp) {
+      if (this.$breakpoint.mdAndUp) {
         this.$nuxt.$emit("panel-height", this.panelHeight);
         return {
           "min-height": this.panelHeight - 2 + "px",

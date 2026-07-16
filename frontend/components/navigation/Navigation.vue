@@ -2,7 +2,7 @@
   <div class="navi">
     <div
       v-if="subMenuActive"
-      :class="$vuetify.breakpoint.smAndDown ? 'sub-menu' : ''"
+      :class="$breakpoint.smAndDown ? 'sub-menu' : ''"
     >
       <v-bottom-navigation
         grow
@@ -23,7 +23,7 @@
     </div>
     <v-bottom-navigation
       grow
-      :fixed="$vuetify.breakpoint.smAndDown ? true : false"
+      :fixed="$breakpoint.smAndDown ? true : false"
       :color="activeColor"
       v-model="menuCaption"
     >
@@ -91,7 +91,7 @@ export default {
       return this.$route.name === "slug" ? this.$parentTopic().slug : "about";
     },
     mdAndUp() {
-      return this.$vuetify.breakpoint.mdAndUp;
+      return this.$breakpoint.mdAndUp;
     },
   },
 
