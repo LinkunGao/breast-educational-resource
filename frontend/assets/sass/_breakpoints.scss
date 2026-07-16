@@ -1,0 +1,22 @@
+// Own breakpoint map, replacing the one Vuetify's styles.sass provided.
+// Same keys and values as before, so existing
+//   @media #{map-get($display-breakpoints, 'sm-and-down')}
+// call sites keep working untouched.
+//
+// Values are the single source of truth alongside tailwind.config.js
+// theme.screens and plugins/breakpoint.js — keep all three in sync.
+//   sm: 600px   md: 960px   lg: 1264px   xl: 1904px
+
+$display-breakpoints: (
+  "xs-only": "only screen and (max-width: 599.98px)",
+  "sm-only": "only screen and (min-width: 600px) and (max-width: 959.98px)",
+  "sm-and-down": "only screen and (max-width: 959.98px)",
+  "sm-and-up": "only screen and (min-width: 600px)",
+  "md-only": "only screen and (min-width: 960px) and (max-width: 1263.98px)",
+  "md-and-down": "only screen and (max-width: 1263.98px)",
+  "md-and-up": "only screen and (min-width: 960px)",
+  "lg-only": "only screen and (min-width: 1264px) and (max-width: 1903.98px)",
+  "lg-and-down": "only screen and (max-width: 1903.98px)",
+  "lg-and-up": "only screen and (min-width: 1264px)",
+  "xl-only": "only screen and (min-width: 1904px)",
+);

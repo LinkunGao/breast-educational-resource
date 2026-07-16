@@ -1,6 +1,9 @@
 // Ref: https://github.com/nuxt-community/vuetify-module#customvariables
 @import url("https://fonts.googleapis.com/css2?family=Inria+Sans:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&display=swap");
 @import "~vuetify/src/styles/styles.sass";
+// Overrides Vuetify's $display-breakpoints with our own (same values).
+// The Vuetify import above goes away once Vuetify itself is removed.
+@import "./breakpoints";
 
 /* These are Vuetify SASS variables, modified as needed here */
 
