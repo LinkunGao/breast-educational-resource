@@ -13,24 +13,18 @@
         <div class="credits flexbox">
           <img src="" class="img-icon" />
           <div class="credit-button flexbox --vertical">
-            <div class="annie-liz flexbox d-none d-sm-block">
+            <div class="annie-liz flexbox hidden sm:block">
               <span>{{ credits1 }} {{ credits2 }}</span>
             </div>
             <div class="button">
-              <v-btn
-                class="bg-secondary"
-                elevation="8"
-                small
-                block
-                @click="close"
-              >
+              <button class="btn-close bg-secondary" @click="close">
                 <span> Click to Close</span>
-              </v-btn>
+              </button>
             </div>
           </div>
           <img src="" class="img-icon" />
         </div>
-        <div class="pt-2 annie-liz flexbox d-sm-none">
+        <div class="pt-2 annie-liz flexbox sm:hidden">
           <span>{{ credits1 }}<br />{{ credits2 }}</span>
         </div>
       </div>

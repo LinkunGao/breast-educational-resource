@@ -1,7 +1,7 @@
 <template>
   <div ref="base_background" class="app-root select-none p-0 m-0">
     <div class="app-wrap">
-      <div class="rightPanel pa-0">
+      <div class="rightPanel p-0">
         <Nuxt />
       </div>
       <div

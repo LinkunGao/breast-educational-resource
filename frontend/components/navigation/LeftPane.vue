@@ -1,6 +1,6 @@
 <template>
   <div class="left-pane">
-    <div class="sm-logo d-md-none">
+    <div class="sm-logo md:hidden">
       <logo />
     </div>
     <div v-if="$route.name == 'slug'">

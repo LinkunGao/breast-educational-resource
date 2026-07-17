@@ -1,11 +1,11 @@
 <template>
-  <div class="pa-2">
+  <div class="p-2">
     <div class="flexbox demo-head pl-3">
       <div>
         <h1 class="pt-2 main-heading">
           {{ $parentTopic().heading }}
         </h1>
-        <h4 :class="'sub-heading font-weight-black ' + $subTitle() + '--text'">
+        <h4 class="sub-heading font-black" :style="{ color: subTitleColor }">
           {{ $heading() }}
         </h4>
       </div>
@@ -13,7 +13,7 @@
     <div
       v-if="fileFound"
       ref="markedDiv"
-      class="pt-2 pt-xl-4 marked"
+      class="pt-2 xl:pt-4 marked"
       v-html="markedText"
     ></div>
     <div v-if="!fileFound" class="error-message">
@@ -25,6 +25,7 @@
 <script>
 import { marked } from "marked";
 import LeftModel from "../model/LeftModel.vue";
+import themeColors from "~/theme-colors";
 
 export default {
   name: "Panel",
@@ -92,6 +93,12 @@ export default {
   computed: {
     markedText() {
       return marked(this.currentPanel);
+    },
+    // Was `${$subTitle()}--text`, a Vuetify colour class; topics.json stores
+    // the name, so resolve it to a value here.
+    subTitleColor() {
+      const name = this.$subTitle();
+      return themeColors[name] || name;
     },
   },
 

@@ -1,15 +1,14 @@
 <template>
   <div id="video-div">
-    <v-overlay
-      color="black"
-      :value="showVideo"
-      :absolute="$breakpoint.mdAndUp ? true : false"
-      opacity="1"
+    <div
+      v-if="showVideo"
+      class="video-overlay"
+      :class="$breakpoint.mdAndUp ? 'is-absolute' : 'is-fixed'"
     >
       <div>
         <video-player :videoId="currentVideoId" @close-video="closeVideo()" />
       </div>
-    </v-overlay>
+    </div>
   </div>
 </template>
 
@@ -32,7 +31,7 @@ export default {
       this.showVideo = false;
       /* Scroll back to the point where user clicked on video icon - for small devices */
       if (!this.$breakpoint.mdAndUp)
-        this.$vuetify.goTo(this.lastOffset, {});
+        window.scrollTo({ top: this.lastOffset, behavior: "smooth" });
     },
   },
   mounted() {
@@ -52,5 +51,25 @@ export default {
 #video-div {
   width: 100vw;
   height: 100vh;
+}
+
+/* Ports <v-overlay color="black" opacity="1">: full-bleed black scrim,
+   absolute on desktop and fixed on mobile as the :absolute prop did. */
+.video-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #000;
+  z-index: 5;
+}
+.is-absolute {
+  position: absolute;
+}
+.is-fixed {
+  position: fixed;
 }
 </style>

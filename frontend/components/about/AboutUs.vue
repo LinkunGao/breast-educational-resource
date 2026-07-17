@@ -1,5 +1,5 @@
 <template>
-  <div class="pa-2">
+  <div class="p-2">
     <h1 class="pt-2 main-heading">About Us</h1>
     <div class="about-panel">
       <div class="navigate flexbox --vertical lg:-mt-10">
@@ -15,10 +15,12 @@
           class="button"
           :class="teamSelected ? 'button --active' : 'button --inactive'"
         >
-          <v-btn plain @click="toggleNavigation('team')"> Our Team </v-btn>
+          <button class="btn-plain" @click="toggleNavigation('team')">
+            Our Team
+          </button>
         </div>
       </div>
-      <div class="feedback font-weight-medium text--primary">
+      <div class="feedback font-medium">
         Visit our
         <a
           href="https://docs.google.com/forms/d/e/1FAIpQLScsab93B7uPg389gxCNfCSgG4sMNIFk_mxDFTFF_-UC2TcSJQ/viewform?usp=sf_link"
@@ -30,10 +32,10 @@
 
       <div>
         <div class="mx-auto contributor" max-width="344">
-          <v-card-text>
+          <div class="p-4">
             <!-- <div class="text-h6 text--darken-6">Website Developers</div>
             <div class="text--darken-4 pl-6">Members Here <br /></div> -->
-          </v-card-text>
+          </div>
         </div>
       </div>
     </div>
@@ -64,6 +66,33 @@ export default {
 </script>
 
 <style scoped lang="scss">
+/* Ports <v-btn plain>: v-btn's 36px/14px/500 uppercase metrics, with
+   v-btn--plain's transparent background and 0.62 content opacity. */
+.btn-plain {
+  height: 36px;
+  min-width: 64px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: 0.0892857143em;
+  text-transform: uppercase;
+  opacity: 0.62;
+  transition: opacity 0.2s;
+
+  &:hover,
+  &:focus-visible {
+    opacity: 1;
+  }
+}
+
 .navigate {
   padding-top: 4rem;
   padding-bottom: 2rem;
