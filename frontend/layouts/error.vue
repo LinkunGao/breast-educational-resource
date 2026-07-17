@@ -1,6 +1,6 @@
 <template>
-  <v-app dark>
-    <div class="show-error secondary pa-10">
+  <div class="error-root">
+    <div class="show-error p-10">
       <h1 v-if="error.statusCode === 404">
         {{ pageNotFound }}
       </h1>
@@ -8,11 +8,11 @@
         {{ otherError }}
       </h1>
       <span>
-        Please visit 
+        Please visit
         <NuxtLink to="/">Home page</NuxtLink>
       </span>
     </div>
-  </v-app>
+  </div>
 </template>
 
 <script>
@@ -42,10 +42,21 @@ export default {
 
 <style scoped>
 
+/* Ports what <v-app dark> supplied. `secondary` was a Vuetify colour class
+   that only resolved under a .v-application ancestor. */
+.error-root{
+  display:flex;
+  min-height:100vh;
+  background:#121212;
+  color:#ffffff;
+  font-family:"Helvetica", sans-serif;
+  line-height:1.2;
+}
 .show-error{
   margin: auto;
   text-align:center;
   width:80%;
+  background:#7d1e7d;
 }
 h1{
   font-size: 1.5rem;

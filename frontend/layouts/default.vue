@@ -1,37 +1,37 @@
 <template>
-  <v-app ref="base_background" class="select-none p-0 m-0">
-    <div class="rightPanel pa-0">
-      <Nuxt />
-    </div>
-    <div
-      class="firefox"
-      :class="mdAndUp ? 'outer-large' : 'outer-small'"
-      ref="leftPanel"
-    >
-      <v-row class="flex" no-gutters>
-        <div class="p-0 w-full" :class="mdAndUp ? 'full-height' : ''">
-            <v-row class="d-flex flex-column" no-gutters>
-              <v-col ref="panel" class="out-card">
-                <v-card
-                  outlined
-                  tile
-                  class="p-0 transparent"
+  <div ref="base_background" class="app-root select-none p-0 m-0">
+    <div class="app-wrap">
+      <div class="rightPanel pa-0">
+        <Nuxt />
+      </div>
+      <div
+        class="firefox"
+        :class="mdAndUp ? 'outer-large' : 'outer-small'"
+        ref="leftPanel"
+      >
+        <div class="row-x flex">
+          <div class="p-0 w-full" :class="mdAndUp ? 'full-height' : ''">
+            <div class="row-x flex flex-col">
+              <div ref="panel" class="col-x out-card">
+                <div
+                  class="card-x p-0 transparent"
                   :class="mdAndUp ? 'panel-height' + multiplier : ''"
                 >
                   <left-pane :panel-height="panelHeight" />
-                </v-card>
-              </v-col>
-              <v-col class="d-none d-md-block fix-it">
+                </div>
+              </div>
+              <div class="col-x hidden md:block fix-it">
                 <navigation />
-              </v-col>
-            </v-row>
+              </div>
+            </div>
           </div>
-      </v-row>
-      <div class="flex fixed md:hidden left-0 bottom-0">
-        <navigation />
+        </div>
+        <div class="flex fixed md:hidden left-0 bottom-0">
+          <navigation />
+        </div>
       </div>
     </div>
-  </v-app>
+  </div>
 </template>
 
 <script>
@@ -54,7 +54,7 @@ export default {
 
   mounted() {
     // this.panelHeight = this.$refs.panel.clientHeight;
-    const base_background = this.$refs.base_background.$el;
+    const base_background = this.$refs.base_background;
     const Copper = this.$Copper();
 
     const updateFullscreen = () => {
@@ -99,6 +99,47 @@ export default {
 </script>
 
 <style scoped lang="scss">
+
+/* Ports of the Vuetify rules the removed <v-app>/<v-row>/<v-col>/<v-card>
+   used to supply. Kept 1:1 so the layout does not shift.
+   .rightPanel's `order: 2` depends on .app-wrap being a flex column. */
+.app-root {
+  display: flex;
+  position: relative;
+  background: #121212;
+  color: #ffffff;
+  font-family: "Helvetica", sans-serif;
+  line-height: 1.2;
+}
+
+.app-wrap {
+  flex: 1 1 auto;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  max-width: 100%;
+  position: relative;
+}
+
+.row-x {
+  display: flex;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+}
+
+.col-x {
+  flex-basis: 0;
+  flex-grow: 1;
+  max-width: 100%;
+}
+
+.card-x {
+  position: relative;
+  border: thin solid rgba(255, 255, 255, 0.12);
+  border-radius: 0;
+}
 
 .outer-large {
   min-width: 499px;
