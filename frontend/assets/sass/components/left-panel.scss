@@ -26,6 +26,25 @@
   position: relative;
 }
 
+/* Was an inline :style computed from $breakpoint, so the pre-rendered markup
+   carried the phone height until JS measured the viewport. */
+.panel-slug-fill {
+  height: 24rem;
+
+  @media #{map-get($display-breakpoints, "md-and-up")} {
+    height: auto;
+    min-height: 100%;
+  }
+}
+
+.panel-about-fill {
+  height: 100%;
+
+  @media #{map-get($display-breakpoints, "md-and-up")} {
+    min-height: 100%;
+  }
+}
+
 p {
   display: flex;
   flex-direction: row;

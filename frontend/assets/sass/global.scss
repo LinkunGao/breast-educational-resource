@@ -26,6 +26,20 @@ canvas {
   padding: 0;
 }
 
+/* Media-query twin of .full-height. Layout that depends on width must be
+   decided in CSS, not by reading window.innerWidth in JS: this app is
+   pre-rendered, so at build time there is no window, every page ships with
+   the phone layout baked in, and the desktop layout only appears once JS
+   hydrates. That flip is the "page deforms for a few seconds" symptom. */
+.md-full-height {
+  @media #{map-get($display-breakpoints, "md-and-up")} {
+    min-height: 100vh;
+    max-height: 100vh;
+    margin: 0;
+    padding: 0;
+  }
+}
+
 .auto-height {
   height: auto;
 }

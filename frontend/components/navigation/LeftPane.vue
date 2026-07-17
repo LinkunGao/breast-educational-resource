@@ -5,12 +5,12 @@
     </div>
     <div v-if="$route.name == 'slug'">
       <!-- currentBg  -->
-      <div :class="currentBg" :style="panelHeightStyle">
+      <div :class="[currentBg, 'panel-slug-fill']">
         <LeftModel />
       </div>
     </div>
     <div v-if="$route.name == 'about'">
-      <div class="p-4 bg-secondary" :style="panelHeightStyle">
+      <div class="p-4 bg-secondary panel-about-fill">
         <lazy-about-us />
       </div>
     </div>
@@ -32,15 +32,20 @@ export default {
       // return this.$category() ? "bg-" + this.$category() : "bg-pink-success";
       return "bg-pink-success";
     },
-    panelHeightStyle() {
-      if (this.$breakpoint.mdAndUp) {
-        this.$nuxt.$emit("panel-height", this.panelHeight);
-        return {
-          "min-height": this.panelHeight - 2 + "px",
-        };
-      }else if(this.$route.name === 'about'){
-        return { height: "100%" };
-      } else return { height: "24rem" };
+  },
+
+  watch: {
+    // The panel's own size is CSS now. This only forwards the measured pixel
+    // height, which LeftModel needs because copper sizes its canvas in px.
+    // It used to be emitted from inside a computed, which meant a render
+    // side effect firing on every re-evaluation.
+    panelHeight: {
+      immediate: true,
+      handler(height) {
+        if (process.client && this.$breakpoint.mdAndUp) {
+          this.$nuxt.$emit("panel-height", height);
+        }
+      },
     },
   },
 };

@@ -1,6 +1,6 @@
 <template>
   <div class="navi">
-    <div v-if="subMenuActive" :class="$breakpoint.smAndDown ? 'sub-menu' : ''">
+    <div v-if="subMenuActive" class="sub-menu">
       <div class="flex w-full">
         <nuxt-link
           v-for="(subTopic, index) in selectedTopic.subTopics"
@@ -16,15 +16,12 @@
       </div>
     </div>
 
-    <div class="flex w-full" :class="$breakpoint.smAndDown ? 'nav-fixed' : ''">
+    <div class="flex w-full nav-main">
       <nuxt-link
         v-for="(topic, index) in topics"
         :key="index"
         class="button-default"
-        :class="[
-          mdAndUp ? '' : 'btn-sm',
-          $isTopicDisabled(topic) ? 'is-disabled' : '',
-        ]"
+        :class="$isTopicDisabled(topic) ? 'is-disabled' : ''"
         :style="{ color: menuCaption === index ? activeColor : inactiveColor }"
         :to="{
           name: 'slug',
@@ -38,7 +35,6 @@
 
       <nuxt-link
         class="button-default"
-        :class="mdAndUp ? '' : 'btn-sm'"
         :style="{ color: menuCaption === 'about' ? activeColor : inactiveColor }"
         :to="{ name: 'about' }"
         @click.native="updateAbout()"
@@ -87,9 +83,6 @@ export default {
     menuCaption() {
       return this.$route.name === "slug" ? this.$parentTopic().slug : "about";
     },
-    mdAndUp() {
-      return this.$breakpoint.mdAndUp;
-    },
   },
 
   watch: {
@@ -118,21 +111,27 @@ export default {
   width: 100%;
 }
 
+/* These three used to be toggled from $breakpoint in the template, which
+   made the pre-rendered markup phone-shaped for everyone until JS ran.
+   Media queries decide them at first paint instead. */
 .sub-menu {
-  position: fixed;
-  bottom: 56px;
-  width: 100%;
+  @media #{map-get($display-breakpoints, "sm-and-down")} {
+    position: fixed;
+    bottom: 56px;
+    width: 100%;
+  }
 }
 
-.nav-fixed {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  z-index: 4;
+.nav-main {
+  @media #{map-get($display-breakpoints, "sm-and-down")} {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    z-index: 4;
+  }
 }
 
 .button-default {
-  flex: 1 1 0%;
   min-width: 0;
   height: 56px;
   display: flex;
@@ -152,6 +151,15 @@ export default {
   );
   border-left: 2px rgb(5, 5, 5) solid;
   transition: color 0.2s;
+
+  /* was the `btn-sm` class, toggled from JS */
+  flex: 0 0 auto;
+  width: 100px;
+
+  @media #{map-get($display-breakpoints, "md-and-up")} {
+    flex: 1 1 0%;
+    width: auto;
+  }
 }
 
 .nav-icon {
@@ -167,11 +175,5 @@ export default {
 .is-disabled {
   pointer-events: none;
   opacity: 0.4;
-}
-
-.btn-sm {
-  flex: 0 0 auto;
-  width: 100px;
-  min-width: 0;
 }
 </style>

@@ -4,18 +4,14 @@
       <div class="rightPanel p-0">
         <Nuxt />
       </div>
-      <div
-        class="firefox"
-        :class="mdAndUp ? 'outer-large' : 'outer-small'"
-        ref="leftPanel"
-      >
+      <div class="firefox left-outer" ref="leftPanel">
         <div class="row-x flex">
-          <div class="p-0 w-full" :class="mdAndUp ? 'full-height' : ''">
+          <div class="p-0 w-full md-full-height">
             <div class="row-x flex flex-col">
               <div ref="panel" class="col-x out-card">
                 <div
                   class="card-x p-0 transparent"
-                  :class="mdAndUp ? 'panel-height' + multiplier : ''"
+                  :class="'panel-height' + multiplier"
                 >
                   <left-pane :panel-height="panelHeight" />
                 </div>
@@ -44,12 +40,6 @@ export default {
       panelHeight: 0,
       isVideo: true,
     };
-  },
-
-  computed: {
-    mdAndUp() {
-      return this.$breakpoint.mdAndUp;
-    },
   },
 
   mounted() {
@@ -141,15 +131,18 @@ export default {
   border-radius: 0;
 }
 
-.outer-large {
-  min-width: 499px;
-  width: 30vw;
-  position: fixed;
-  top: 0;
-  left: 0;
-}
-.outer-small {
+/* Was `mdAndUp ? 'outer-large' : 'outer-small'`. Decided in CSS now so the
+   pre-rendered HTML is correct at first paint on any width. */
+.left-outer {
   width: 100vw;
+
+  @media #{map-get($display-breakpoints, "md-and-up")} {
+    min-width: 499px;
+    width: 30vw;
+    position: fixed;
+    top: 0;
+    left: 0;
+  }
 }
 .firefox {
   z-index: 1;
@@ -160,11 +153,15 @@ export default {
   bottom: 0;
 }
 
-.panel-height1 {
-  height: calc(100vh - 56px);
-}
-.panel-height2 {
-  height: calc(100vh - 112px);
+/* multiplier tracks whether the sub-menu is open, which is app state rather
+   than viewport width, so it stays in JS. The md gate moves to CSS. */
+@media #{map-get($display-breakpoints, "md-and-up")} {
+  .panel-height1 {
+    height: calc(100vh - 56px);
+  }
+  .panel-height2 {
+    height: calc(100vh - 112px);
+  }
 }
 .transparent {
   margin: 0;

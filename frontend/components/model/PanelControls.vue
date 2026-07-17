@@ -9,7 +9,7 @@
       <div class="w-11/12 text-justify" v-html="rightPanelText[modelName]"></div>
     </div>
 
-    <div ref="rightContainer" class="w-full h-full" :class="mdAndUp ? 'baseDom-md' : 'baseDom-sm'">
+    <div ref="rightContainer" class="w-full h-full baseDom">
     </div>
   </div>
 </template>
@@ -79,11 +79,6 @@ export default {
         ]
       },
     };
-  },
-  computed: {
-    mdAndUp() {
-      return this.$breakpoint.mdAndUp;
-    },
   },
   mounted() {
     this.Copper = this.$Copper();
@@ -309,16 +304,17 @@ box-shadow:  5px 5px 10px #e4949e,
   }
 }
 
-.baseDom-md {
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-}
-.baseDom-sm {
+/* Was `mdAndUp ? 'baseDom-md' : 'baseDom-sm'`: square on phones, fills the
+   fixed right panel on desktop. */
+.baseDom {
   width: 100vw;
   height: 100vw;
   margin: 0;
   padding: 0;
+
+  @media #{map-get($display-breakpoints, "md-and-up")} {
+    width: 100%;
+    height: 100%;
+  }
 }
 </style>

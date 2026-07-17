@@ -1,10 +1,9 @@
 <template>
-  <div :class="mdAndUp ? 'aboutPanel-l' : 'aboutPanel-s'">
-    
+  <div class="aboutPanel">
+
     <div
       v-if="section == 'team'"
-      class="container-default research-page flexbox --vertical"
-      :class="$breakpoint.mdAndUp ? 'full-height' : ''"
+      class="container-default research-page flexbox --vertical md-full-height"
     >
       <div class="pt-1 heading">
         <h3 class="heading__main">Our Team</h3>
@@ -28,11 +27,6 @@ export default {
     return {
       section: "team",
     };
-  },
-  computed: {
-    mdAndUp() {
-      return this.$breakpoint.mdAndUp;
-    },
   },
   created() {
     // this.$nuxt.$on("about-navigation", (componentName) => {

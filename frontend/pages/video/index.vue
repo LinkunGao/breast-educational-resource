@@ -1,10 +1,6 @@
 <template>
   <div id="video-div">
-    <div
-      v-if="showVideo"
-      class="video-overlay"
-      :class="$breakpoint.mdAndUp ? 'is-absolute' : 'is-fixed'"
-    >
+    <div v-if="showVideo" class="video-overlay">
       <div>
         <video-player :videoId="currentVideoId" @close-video="closeVideo()" />
       </div>
@@ -47,18 +43,20 @@ export default {
 };
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 #video-div {
   width: 100vw;
   height: 100vh;
 }
 
-/* Ports <v-overlay color="black" opacity="1">: full-bleed black scrim,
-   absolute on desktop and fixed on mobile as the :absolute prop did. */
+/* Ports <v-overlay color="black" opacity="1">: full-bleed black scrim.
+   The :absolute prop was driven by $breakpoint; it is a media query now so
+   the pre-rendered markup does not depend on JS measuring the viewport. */
 .video-overlay {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: fixed;
   top: 0;
   left: 0;
   right: 0;
@@ -66,10 +64,10 @@ export default {
   background: #000;
   z-index: 5;
 }
-.is-absolute {
-  position: absolute;
-}
-.is-fixed {
-  position: fixed;
+
+@media #{map-get($display-breakpoints, "md-and-up")} {
+  .video-overlay {
+    position: absolute;
+  }
 }
 </style>

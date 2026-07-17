@@ -69,12 +69,6 @@ export default {
 
   created: async function () {},
 
-  computed: {
-    mdAndUp() {
-      return this.$breakpoint.mdAndUp;
-    },
-  },
-
   mounted() {
     this.Copper = this.$Copper();
     this.THREE = this.$three();

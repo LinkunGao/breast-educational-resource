@@ -18,7 +18,7 @@
       <div class="w-1/4 text-justify z-50" v-html="middlePanelText[modelName]"></div>
     </div>
     
-    <div ref="baseDomObject" class="h-full" :class="mdAndUp ? 'baseDom-md' : 'baseDom-sm'" />
+    <div ref="baseDomObject" class="h-full baseDom" />
     
     <div class="md:hidden flex fixed bottom-36 right-5 cursor-pointer custom-z-index">
       <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
@@ -30,9 +30,8 @@
     <div
         ref="threeDControls"
         class="hidden baseModelControl md:flex"
-        :class="mdAndUp ? 'baseModelControl-md' : 'baseModelControl-sm'"
       >
-        <div class="baseModelCB" :class="mdAndUp ? 'baseModelCB-md' : ''">
+        <div class="baseModelCB">
           <button
             class="absolute top-0 left-0 w-1/4 h-full hover:bg-zinc-700/30 rounded-lg"
             @click="onResetAllModelsView"
@@ -390,44 +389,45 @@ export default {
   background: linear-gradient(90deg, rgba(251,113,133,1) 0%, rgba(253,164,175,1) 48%, rgba(251,113,133,1) 100%);
 }
 
-.baseDom-md {
-  width: 100vw;
-  height: 100vh;
-  margin: 0;
-  padding: 0;
-}
-.baseDom-sm {
+/* Was `mdAndUp ? 'baseDom-md' : 'baseDom-sm'`: a square canvas on phones,
+   viewport-tall on desktop. */
+.baseDom {
   width: 100vw;
   height: 100vw;
   margin: 0;
   padding: 0;
+
+  @media #{map-get($display-breakpoints, "md-and-up")} {
+    height: 100vh;
+  }
 }
 
+/* Merges the old -md/-sm variants into one media-query-driven rule. */
 .baseModelControl {
   width: 100vw;
-  height: 120px;
   flex-direction: row;
   justify-content: center;
   align-content: center;
+  order: -1;
+  height: 60px;
+
+  @media #{map-get($display-breakpoints, "md-and-up")} {
+    order: 0;
+    height: 120px;
+    position: fixed;
+    bottom: 10px;
+  }
+
   .baseModelCB {
     width: 240px;
     height: 70px;
     position: relative;
-  }
-  .baseModelCB-md {
-    width: 280px;
-    height: 100px;
-  }
-}
 
-.baseModelControl-md {
-  position: fixed;
-  bottom: 10px;
-  // padding-left: 100px;
-}
-.baseModelControl-sm {
-  order: -1;
-  height: 60px;
+    @media #{map-get($display-breakpoints, "md-and-up")} {
+      width: 280px;
+      height: 100px;
+    }
+  }
 }
 .tab-main{
   // background-color: #fb7185 !important;

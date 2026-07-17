@@ -31,11 +31,6 @@ export default {
     //   "data in RightPanel.vue send to Model.vue"
     // );
   },
-  computed: {
-    mdAndUp() {
-      return this.$breakpoint.mdAndUp;
-    },
-  },
   components: { PanelControls },
 };
 </script>
