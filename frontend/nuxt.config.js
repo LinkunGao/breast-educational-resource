@@ -1,4 +1,3 @@
-import colors from "vuetify/es5/util/colors";
 const serveStatic = require("serve-static");
 const path = require("path");
 
@@ -105,11 +104,7 @@ export default {
   },
 
   // Modules for dev and build (recommended): https://go.nuxtjs.dev/config-modules
-  buildModules: [
-    // https://go.nuxtjs.dev/vuetify
-    "@nuxtjs/vuetify",
-    "@nuxtjs/pwa"
-  ],
+  buildModules: ["@nuxtjs/pwa"],
   pwa: {
     manifest: {
       name: 'Breast Educational Resource',
@@ -122,32 +117,6 @@ export default {
 
   // Modules: https://go.nuxtjs.dev/config-modules
   modules: ["@nuxtjs/axios"],
-
-  // Vuetify module configuration: https://go.nuxtjs.dev/config-vuetify
-  vuetify: {
-    customVariables: ["@/assets/sass/variables.scss"],
-    treeShake: true,
-    theme: {
-      options: { customProperties: true },
-      dark: true,
-      themes: {
-        dark: {
-          background: "#f8cdd6",
-          primary: colors.blue.darken2,
-          accent: colors.grey.darken3,
-          secondary: "#7d1e7d",
-          info: colors.teal.lighten1,
-          warning: "#695e01",
-          subWarning: "#dede09",
-          error: "#451306",
-          subError: "#fc2400",
-          // left panel color
-          success: "#f1a5b5",
-          subSuccess: "#eb3175",
-        },
-      },
-    },
-  },
 
   // Build Configuration: https://go.nuxtjs.dev/config-build
   build: {
@@ -169,6 +138,20 @@ export default {
       },
       scss: {
         implementation: require("sass"),
+        // Vuetify's `customVariables` option used to inject variables.scss
+        // into every SCSS file; that went away with the module, and the
+        // SCSS files rely on it for $display-breakpoints, $text-color, etc.
+        // Skip the variables files themselves or the import recurses.
+        additionalData(content, loaderContext) {
+          const path = loaderContext.resourcePath.replace(/\\/g, "/");
+          if (
+            path.endsWith("/assets/sass/variables.scss") ||
+            path.endsWith("/assets/sass/_breakpoints.scss")
+          ) {
+            return content;
+          }
+          return `@import "~assets/sass/variables.scss";\n${content}`;
+        },
       },
     },
   },

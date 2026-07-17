@@ -1,17 +1,18 @@
-// Ref: https://github.com/nuxt-community/vuetify-module#customvariables
+// Injected into every SCSS file by build.loaders.scss.additionalData in
+// nuxt.config.js. That injection used to be Vuetify's `customVariables`
+// option, which disappeared with the module.
 @import url("https://fonts.googleapis.com/css2?family=Inria+Sans:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&display=swap");
-@import "~vuetify/src/styles/styles.sass";
-// Overrides Vuetify's $display-breakpoints with our own (same values).
-// The Vuetify import above goes away once Vuetify itself is removed.
 @import "./breakpoints";
 
-/* These are Vuetify SASS variables, modified as needed here */
+/* Theme colours. Mirrors theme-colors.js, which serves the same values to
+   tailwind.config.js and to components. Keep the two in sync. */
 
-$body-font-family: "Helvetica" !important;
-$line-height-root: 1.2;
-//$font-size-root: 20px;
+$success-base: #f1a5b5;
+$warning-base: #695e01;
+$error-base: #451306;
+$secondary-base: #7d1e7d;
 
-/* These variables are NOT linked to Vuetify SASS */
+/* App variables */
 
 $clear: white;
 $scroll: grey;

@@ -1,3 +1,5 @@
+const themeColors = require("./theme-colors");
+
 module.exports = {
   content: [
     "./components/**/*.{vue,js}",
@@ -7,17 +9,20 @@ module.exports = {
     "./assets/data/markdown/**/*.md", // rendered via v-html, classes must be scanned
     "./nuxt.config.js",
   ],
-  corePlugins: {
-    // Stays off until Vuetify is removed, so the two resets never fight.
-    preflight: false,
-  },
+  // preflight is on and is now the only reset: Vuetify shipped ress.css,
+  // which went away with it.
   theme: {
-    // Vuetify's breakpoint values, so templates (md:) and JS (mdAndUp) finally agree.
+    // Vuetify's breakpoint values, so templates (md:) and JS (mdAndUp) agree.
     screens: {
       sm: "600px",
       md: "960px",
       lg: "1264px",
       xl: "1904px",
+    },
+    extend: {
+      colors: {
+        brand: themeColors,
+      },
     },
   },
   plugins: [],

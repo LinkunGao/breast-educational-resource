@@ -1,19 +1,20 @@
 @import "@/assets/sass/_mixins.scss";
 
+// var(--v-*-base) were Vuetify custom properties, gone with Vuetify.
 .bg-success {
-  @include gradient-bg(var(--v-success-base), $success-light);
+  @include gradient-bg($success-base, $success-light);
 }
 
 .bg-warning {
-  @include gradient-bg(var(--v-warning-base), $warning-light);
+  @include gradient-bg($warning-base, $warning-light);
 }
 
 .bg-error {
-  @include gradient-bg(var(--v-error-base), $error-light);
+  @include gradient-bg($error-base, $error-light);
 }
 
 .bg-secondary {
-  @include gradient-bg($secondary-color-light, var(--v-secondary-base));
+  @include gradient-bg($secondary-color-light, $secondary-base);
 }
 
 .bg-pink-success {
