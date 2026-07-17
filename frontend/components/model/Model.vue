@@ -1,9 +1,18 @@
 <template>
   <div class="model h-full relative">
-      <v-tabs class="absolute  flex justify-center tab-main" @change="tabsOnChange">
-        <v-tab class="tab-sub w-40">{{ tab1 }}</v-tab>
-        <v-tab v-show="tab2==='2D Ultrasound'? true : false" class="tab-sub w-40">{{ tab2 }}</v-tab>
-      </v-tabs>
+      <div class="absolute flex justify-center tab-main">
+        <button
+          class="tab-sub w-40"
+          :class="activeTabIndex === 0 ? 'tab-active' : ''"
+          @click="onTabClick(0)"
+        >{{ tab1 }}</button>
+        <button
+          v-show="tab2==='2D Ultrasound'? true : false"
+          class="tab-sub w-40"
+          :class="activeTabIndex === 1 ? 'tab-active' : ''"
+          @click="onTabClick(1)"
+        >{{ tab2 }}</button>
+      </div>
 
     <div class="hidden md:flex absolute w-full top-24 flex justify-center items-center text-gray-950 text-xs">
       <div class="w-1/4 text-justify z-50" v-html="middlePanelText[modelName]"></div>
@@ -13,11 +22,9 @@
     
     <div class="md:hidden flex fixed bottom-36 right-5 cursor-pointer custom-z-index">
       <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
-      <v-avatar color="pink lighten-2" @click="onResetAllModelsView">
-        <v-icon dark>
-          mdi-refresh
-        </v-icon>
-      </v-avatar>
+      <button class="reset-avatar" @click="onResetAllModelsView">
+        <i class="mdi mdi-refresh"></i>
+      </button>
     </div>
     
     <div
@@ -54,6 +61,7 @@ export default {
       nrrdSliceZ:null,
       nrrdMeshes: null,
       loadFirstTime: true,
+      activeTabIndex: 0,
       tab1: "3D Mammogram",
       tab2: "2D Mammogram",
       currentView: "3D Mammogram",
@@ -183,6 +191,15 @@ export default {
     async start() {
  
       this.loadNrrd(this.modelUrlsArray[this.modelName][0], this.modelName+"middle_3d");
+    },
+
+    // <v-tabs> fired @change on mount, which tabsOnChange's loadFirstTime
+    // guard swallowed. Manual buttons have no such initial event, so the
+    // guard now only matters if a tab is clicked mid-first-load.
+    onTabClick(index) {
+      if (this.activeTabIndex === index) return;
+      this.activeTabIndex = index;
+      this.tabsOnChange(index);
     },
 
     tabsOnChange(a) {
@@ -418,10 +435,43 @@ export default {
   background: rgb(251,113,133);
   background: linear-gradient(90deg, rgba(251,113,133,1) 0%, rgba(253,164,175,1) 48%, rgba(251,113,133,1) 100%);
 }
+/* Ports Vuetify's .v-tab metrics (48px bar, 14px/500 uppercase w/ tracking). */
 .tab-sub{
-  color: #000 !important;
+  color: #000;
   background: #fda4af;
-  // background: linear-gradient(90deg, rgba(251,113,133,1) 0%, rgba(253,164,175,1) 48%, rgba(251,113,133,1) 100%);
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: 0.0892857143em;
+  text-transform: uppercase;
+  user-select: none;
+}
+/* Stands in for the v-tabs slider. */
+.tab-active{
+  box-shadow: inset 0 -2px 0 currentColor;
+}
+
+/* Ports <v-avatar color="pink lighten-2"> + <v-icon dark>. */
+.reset-avatar{
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #f06292;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
 }
 .custom-z-index{
   z-index: 9998;
