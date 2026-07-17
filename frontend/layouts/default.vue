@@ -1,8 +1,5 @@
 <template>
   <v-app ref="base_background" class="select-none p-0 m-0">
-    <div v-show="loadApp" class="loading">
-      <loading-bar />
-    </div>
     <div class="rightPanel pa-0">
       <Nuxt />
     </div>
@@ -46,13 +43,11 @@ export default {
       multiplier: 1,
       panelHeight: 0,
       isVideo: true,
-      loadApp: true,
     };
   },
 
   computed: {
     mdAndUp() {
-      // this.loadApp = false;
       return this.$breakpoint.mdAndUp;
     },
   },
@@ -67,10 +62,6 @@ export default {
         this.panelHeight = this.$refs.panel.clientHeight;
       }, 200);
     };
-    this.$nuxt.$on("finishLoad", this.onFinishLoad);
-    setTimeout(() => {
-      this.loadApp = false;
-    }, 30000);
     document.addEventListener("fullscreenchange", () => {
       updateFullscreen();
     });
@@ -80,12 +71,6 @@ export default {
         Copper.fullScreenListenner(base_background);
       }
     });
-  },
-
-  methods: {
-    onFinishLoad() {
-      this.loadApp = false;
-    },
   },
 
   watch: {
@@ -115,18 +100,6 @@ export default {
 
 <style scoped lang="scss">
 
-.loading {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: 9999;
-  width: 100vw;
-  height: 100vh;
-  background: black;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
 .outer-large {
   min-width: 499px;
   width: 30vw;

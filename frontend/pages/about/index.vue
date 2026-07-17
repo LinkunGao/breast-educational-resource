@@ -41,12 +41,6 @@ export default {
     // this.$store.commit("setChartLoaded", "");
   },
 
-  mounted() {
-    setTimeout(() => {
-      this.$nuxt.$emit("finishLoad", true);
-    }, 1000);
-  },
-
   beforeDestroy() {
     // this.$nuxt.$off("about-navigation");
   },

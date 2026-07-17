@@ -275,7 +275,6 @@ export default {
                 this.modelData[this.modelName]["middle"] = data;
                 this.addContainerListener();
                 this.scene.onWindowResize();
-                $nuxt.$emit("finishLoad", true);
               }
               loadingContainer.style.display = "none";
             },

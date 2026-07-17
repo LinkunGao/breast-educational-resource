@@ -100,7 +100,6 @@ export default {
       "~/components/model",
       "~/components/navigation",
       "~/components/topics",
-      "~/components/loading",
     ],
   },
 
