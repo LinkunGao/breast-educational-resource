@@ -1,69 +1,65 @@
 <template>
   <div class="navi">
-    <div
-      v-if="subMenuActive"
-      :class="$breakpoint.smAndDown ? 'sub-menu' : ''"
-    >
-      <v-bottom-navigation
-        grow
-        :input-value="subMenuActive"
-        :color="activeColor"
-      >
-        <v-btn
-          class="button-default"
+    <div v-if="subMenuActive" :class="$breakpoint.smAndDown ? 'sub-menu' : ''">
+      <div class="flex w-full">
+        <nuxt-link
           v-for="(subTopic, index) in selectedTopic.subTopics"
           :key="index"
-          :disabled="$isSubTopicDisabled(subTopic)"
+          class="button-default"
+          :class="$isSubTopicDisabled(subTopic) ? 'is-disabled' : ''"
+          :style="{ color: menuCaption === index ? activeColor : inactiveColor }"
           :to="{ name: 'slug', params: { slug: menuCaption + '-' + index } }"
         >
-          <span>{{ subTopic.title }}</span>
-          <v-icon>{{ subTopic.icon }}</v-icon>
-        </v-btn>
-      </v-bottom-navigation>
+          <i class="mdi nav-icon" :class="subTopic.icon"></i>
+          <span class="nav-label">{{ subTopic.title }}</span>
+        </nuxt-link>
+      </div>
     </div>
-    <v-bottom-navigation
-      grow
-      :fixed="$breakpoint.smAndDown ? true : false"
-      :color="activeColor"
-      v-model="menuCaption"
-    >
-      <v-btn
+
+    <div class="flex w-full" :class="$breakpoint.smAndDown ? 'nav-fixed' : ''">
+      <nuxt-link
         v-for="(topic, index) in topics"
-        class="button-default"
-        :class="mdAndUp ? '' : 'btn-sm'"
         :key="index"
-        :value="index"
-        :disabled="$isTopicDisabled(topic)"
+        class="button-default"
+        :class="[
+          mdAndUp ? '' : 'btn-sm',
+          $isTopicDisabled(topic) ? 'is-disabled' : '',
+        ]"
+        :style="{ color: menuCaption === index ? activeColor : inactiveColor }"
         :to="{
           name: 'slug',
           params: { slug: index + '-' + getDefaultSlug(topic) },
         }"
-        @click="handTopicClick(topic)"
+        @click.native="handTopicClick(topic)"
       >
-        <span>{{ topic.title }}</span>
-        <v-icon>{{ topic.icon }}</v-icon>
-      </v-btn>
-      <v-btn
+        <i class="mdi nav-icon" :class="topic.icon"></i>
+        <span class="nav-label">{{ topic.title }}</span>
+      </nuxt-link>
+
+      <nuxt-link
         class="button-default"
         :class="mdAndUp ? '' : 'btn-sm'"
+        :style="{ color: menuCaption === 'about' ? activeColor : inactiveColor }"
         :to="{ name: 'about' }"
-        @click="updateAbout()"
-        :value="'about'"
+        @click.native="updateAbout()"
       >
-        <span>About</span>
-        <v-icon>mdi-account-group</v-icon>
-      </v-btn>
-    </v-bottom-navigation>
+        <i class="mdi mdi-account-group nav-icon"></i>
+        <span class="nav-label">About</span>
+      </nuxt-link>
+    </div>
   </div>
 </template>
 
 <script>
+import themeColors from "~/theme-colors";
+
 export default {
   data: () => {
     return {
       selectedTopic: {},
       topics: {},
       subMenuActive: false,
+      inactiveColor: "#ffffff",
     };
   },
   methods: {
@@ -83,9 +79,10 @@ export default {
 
   computed: {
     activeColor() {
-      return this.$route.name === "about"
-        ? this.$vuetify.theme.themes.dark.secondary
-        : this.$subTitle();
+      // topics.json stores colour names ("subSuccess"), not values; fall back to
+      // the raw string so a literal colour still works.
+      const name = this.$route.name === "about" ? "secondary" : this.$subTitle();
+      return themeColors[name] || name;
     },
     menuCaption() {
       return this.$route.name === "slug" ? this.$parentTopic().slug : "about";
@@ -94,7 +91,6 @@ export default {
       return this.$breakpoint.mdAndUp;
     },
   },
-
 
   watch: {
     selectedTopic: function (currentTopic) {
@@ -128,37 +124,54 @@ export default {
   width: 100%;
 }
 
+.nav-fixed {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  z-index: 4;
+}
+
 .button-default {
+  flex: 1 1 0%;
+  min-width: 0;
+  height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  text-decoration: none;
   -webkit-user-select: none;
   -moz-user-select: none;
   -ms-user-select: none;
   user-select: none;
-  height: 56px !important;
-  background: -webkit-linear-gradient(
-    rgba(5, 5, 5, 1),
-    rgba(30, 30, 30, 1) 4%,
-    rgba(5, 5, 5, 1)
-  ); /* For Safari 5.1 to 6.0 */
-  background: -o-linear-gradient(
-    rgba(5, 5, 5, 1),
-    rgba(30, 30, 30, 1) 4%,
-    rgba(5, 5, 5, 1)
-  ); /* For Opera 11.1 to 12.0 */
-  background: -moz-linear-gradient(
-    rgba(5, 5, 5, 1),
-    rgba(30, 30, 30, 1) 4%,
-    rgba(5, 5, 5, 1)
-  ); /* For Firefox 3.6 to 15 */
   background: linear-gradient(
     rgba(5, 5, 5, 1),
     rgba(30, 30, 30, 1) 4%,
     rgba(5, 5, 5, 1)
-  ); /* Standard syntax */
+  );
   border-left: 2px rgb(5, 5, 5) solid;
-}
-.btn-sm{
-  width: 100px !important;
-  min-width: 0 !important;
+  transition: color 0.2s;
 }
 
+.nav-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.nav-label {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.is-disabled {
+  pointer-events: none;
+  opacity: 0.4;
+}
+
+.btn-sm {
+  flex: 0 0 auto;
+  width: 100px;
+  min-width: 0;
+}
 </style>
