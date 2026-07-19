@@ -76,7 +76,6 @@ export default {
 
   // Global CSS: https://go.nuxtjs.dev/config-css
   css: [
-    "@mdi/font/css/materialdesignicons.min.css",
     "@/assets/sass/global.scss",
     "@/assets/sass/base.scss",
     // Last, so utilities win ties the way the old runtime-injected CDN did.

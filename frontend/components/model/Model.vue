@@ -23,7 +23,7 @@
     <div class="md:hidden flex fixed bottom-36 right-5 cursor-pointer custom-z-index">
       <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
       <button class="reset-avatar" @click="onResetAllModelsView">
-        <i class="mdi mdi-refresh"></i>
+        <mdi-icon name="mdi-refresh" />
       </button>
     </div>
     

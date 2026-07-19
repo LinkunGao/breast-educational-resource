@@ -10,7 +10,7 @@
           :style="{ color: menuCaption === index ? activeColor : inactiveColor }"
           :to="{ name: 'slug', params: { slug: menuCaption + '-' + index } }"
         >
-          <i class="mdi nav-icon" :class="subTopic.icon"></i>
+          <mdi-icon :name="subTopic.icon" class="nav-icon" />
           <span class="nav-label">{{ subTopic.title }}</span>
         </nuxt-link>
       </div>
@@ -29,7 +29,7 @@
         }"
         @click.native="handTopicClick(topic)"
       >
-        <i class="mdi nav-icon" :class="topic.icon"></i>
+        <mdi-icon :name="topic.icon" class="nav-icon" />
         <span class="nav-label">{{ topic.title }}</span>
       </nuxt-link>
 
@@ -39,7 +39,7 @@
         :to="{ name: 'about' }"
         @click.native="updateAbout()"
       >
-        <i class="mdi mdi-account-group nav-icon"></i>
+        <mdi-icon name="mdi-account-group" class="nav-icon" />
         <span class="nav-label">About</span>
       </nuxt-link>
     </div>
