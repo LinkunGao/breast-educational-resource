@@ -23,13 +23,20 @@ export default {
     htmlAttrs: {
       lang: "en",
     },
-    // link: [
-    //   {
-    //     rel: "icon",
-    //     type: "image/x-icon",
-    //     href: "/breast-educational-resource/favicon2.ico",
-    //   },
-    // ],
+    link: [
+      // Was a render-blocking @import url() inside variables.scss, which the
+      // build injects into every SCSS file, so it was duplicated everywhere.
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
+      {
+        rel: "preconnect",
+        href: "https://fonts.gstatic.com",
+        crossorigin: true,
+      },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Inria+Sans:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&display=swap",
+      },
+    ],
     meta: [
       { charset: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },

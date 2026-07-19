@@ -1,7 +1,8 @@
 // Injected into every SCSS file by build.loaders.scss.additionalData in
 // nuxt.config.js. That injection used to be Vuetify's `customVariables`
 // option, which disappeared with the module.
-@import url("https://fonts.googleapis.com/css2?family=Inria+Sans:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&display=swap");
+// (The Inria Sans @import moved to head.link so it is not duplicated into
+//  every compiled SCSS module.)
 @import "./breakpoints";
 
 /* Theme colours. Mirrors theme-colors.js, which serves the same values to
