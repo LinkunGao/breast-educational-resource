@@ -29,7 +29,9 @@ leftContainer.style.height = "100%";
 
 const baseLeftRenderer = new Copper.copperRenderer(leftContainer, {
   guiOpen: false,
-  alpha: false,
+  // Transparent canvas: the background comes from CSS, like the other two
+  // renderers already do. With alpha:false copper drew an opaque vignette.
+  alpha: true,
   cameraGui: true,
   performance: true,
   logarithmicDepthBuffer: true,

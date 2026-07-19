@@ -173,11 +173,13 @@ export default {
           this.scene.onWindowResize();
         });
         this.scene.loadViewUrl(viewURL);
-         
-        this.scene.updateBackground("#fda4af", "#fda4af");
-        this.Copper.setHDRFilePath("environment/venice_sunset_1k.hdr");
-        this.baseRenderer.updateEnvironment();
-       
+
+        // Background now comes from CSS (the canvas is transparent). The old
+        // scene.updateBackground(...) call was a no-op once alpha is on, and
+        // setHDRFilePath/updateEnvironment also no-op under alpha (copper
+        // early-returns). The GLB is still lit by the scene.addLights() call
+        // made right after createScene above.
+
         this.modelToScenes[model_name] = this.scene;
       }else{
         this.baseRenderer.setCurrentScene(this.scene);
