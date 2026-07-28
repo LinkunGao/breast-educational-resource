@@ -20,6 +20,22 @@ export default defineNuxtConfig({
     },
   },
 
+  // Legacy paths from frontend/nuxt.config.js's generate.routes (design doc
+  // §4.5). `redirect` here emits meta-refresh HTML stubs under `nuxi
+  // generate`, so these survive static hosting too.
+  routeRules: {
+    '/model-breast': { redirect: { to: '/case/the-breast', statusCode: 301 } },
+    '/density-1': { redirect: { to: '/case/density-a', statusCode: 301 } },
+    '/density-2': { redirect: { to: '/case/density-b', statusCode: 301 } },
+    '/density-3': { redirect: { to: '/case/density-c', statusCode: 301 } },
+    '/density-4': { redirect: { to: '/case/density-d', statusCode: 301 } },
+    '/benign-cyst': { redirect: { to: '/case/benign-cyst', statusCode: 301 } },
+    '/benign-fibroadenoma': { redirect: { to: '/case/benign-fibroadenoma', statusCode: 301 } },
+    '/cancer-dcis': { redirect: { to: '/case/cancer-dcis', statusCode: 301 } },
+    '/cancer-lobular': { redirect: { to: '/case/cancer-lobular', statusCode: 301 } },
+    '/cancer-ductal': { redirect: { to: '/case/cancer-ductal', statusCode: 301 } },
+  },
+
   app: {
     head: {
       title: 'Te Uma — The Breast Educational Platform',
