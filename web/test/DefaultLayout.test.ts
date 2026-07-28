@@ -36,6 +36,18 @@ describe('default layout', () => {
     expect(wrapper.find('.content-marker').exists()).toBe(true)
   })
 
+  it('starts with the drawer closed, so a narrow first load is not covered by it', () => {
+    // Regression test for the sidebarOpen default: a phone-width visitor's
+    // first paint must be the case they came for, not a drawer + scrim over
+    // it. Deliberately does NOT set store.sidebarOpen -- this exercises the
+    // store's actual default, not a value forced by the test.
+    const wrapper = mountLayout()
+    const sidebar = wrapper.getComponent(CaseSidebarStub)
+    expect(sidebar.classes()).toContain('max-xl:-translate-x-full')
+    expect(sidebar.classes()).not.toContain('max-xl:translate-x-0')
+    expect(wrapper.find('button[aria-label="Close case navigation"]').exists()).toBe(false)
+  })
+
   it('translates the sidebar drawer on/off screen based on store.sidebarOpen (below xl)', async () => {
     const store = useViewerStore()
     store.sidebarOpen = false

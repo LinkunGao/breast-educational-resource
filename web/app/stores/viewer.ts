@@ -12,9 +12,17 @@ export const useViewerStore = defineStore('viewer', () => {
   const caseSlug = ref('the-breast')
   const modalityId = ref<ModalityId>('anatomy')
 
-  // Panel collapse state. Expanded by default on desktop; narrow screens hide
-  // panels via CSS. This only tracks the user's explicit intent.
-  const sidebarOpen = ref(true)
+  // Panel collapse state -- tracks the user's explicit intent only; CSS
+  // decides what's actually visible at a given width (see default.vue).
+  //
+  // sidebarOpen only governs the sub-xl drawer: every consumer of it
+  // (default.vue's translate classes and scrim, AppHeader's hamburger) is
+  // gated behind `max-xl:`/`xl:hidden`, so at xl and above the sidebar is
+  // resident regardless of this value and the field has no visible effect.
+  // Below xl it drives a full-screen drawer + dimming scrim, so it defaults
+  // closed -- a narrow-viewport visitor's first paint should be the case
+  // they came for, not a drawer already covering it.
+  const sidebarOpen = ref(false)
   const contentOpen = ref(true)
 
   const cameraSnapshots = ref<Record<string, CameraSnapshot>>({})
