@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { gzipNrrd, rewriteEncoding, splitNrrd } from '../../scripts/lib/nrrd-gzip.mjs'
 
 /** Build a minimal valid NRRD: header + blank line + binary body. */
-function makeNrrd(encoding = 'raw', data = Buffer.from([1, 2, 3, 4])): Buffer {
+function makeNrrd(encoding = 'raw', data = Buffer.from([1, 2, 3, 4]), eol = '\n'): Buffer {
   const header = [
     'NRRD0004',
     '# Complete NRRD file format specification at:',
@@ -14,7 +14,7 @@ function makeNrrd(encoding = 'raw', data = Buffer.from([1, 2, 3, 4])): Buffer {
     'endian: little',
     '',
     '',
-  ].join('\n')
+  ].join(eol)
   return Buffer.concat([Buffer.from(header, 'ascii'), data])
 }
 
@@ -31,9 +31,29 @@ describe('splitNrrd', () => {
       .toThrow(/header terminator/i)
   })
 
-  it('does not treat a comment line as the terminator', () => {
-    const { data } = splitNrrd(makeNrrd())
-    expect(data.length).toBe(4)
+  it('does not mistake a 0x0A 0x0A byte pair inside the data block for the terminator', () => {
+    // A naive re-scan (or an off-by-one in the marker length) could still
+    // land on the right split by luck. Put a literal \n\n as the very first
+    // two bytes of the data block -- right after the real terminator -- so
+    // only correctly stopping at the header's own blank line passes.
+    const data = Buffer.from([0x0a, 0x0a, 9, 8, 7])
+    const { header, data: split } = splitNrrd(makeNrrd('raw', data))
+    expect(header).toContain('encoding: raw')
+    expect(split).toEqual(data)
+  })
+
+  it('splits a CRLF-terminated header at \\r\\n\\r\\n, not at a coincidental \\n\\n in the data', () => {
+    const data = Buffer.from([0x0a, 0x0a, 1, 2, 3])
+    const { header, data: split } = splitNrrd(makeNrrd('raw', data, '\r\n'))
+    expect(header).toContain('encoding: raw')
+    expect(header.endsWith('\r\n\r\n')).toBe(true)
+    expect(split).toEqual(data)
+  })
+
+  it('reassembling header + data reproduces the original buffer exactly', () => {
+    const buf = makeNrrd('raw', Buffer.from([9, 8, 7, 6, 5]))
+    const { header, data } = splitNrrd(buf)
+    expect(Buffer.concat([Buffer.from(header, 'ascii'), data])).toEqual(buf)
   })
 })
 
@@ -67,5 +87,14 @@ describe('gzipNrrd', () => {
   it('is a no-op for an already gzipped file', () => {
     const already = gzipNrrd(makeNrrd())
     expect(gzipNrrd(already)).toEqual(already)
+  })
+
+  it('is also a no-op for the "gz" spelling of gzip encoding', () => {
+    const alreadyGz = makeNrrd('gz')
+    expect(gzipNrrd(alreadyGz)).toEqual(alreadyGz)
+  })
+
+  it('throws, naming the encoding, for anything that is neither raw nor already compressed', () => {
+    expect(() => gzipNrrd(makeNrrd('ascii'))).toThrow(/ascii/)
   })
 })
