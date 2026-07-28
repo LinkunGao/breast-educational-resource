@@ -224,12 +224,14 @@ density-4/left/density100.glb   21.0 MB
 
 每个模态一组 `ink`（文字，已验证 AA）/ `fill`（色块）：
 
-| 模态 | `--modality-*-ink` | 对白底 | `--modality-*-fill` |
-|---|---|---:|---|
-| Anatomy | `#D81B60` | 5.0:1 | `#FCE7EE` |
-| Mammogram | `#7D1E7D` | 8.9:1 | `#F3E5F5` |
-| Ultrasound | `#0E7490` | 5.4:1 | `#E0F2F1` |
-| MRI | `#1D4ED8` | 6.7:1 | `#E8EEFC` |
+| 模态 | `--modality-*-ink` | 对白底 | `--modality-*-fill` | ink 对 fill |
+|---|---|---:|---|---:|
+| Anatomy | `#C2185B` | 5.9:1 | `#FCE7EE` | 4.98:1 |
+| Mammogram | `#7D1E7D` | 8.9:1 | `#F3E5F5` | 7.4:1 |
+| Ultrasound | `#0E7490` | 5.4:1 | `#E0F2F1` | 4.70:1 |
+| MRI | `#1D4ED8` | 6.7:1 | `#E8EEFC` | 5.7:1 |
+
+**ink 对 fill 这一列必须一并达标**：模态步进器的选中态是 ink-on-fill，不是 ink-on-white。Anatomy 的 ink 因此比 `--brand`（`#D81B60`）深一档 —— `#D81B60` 在 `#FCE7EE` 上仅 4.27:1，达不到正文 AA。
 
 色彩不作为唯一区分手段：模态步进器同时使用序号、图标与文字标签（WCAG 1.4.1）。
 
