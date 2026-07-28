@@ -7,6 +7,12 @@ export default defineNuxtConfig({
 
   modules: ['@pinia/nuxt'],
 
+  // Nuxt's default component scanning prefixes nested-folder components with
+  // the folder name (components/nav/AppHeader.vue -> <NavAppHeader>). Task 5's
+  // layout references <AppHeader> and <CaseSidebar> directly, so subfolder
+  // components resolve under their own filename instead.
+  components: [{ path: '~/components', pathPrefix: false }],
+
   css: ['~/assets/css/tokens.css'],
 
   vite: {

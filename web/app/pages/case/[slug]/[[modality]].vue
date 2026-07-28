@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { enabledCases, getCase } from '~~/content/cases'
+import { getCase } from '~~/content/cases'
 import type { ModalityId } from '~~/content/types'
 
 // This must be a route guard, not a setup-time `throw createError`. Today
@@ -48,38 +48,27 @@ useHead(() => ({
 </script>
 
 <template>
-  <div class="p-8">
-    <p class="text-caption uppercase tracking-wide text-text-muted">
-      {{ current!.group }}
-    </p>
-    <h1 class="text-h1 font-bold text-text">{{ current!.heading }}</h1>
-    <p class="mt-2 text-body-sm text-text-muted">
-      Modality: {{ modality.label }} ({{ modalityId }})
-    </p>
-    <p class="prose-medical mt-6 text-text" v-html="modality.text" />
+  <NuxtLayout>
+    <template #stage>
+      <!-- Placeholder: Task 6/7 replace this with the copper3d viewer. -->
+      <div class="flex flex-1 items-center justify-center bg-surface-sunken">
+        <p class="text-body-sm text-text-subtle">
+          Stage placeholder — {{ modality.label }}
+        </p>
+      </div>
+    </template>
 
-    <nav class="mt-8 flex gap-3">
-      <NuxtLink
-        v-for="m in current!.modalities"
-        :key="m.id"
-        :to="`/case/${slug}/${m.id}`"
-        class="rounded-ctl border border-border px-3 py-2 text-body-sm"
-        :class="m.id === modalityId ? 'bg-brand-subtle text-brand' : 'text-text-muted'"
-      >
-        {{ m.label }}
-      </NuxtLink>
-    </nav>
-
-    <nav class="mt-8 flex flex-wrap gap-2">
-      <NuxtLink
-        v-for="c in enabledCases()"
-        :key="c.slug"
-        :to="`/case/${c.slug}`"
-        class="rounded-chip border border-border px-2 py-1 text-caption"
-        :class="c.slug === slug ? 'bg-brand text-surface' : 'text-text-muted'"
-      >
-        {{ c.title }}
-      </NuxtLink>
-    </nav>
-  </div>
+    <template #content>
+      <!-- Placeholder: Task 6/7 replace this with CaseHeader/ModalityText/ModalityStepper. -->
+      <div class="p-6">
+        <p class="text-caption uppercase tracking-wide text-text-muted">
+          {{ modality.label }}
+        </p>
+        <h1 class="mt-1 text-h1 font-bold text-text xl:text-display">
+          {{ current!.heading }}
+        </h1>
+        <p class="prose-medical mt-4 text-text" v-html="modality.text" />
+      </div>
+    </template>
+  </NuxtLayout>
 </template>
