@@ -21,7 +21,7 @@ Te Uma 是 Auckland Bioengineering Institute 的乳腺健康教育应用。当�
 
 | 子项目 | 内容 | 状态 |
 |---|---|---|
-| **A. 地基重铸** | Nuxt3 + TS + Tailwind、copper3d 3.7.3、IA 重构、设计系统、相机编排、资产策略、WCAG AA | **本文档** |
+| **A. 地基重铸** | Nuxt 4 + TS + Tailwind、copper3d 3.7.3、IA 重构、设计系统、相机编排、资产策略、WCAG AA | **本文档** |
 | B. 引导式学习流 | 学习目标、进度追踪、完成状态、课程树勾选 | 后续独立 spec |
 | C. 交互式解剖 | Hotspot、表面标注、并排对照模式 | 后续独立 spec |
 | D. 测评系统 | Quiz、拖放标注、临床情境题 | 后续独立 spec |
@@ -33,7 +33,7 @@ Te Uma 是 Auckland Bioengineering Institute 的乳腺健康教育应用。当�
 
 ### 2.1 目标
 
-1. 把 Nuxt 2 / Vue 2 应用整体重建为 Nuxt 3 + TypeScript + Tailwind 4
+1. 把 Nuxt 2 / Vue 2 应用整体重建为 Nuxt 4 + TypeScript + Tailwind 4
 2. copper3d 2.1.2 → 3.7.3，并用 3.x 的 `copperRendererOnDemond` 和 `orbitFraming` 重做渲染与相机层
 3. 用一条明确的叙事线重构信息架构，取代当前的平行分类目录
 4. 建立浅色医疗底 + 粉品牌的设计系统（70% 中性 / 20% 白卡 / 10% 品牌色）
@@ -49,7 +49,7 @@ Te Uma 是 Auckland Bioengineering Institute 的乳腺健康教育应用。当�
 - 不做 hotspot / 表面标注 / 并排对照模式
 - **不修改任何医学文案原文**（见 §6.1）
 - 不新增病例、不重新采集影像
-- 不在本 spec 内执行 git 历史重写（见 §11.2）
+- 不在本 spec 内执行 git 历史重写（见 §13.2）
 - 不实现 `benign_calcifications` 病例（无任何影像资产，见 §4.4）
 
 ---
@@ -103,7 +103,7 @@ density-4/left/density100.glb   21.0 MB
 | C5 | `Model.vue:71` / `LeftModel.vue:37` / `PanelControls.vue:35` | `modelUrlsArray` 在三个组件中各写一份，是 C2 长期未被发现的根因 |
 | C6 | `Model.vue:281` `PanelControls.vue:168` | 调试用 `THREE.BoxHelper` 白色线框被加入生产场景 |
 | C7 | `PanelControls.vue:171` | `loadModel()` 的触发条件 `modelUrlsArray[...].length > 2` 在 right 分支恒为 false，整个方法是死代码 |
-| C8 | `layouts/default.vue`、`Navigation.vue`、`LeftModel.vue` | 跨组件通信依赖 `$nuxt.$emit` 事件总线（`menu-height-changed` / `panel-height` / `onNavChange`），Nuxt 3 无此 API |
+| C8 | `layouts/default.vue`、`Navigation.vue`、`LeftModel.vue` | 跨组件通信依赖 `$nuxt.$emit` 事件总线（`menu-height-changed` / `panel-height` / `onNavChange`），Nuxt 3/4 无此 API |
 | C9 | `layouts/default.vue:70-72` | `updated()` 钩子内重新测量 `clientHeight` 并写回 data，构成潜在的重渲染循环 |
 | C10 | `Model.vue:309-321` `PanelControls.vue:198-210` | 相机状态恢复依赖 `setTimeout(..., 300)` 竞态 |
 | C11 | `assets/data/markdown/breast-main.md` | 空文件（0 字节），而 `topics.json` 中每个病例的 `dataFile` 均指向它 → `Panel.vue` 恒渲染空内容 |
@@ -387,7 +387,7 @@ density A–D 的四个 GLB 是同一乳房的四个密度版本。**当且仅�
 
 ```
 breast-educational-resource/
-├─ web/                          ← 新 Nuxt 3 应用
+├─ web/                          ← 新 Nuxt 4 应用
 │  ├─ app/
 │  │  ├─ components/
 │  │  │  ├─ stage/               CopperStage, ModalityStepper, StageControls
@@ -437,7 +437,7 @@ Pinia，仅存 UI 状态：当前病例 slug、当前模态 id、侧边栏/内�
 
 | 移除项 | 理由 |
 |---|---|
-| `$nuxt.$emit` 事件总线 | Nuxt 3 无此 API；改用 composable 共享状态（C8） |
+| `$nuxt.$emit` 事件总线 | Nuxt 3/4 无此 API；改用 composable 共享状态（C8） |
 | `plugins/breakpoint.js` | Tailwind 断点 + CSS 媒体查询已足够 |
 | `assets/sass/**` 全部 SCSS | Tailwind 4 + CSS 变量取代 |
 | `marked` + `raw-loader` + `assets/data/markdown/**` | 空文件 + 心脏应用遗留（C11） |
