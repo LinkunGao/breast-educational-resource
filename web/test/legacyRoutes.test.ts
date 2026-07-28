@@ -1,23 +1,37 @@
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { LEGACY_ROUTES, resolveLegacy } from '../app/utils/legacyRoutes'
 import { enabledCases } from '../content/cases'
+import { LEGACY_ROUTES } from '../content/legacyRoutes'
+
+/** Parse frontend/nuxt.config.js's `generate.routes` array directly, rather
+ *  than hand-copying the same ten paths into a second literal here: two
+ *  copies written in the same commit would go wrong together and this test
+ *  would still pass. Comparing against the actual legacy source catches a
+ *  mistyped or dropped path the way a second copy cannot.
+ *  frontend/ is read-only but still present (it survives until Task 12).
+ *  Note: cannot use `new URL('../../frontend/...', import.meta.url)` --
+ *  Vite's import-analysis plugin statically rewrites that literal pattern
+ *  into an asset URL, so the path has to be built by hand with node:path
+ *  instead (see web/test/tokens.test.ts and web/test/cases.test.ts).
+ */
+function legacyGenerateRoutes(): string[] {
+  const configPath = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    '../../frontend/nuxt.config.js',
+  )
+  const src = readFileSync(configPath, 'utf8')
+  const routesBlock = src.match(/routes:\s*\[([\s\S]*?)\]/)
+  if (!routesBlock) {
+    throw new Error('Could not find generate.routes in frontend/nuxt.config.js')
+  }
+  return [...routesBlock[1]!.matchAll(/"([^"]+)"/g)].map(m => m[1]!)
+}
 
 describe('legacy route table (design doc §4.5)', () => {
-  const expected: Record<string, string> = {
-    '/model-breast': '/case/the-breast',
-    '/density-1': '/case/density-a',
-    '/density-2': '/case/density-b',
-    '/density-3': '/case/density-c',
-    '/density-4': '/case/density-d',
-    '/benign-cyst': '/case/benign-cyst',
-    '/benign-fibroadenoma': '/case/benign-fibroadenoma',
-    '/cancer-dcis': '/case/cancer-dcis',
-    '/cancer-lobular': '/case/cancer-lobular',
-    '/cancer-ductal': '/case/cancer-ductal',
-  }
-
-  it('covers all ten routes from the old generate.routes list', () => {
-    expect(LEGACY_ROUTES).toEqual(expected)
+  it('covers exactly the routes in frontend/nuxt.config.js generate.routes', () => {
+    expect(Object.keys(LEGACY_ROUTES).sort()).toEqual(legacyGenerateRoutes().sort())
   })
 
   it('every target resolves to an enabled case', () => {
@@ -25,23 +39,5 @@ describe('legacy route table (design doc §4.5)', () => {
     for (const target of Object.values(LEGACY_ROUTES)) {
       expect(slugs.has(target.replace('/case/', ''))).toBe(true)
     }
-  })
-})
-
-describe('resolveLegacy', () => {
-  it('resolves a known legacy path', () => {
-    expect(resolveLegacy('/density-4')).toBe('/case/density-d')
-  })
-
-  it('tolerates a trailing slash', () => {
-    expect(resolveLegacy('/density-4/')).toBe('/case/density-d')
-  })
-
-  it('returns undefined for an unknown path', () => {
-    expect(resolveLegacy('/electricity-healthy')).toBeUndefined()
-  })
-
-  it('returns undefined for a new-style path', () => {
-    expect(resolveLegacy('/case/density-d')).toBeUndefined()
   })
 })

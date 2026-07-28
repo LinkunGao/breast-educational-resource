@@ -6,9 +6,14 @@
  * Lives in content/ (not app/) so nuxt.config.ts can import it directly at
  * config-evaluation time -- app/ is wired through Nuxt's `~`/`~~` aliases,
  * which are not resolved yet while nuxt.config.ts itself is loading.
- * nuxt.config.ts builds its `routeRules` redirects from this table, so this
- * is the single source of truth: the test suite exercising it is exercising
- * what actually ships.
+ *
+ * This is the only place this table exists. Design doc §4.5's static-hosting
+ * mechanism is entirely build-time: `nuxi generate` turns the `redirect`
+ * entries this table produces in nuxt.config.ts's `routeRules` into stub
+ * `index.html` files with `<meta http-equiv="refresh">` and
+ * `<link rel="canonical">`. Nothing resolves a legacy path at runtime, so
+ * there is deliberately no client-side lookup helper here -- add one only
+ * if a future task actually introduces a client-side router fallback.
  */
 export const LEGACY_ROUTES: Record<string, string> = {
   '/model-breast': '/case/the-breast',
