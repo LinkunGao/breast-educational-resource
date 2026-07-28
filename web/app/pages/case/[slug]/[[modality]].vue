@@ -49,6 +49,18 @@ useHead(() => ({
 
 <template>
   <NuxtLayout>
+    <!-- design doc §10.1's ASCII places the case heading atop the stage
+         column (above the modality stepper), not in the content column --
+         Task 6's CaseHeader will own this properly; this placeholder just
+         keeps the region's content roughly right for a manual pass. -->
+    <template #heading>
+      <div class="p-6 pb-0">
+        <h1 class="text-h1 font-bold text-text xl:text-display">
+          {{ current!.heading }}
+        </h1>
+      </div>
+    </template>
+
     <template #stage>
       <!-- Placeholder: Task 6/7 replace this with the copper3d viewer. -->
       <div class="flex flex-1 items-center justify-center bg-surface-sunken">
@@ -59,14 +71,11 @@ useHead(() => ({
     </template>
 
     <template #content>
-      <!-- Placeholder: Task 6/7 replace this with CaseHeader/ModalityText/ModalityStepper. -->
+      <!-- Placeholder: Task 6/7 replace this with ModalityText. -->
       <div class="p-6">
         <p class="text-caption uppercase tracking-wide text-text-muted">
           {{ modality.label }}
         </p>
-        <h1 class="mt-1 text-h1 font-bold text-text xl:text-display">
-          {{ current!.heading }}
-        </h1>
         <p class="prose-medical mt-4 text-text" v-html="modality.text" />
       </div>
     </template>

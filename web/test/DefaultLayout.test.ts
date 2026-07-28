@@ -13,7 +13,7 @@ import DefaultLayout from '../app/layouts/default.vue'
 const AppHeaderStub = { template: '<header />' }
 const CaseSidebarStub = { template: '<nav id="case-sidebar" />' }
 
-function mountLayout() {
+function mountLayout(slots: Record<string, string> = {}) {
   return mount(DefaultLayout, {
     global: {
       stubs: { AppHeader: AppHeaderStub, CaseSidebar: CaseSidebarStub },
@@ -21,7 +21,21 @@ function mountLayout() {
     slots: {
       stage: '<div class="stage-marker">stage content</div>',
       content: '<div class="content-marker">content content</div>',
+      ...slots,
     },
+  })
+}
+
+/** All six design-doc §10.3 regions, each with a distinct marker, so DOM
+ *  order can be asserted directly instead of trusting the nesting by eye. */
+function mountLayoutWithAllRegions() {
+  return mountLayout({
+    heading: '<div class="heading-marker">heading</div>',
+    stepper: '<div class="stepper-marker">stepper</div>',
+    stage: '<div class="stage-marker">stage</div>',
+    controls: '<div class="controls-marker">controls</div>',
+    content: '<div class="content-marker">content</div>',
+    prevnext: '<div class="prevnext-marker">prevnext</div>',
   })
 }
 
@@ -36,6 +50,34 @@ describe('default layout', () => {
     expect(wrapper.find('.content-marker').exists()).toBe(true)
   })
 
+  it('lays out all six design doc §10.3 regions in the phone order: heading, stepper, stage, controls, content, prev/next', () => {
+    // This is the order a single (phone-tier) column stacks in DOM order,
+    // and also the order xl+'s flex-row split reads within each of its two
+    // columns -- one nesting produces the right order at every tier, with
+    // no CSS `order` reshuffling to separately verify.
+    const wrapper = mountLayoutWithAllRegions()
+    const markers = ['heading-marker', 'stepper-marker', 'stage-marker', 'controls-marker', 'content-marker', 'prevnext-marker']
+    const html = wrapper.html()
+    const positions = markers.map(m => html.indexOf(m))
+    expect(positions.every(p => p !== -1)).toBe(true)
+    expect(positions).toEqual([...positions].sort((a, b) => a - b))
+  })
+
+  it('falls back to a clearly-marked Task 6/7 placeholder for every region the page has not filled yet', () => {
+    // Only stage/content are filled (as the real case page does today);
+    // heading/stepper/controls/prevnext should still render something,
+    // named for whichever future task owns it, in the correct position.
+    const wrapper = mountLayout()
+    for (const [slotName, owner] of [
+      ['case heading', 'Task 6'],
+      ['modality stepper', 'Task 6'],
+      ['control bar', 'Task 7'],
+      ['prev/next case navigation', 'Task 6'],
+    ] as const) {
+      expect(wrapper.text()).toMatch(new RegExp(`Placeholder: ${slotName} \\(${owner}\\)`))
+    }
+  })
+
   it('starts with the drawer closed, so a narrow first load is not covered by it', () => {
     // Regression test for the sidebarOpen default: a phone-width visitor's
     // first paint must be the case they came for, not a drawer + scrim over
@@ -43,41 +85,137 @@ describe('default layout', () => {
     // store's actual default, not a value forced by the test.
     const wrapper = mountLayout()
     const sidebar = wrapper.getComponent(CaseSidebarStub)
-    expect(sidebar.classes()).toContain('max-xl:-translate-x-full')
-    expect(sidebar.classes()).not.toContain('max-xl:translate-x-0')
+    expect(sidebar.classes()).toContain('max-md:-translate-y-full')
+    expect(sidebar.classes()).toContain('md:max-xl:-translate-x-full')
+    expect(sidebar.classes()).not.toContain('max-md:translate-y-0')
+    expect(sidebar.classes()).not.toContain('md:max-xl:translate-x-0')
     expect(wrapper.find('button[aria-label="Close case navigation"]').exists()).toBe(false)
   })
 
-  it('translates the sidebar drawer on/off screen based on store.sidebarOpen (below xl)', async () => {
+  it('phone tier (<md): the drawer drops down from the top, not in from the side', async () => {
+    // Design doc §10.3: "case navigation moves into a top drawer" -- a
+    // different geometry from tablet's left-side drawer, both gated by the
+    // same store.sidebarOpen and the same isDrawerMode() in CaseSidebar.
     const store = useViewerStore()
     store.sidebarOpen = false
     const wrapper = mountLayout()
     const sidebar = wrapper.getComponent(CaseSidebarStub)
-    expect(sidebar.classes()).toContain('max-xl:-translate-x-full')
-    expect(sidebar.classes()).not.toContain('max-xl:translate-x-0')
+    expect(sidebar.classes()).toContain('max-md:top-14')
+    expect(sidebar.classes()).toContain('max-md:inset-x-0')
+    expect(sidebar.classes()).toContain('max-md:-translate-y-full')
+    expect(sidebar.classes()).not.toContain('max-md:left-0')
 
     store.sidebarOpen = true
     await wrapper.vm.$nextTick()
-    expect(sidebar.classes()).toContain('max-xl:translate-x-0')
-    expect(sidebar.classes()).not.toContain('max-xl:-translate-x-full')
+    expect(sidebar.classes()).toContain('max-md:translate-y-0')
+    expect(sidebar.classes()).not.toContain('max-md:-translate-y-full')
   })
 
-  it('also toggles visible/invisible (not just the transform), so a closed drawer leaves the tab order', async () => {
-    // A `-translate-x-full` element is still visible and focusable by
-    // default; only `visibility: hidden` removes a closed off-canvas drawer
-    // from keyboard/screen-reader traversal. Both are max-xl:-scoped so xl+
-    // (where the sidebar is resident, not a drawer) is never affected.
+  it('tablet tier (md..xl): the drawer slides in from the left, as before', async () => {
     const store = useViewerStore()
     store.sidebarOpen = false
     const wrapper = mountLayout()
     const sidebar = wrapper.getComponent(CaseSidebarStub)
-    expect(sidebar.classes()).toContain('max-xl:invisible')
-    expect(sidebar.classes()).not.toContain('max-xl:visible')
+    expect(sidebar.classes()).toContain('md:max-xl:left-0')
+    expect(sidebar.classes()).toContain('md:max-xl:-translate-x-full')
 
     store.sidebarOpen = true
     await wrapper.vm.$nextTick()
-    expect(sidebar.classes()).toContain('max-xl:visible')
-    expect(sidebar.classes()).not.toContain('max-xl:invisible')
+    expect(sidebar.classes()).toContain('md:max-xl:translate-x-0')
+    expect(sidebar.classes()).not.toContain('md:max-xl:-translate-x-full')
+  })
+
+  it('also toggles visible/invisible at both below-xl tiers (not just the transform), so a closed drawer leaves the tab order', async () => {
+    // A translated-off-screen element is still visible and focusable by
+    // default; only `visibility: hidden` removes a closed off-canvas drawer
+    // from keyboard/screen-reader traversal. Scoped so xl+ (where the
+    // sidebar is resident, not a drawer) is never affected.
+    const store = useViewerStore()
+    store.sidebarOpen = false
+    const wrapper = mountLayout()
+    const sidebar = wrapper.getComponent(CaseSidebarStub)
+    expect(sidebar.classes()).toContain('max-md:invisible')
+    expect(sidebar.classes()).toContain('md:max-xl:invisible')
+    expect(sidebar.classes()).not.toContain('max-md:visible')
+    expect(sidebar.classes()).not.toContain('md:max-xl:visible')
+
+    store.sidebarOpen = true
+    await wrapper.vm.$nextTick()
+    expect(sidebar.classes()).toContain('max-md:visible')
+    expect(sidebar.classes()).toContain('md:max-xl:visible')
+  })
+
+  it('xl+: collapses the sidebar to 0 width when closed, instead of drawer-translating it', async () => {
+    // Design doc §10.1: both side panels are collapsible at desktop, for
+    // near-full-screen projection/immersive viewing. At xl+ there's no
+    // drawer -- sidebarOpen instead toggles width.
+    const store = useViewerStore()
+    store.sidebarOpen = true
+    const wrapper = mountLayout()
+    const sidebar = wrapper.getComponent(CaseSidebarStub)
+    expect(sidebar.classes()).not.toContain('xl:w-0')
+
+    store.sidebarOpen = false
+    await wrapper.vm.$nextTick()
+    expect(sidebar.classes()).toContain('xl:w-0')
+    expect(sidebar.classes()).toContain('xl:border-0')
+  })
+
+  it('xl+: collapses the content column to 0 width via contentOpen, independent of the sidebar', async () => {
+    const store = useViewerStore()
+    store.contentOpen = true
+    const wrapper = mountLayout()
+    const content = wrapper.get('#case-content-panel')
+    expect(content.classes()).toContain('xl:w-100')
+    expect(content.classes()).not.toContain('xl:w-0')
+
+    store.contentOpen = false
+    await wrapper.vm.$nextTick()
+    expect(content.classes()).toContain('xl:w-0')
+    expect(content.classes()).toContain('xl:border-0')
+    expect(content.classes()).not.toContain('xl:w-100')
+  })
+
+  describe('tablet bottom sheet (design doc §10.2)', () => {
+    it('defaults to a peek height, not half-screen, so it does not cover the stage on first paint', () => {
+      const wrapper = mountLayout()
+      const content = wrapper.get('#case-content-panel')
+      expect(content.classes()).toContain('md:max-xl:max-h-20')
+      expect(content.classes()).not.toContain('md:max-xl:max-h-[50dvh]')
+    })
+
+    it('the handle expands it to half-screen height when tapped, and back when tapped again', async () => {
+      const wrapper = mountLayout()
+      const handle = wrapper.get('button[aria-label="Expand content panel"]')
+      expect(handle.attributes('aria-expanded')).toBe('false')
+
+      await handle.trigger('click')
+      const content = wrapper.get('#case-content-panel')
+      expect(content.classes()).toContain('md:max-xl:max-h-[50dvh]')
+      expect(content.classes()).not.toContain('md:max-xl:max-h-20')
+      const expandedHandle = wrapper.get('button[aria-label="Collapse content panel"]')
+      expect(expandedHandle.attributes('aria-expanded')).toBe('true')
+
+      await expandedHandle.trigger('click')
+      expect(wrapper.get('#case-content-panel').classes()).toContain('md:max-xl:max-h-20')
+    })
+
+    it('the handle only renders (as a flex box) at the tablet tier', () => {
+      // hidden by default, `flex` only within the md..xl compound variant --
+      // never visible/tappable at phone (no bottom sheet) or xl+ (its own
+      // AppHeader button handles collapse there instead).
+      const wrapper = mountLayout()
+      const handle = wrapper.get('button[aria-label="Expand content panel"]')
+      expect(handle.classes()).toContain('hidden')
+      expect(handle.classes()).toContain('md:max-xl:flex')
+    })
+
+    it('is fixed to the bottom of the viewport only at the tablet tier', () => {
+      const wrapper = mountLayout()
+      const content = wrapper.get('#case-content-panel')
+      expect(content.classes()).toContain('md:max-xl:fixed')
+      expect(content.classes()).toContain('md:max-xl:bottom-0')
+    })
   })
 
   it('only renders the drawer overlay while the sidebar is explicitly open', async () => {
@@ -111,7 +249,7 @@ describe('default layout', () => {
     expect(scrim.classes()).not.toContain('inset-0')
   })
 
-  it('has exactly one <main> landmark wrapping stage and content, with no <aside> mislabelling the copy', () => {
+  it('has exactly one <main> landmark wrapping every region, with no <aside> mislabelling the copy', () => {
     const wrapper = mountLayout()
     const mains = wrapper.findAll('main')
     expect(mains).toHaveLength(1)
@@ -129,13 +267,22 @@ describe('default layout', () => {
     expect(stage?.getAttribute('aria-label')).toBeTruthy()
   })
 
-  it('gives the stage a minimum height below xl, so it cannot be flexed to 0', () => {
+  it('gives the stage a minimum height at tablet, so it cannot be flexed to 0', () => {
     // In a column flex layout with a shrink-0 sibling, flex-1 alone lets a
     // flex-basis-0 stage resolve to 0px once content exceeds the container
     // (negative free space defeats flex-grow). A min-height floors it.
     const wrapper = mountLayout()
     const stage = wrapper.find('.stage-marker').element.closest('section')
-    expect(stage?.className).toMatch(/max-xl:min-h-\d/)
+    expect(stage?.className).toMatch(/md:max-xl:min-h-\d/)
+  })
+
+  it('forces the stage to an exact 1:1 square at phone, per design doc §10.3', () => {
+    const wrapper = mountLayout()
+    const stage = wrapper.find('.stage-marker').element.closest('section')
+    expect(stage?.className).toContain('max-md:aspect-square')
+    // flex-none, not flex-1, at phone -- otherwise flex-grow sizing fights
+    // the aspect ratio for the final height instead of yielding to it.
+    expect(stage?.className).toContain('max-md:flex-none')
   })
 
   it('has a skip link, as the very first focusable element, targeting #main-content', () => {
@@ -154,17 +301,21 @@ describe('default layout', () => {
     // visitor until the bundle ran. Reads the raw SFC source (not the
     // compiled component) so a reintroduced `window.innerWidth` read would
     // fail this even if it were buried inside a computed property. Covers
-    // all three of Task 5's own files, not just this one -- the same
-    // mistake in AppHeader or CaseSidebar would be just as much a
-    // reintroduction of the bug this guards against. (CaseSidebar
+    // every file this task has touched, not just this one -- the same
+    // mistake in AppHeader, CaseSidebar, or the store would be just as much
+    // a reintroduction of the bug this guards against. (CaseSidebar
     // deliberately uses `getComputedStyle(el).position` to gate its focus
     // trap -- that's a point-in-time read of what CSS already decided for
     // one element, not a duplicated pixel threshold, so it isn't in this
-    // banned list; see the comment above `isDrawerMode` in CaseSidebar.vue.)
+    // banned list; see the comment above `isDrawerMode` in CaseSidebar.vue.
+    // Adding a third `position: fixed`-triggering tier this round didn't
+    // change that reasoning: the gate still only asks "is CSS currently
+    // treating this as a drawer", regardless of which edge it drops from.)
     const files = [
       '../app/layouts/default.vue',
       '../app/components/nav/AppHeader.vue',
       '../app/components/nav/CaseSidebar.vue',
+      '../app/stores/viewer.ts',
     ]
     for (const file of files) {
       const src = readFileSync(

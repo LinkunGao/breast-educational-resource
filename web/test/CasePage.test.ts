@@ -21,6 +21,7 @@ function stubRoute(params: Record<string, string | undefined>) {
 const NuxtLayoutStub = {
   template: `
     <div>
+      <div class="heading-slot"><slot name="heading" /></div>
       <div class="stage-slot"><slot name="stage" /></div>
       <div class="content-slot"><slot name="content" /></div>
     </div>
@@ -39,12 +40,15 @@ describe('case page', () => {
     capturedPageMeta = undefined
   })
 
-  it('renders stage and content into NuxtLayout\'s two slots, falling back to the first modality', () => {
+  it('renders heading/stage/content into NuxtLayout\'s slots, falling back to the first modality', () => {
     stubRoute({ slug: 'density-d', modality: undefined })
     const wrapper = mountPage()
 
     expect(wrapper.find('.stage-slot').text()).toContain('Anatomy')
-    expect(wrapper.find('.content-slot h1').text()).toBe('Extremely dense')
+    // Case heading lives in its own #heading slot (design doc §10.1's ASCII
+    // puts it atop the stage column, not the content column).
+    expect(wrapper.find('.heading-slot h1').text()).toBe('Extremely dense')
+    expect(wrapper.find('.content-slot h1').exists()).toBe(false)
     expect(wrapper.find('.content-slot p.text-caption').text()).toBe('Anatomy')
   })
 
@@ -52,7 +56,7 @@ describe('case page', () => {
     stubRoute({ slug: 'cancer-dcis', modality: 'mri' })
     const wrapper = mountPage()
 
-    expect(wrapper.find('.content-slot h1').text()).toBe('DCIS')
+    expect(wrapper.find('.heading-slot h1').text()).toBe('DCIS')
     expect(wrapper.find('.content-slot p.text-caption').text()).toBe('3D MRI')
     expect(wrapper.find('.stage-slot').text()).toContain('3D MRI')
   })
