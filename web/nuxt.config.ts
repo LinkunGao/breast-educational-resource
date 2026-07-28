@@ -14,7 +14,8 @@ export default defineNuxtConfig({
 
   runtimeConfig: {
     public: {
-      // 设计文档 §9.2：本地/GitHub Pages 走同源，Vercel 可指向对象存储
+      // Design doc §9.2: local and GitHub Pages serve same-origin; Vercel can
+      // point this at object storage instead.
       assetBase: '/modelView/',
     },
   },

@@ -31,7 +31,7 @@ describe('contrastRatio', () => {
   })
 
   it('scores the legacy accent below the AA body-text floor', () => {
-    // 设计文档 §5.1：#EB3175 实测 4.02:1，因此降级为图形色
+    // Design doc §5.1: #EB3175 measures 4.02:1, so it is demoted to graphics only
     expect(contrastRatio('#EB3175', '#FFFFFF')).toBeLessThan(4.5)
     expect(contrastRatio('#EB3175', '#FFFFFF')).toBeGreaterThanOrEqual(3)
   })

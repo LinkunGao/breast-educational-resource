@@ -4,13 +4,14 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { contrastRatio } from '../app/utils/contrast'
 
-/** 从 tokens.css 的 @theme 块里读出全部 --color-* 值。
- *  注意：这里不能写成 `new URL('../app/....css', import.meta.url)` ——
- *  Vite 的 import-analysis 插件会把这个字面量模式静态识别为「资源 URL」
- *  并改写成 dev-server 资源地址（如 http://localhost:3000/...），
- *  而不是运行时按 import.meta.url 做路径解析，导致 fileURLToPath 在
- *  真正检查文件是否存在之前就先因为 scheme 不是 file: 而抛错。
- *  用 node:path 手动拼路径可以绕开这个静态改写。 */
+/** Read every --color-* value out of the @theme block in tokens.css.
+ *  Note: this cannot be written as `new URL('../app/....css', import.meta.url)`.
+ *  Vite's import-analysis plugin recognises that literal pattern statically as
+ *  an "asset URL" and rewrites it to a dev-server address (something like
+ *  http://localhost:3000/...) rather than resolving it at runtime against
+ *  import.meta.url. fileURLToPath then throws on the non-file: scheme before
+ *  it ever checks whether the file exists. Building the path by hand with
+ *  node:path sidesteps that static rewrite. */
 function readColorTokens(): Record<string, string> {
   const tokensPath = resolve(
     dirname(fileURLToPath(import.meta.url)),
@@ -29,7 +30,7 @@ function readColorTokens(): Record<string, string> {
 
 const t = readColorTokens()
 
-/** 解析式测试的失效模式是「匹配不到就静默跳过」。先钉死名单。 */
+/** A parsing test fails silently when nothing matches, so pin the list first. */
 const REQUIRED = [
   'bg', 'surface', 'surface-sunken', 'border', 'border-strong',
   'text', 'text-muted', 'text-subtle',
@@ -76,8 +77,9 @@ describe('brand and modality inks meet AA on white', () => {
 })
 
 describe('documented exceptions stay in the graphics-only band', () => {
-  // 设计文档 §5.1：这两个色达不到正文 AA，被钉在 3:1 图形带里，
-  // 断言两端是为了防止它们哪天被"顺手调深"后重新流回正文。
+  // Design doc §5.1: neither colour reaches body-text AA, so both are pinned
+  // into the 3:1 graphics band. Asserting both ends stops someone darkening
+  // one in passing and letting it drift back into body text.
   for (const name of ['text-subtle', 'accent-hot'] as const) {
     it(`--color-${name} is 3:1..4.5:1 on white`, () => {
       const ratio = contrastRatio(t[name]!, t.surface!)

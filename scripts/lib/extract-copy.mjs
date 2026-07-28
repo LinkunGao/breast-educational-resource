@@ -3,18 +3,22 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 /**
- * 从 frontend/plugins/data.js 取出四张表。
+ * Pull the four lookup tables out of frontend/plugins/data.js.
  *
- * data.js 的默认导出是一个 Nuxt 2 plugin 函数，直接 import 会连带执行
- * inject()。这里把 `export default` 之前的部分（全是常量声明）切出来，
- * 补一个 export 语句写成临时 .mjs 再动态 import —— 拿到的是 JS 引擎求值
- * 后的真实字符串，零转写风险。
+ * data.js default-exports a Nuxt 2 plugin function, so importing it directly
+ * would also run inject(). Instead, slice off everything before
+ * `export default` — all of it constant declarations — append an export
+ * statement, write that to a temporary .mjs and dynamically import it. What
+ * comes back are the real strings as the JS engine evaluated them, with zero
+ * transcription risk.
  *
- * 临时文件写在仓库内的 web/.tmp-extract-copy/（而不是 OS tmpdir）：这个
- * 函数也在 Vitest 里跑（web/test/cases.test.ts 直接 import 它），而 Vite 的
- * SSR 模块运行时对动态 import() 也套用 server.fs.allow 的服务边界 ——
- * OS tmpdir 在这个边界之外，会报 "Cannot find module"，哪怕文件确实存在。
- * 写到 web/ 内部就落在默认允许的目录树里，不需要放宽 fs.allow。
+ * The temporary file goes in web/.tmp-extract-copy/ inside the repo rather
+ * than the OS tmpdir: this function also runs under Vitest (web/test/
+ * cases.test.ts imports it directly), and Vite's SSR module runner applies
+ * the server.fs.allow serving boundary to dynamic import() as well. The OS
+ * tmpdir sits outside that boundary and fails with "Cannot find module" even
+ * though the file is on disk. Writing inside web/ lands in the default
+ * allowed tree, so fs.allow needs no widening.
  */
 const SHIM_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'web', '.tmp-extract-copy')
 

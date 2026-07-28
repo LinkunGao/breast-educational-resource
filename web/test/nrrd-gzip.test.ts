@@ -2,7 +2,7 @@ import { gunzipSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
 import { gzipNrrd, rewriteEncoding, splitNrrd } from '../../scripts/lib/nrrd-gzip.mjs'
 
-/** 造一个最小的合法 NRRD：头 + 空行 + 二进制体。 */
+/** Build a minimal valid NRRD: header + blank line + binary body. */
 function makeNrrd(encoding = 'raw', data = Buffer.from([1, 2, 3, 4])): Buffer {
   const header = [
     'NRRD0004',

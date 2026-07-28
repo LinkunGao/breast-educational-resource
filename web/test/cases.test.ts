@@ -5,10 +5,12 @@ import { extractLegacyCopy } from '../../scripts/lib/extract-copy.mjs'
 import { cases, enabledCases, getCase, getModality } from '../content/cases'
 import type { ModalityId } from '../content/types'
 
-/** 独立于 copy.generated.ts 再取一次原文，确保映射关系正确。
- *  注意：不能写成 `new URL('../../frontend/...', import.meta.url)` —— Vite 的
- *  import-analysis 插件会把这个字面量模式静态识别为「资源 URL」并改写掉，
- *  详见 web/test/tokens.test.ts 顶部注释。用 node:path 手动拼路径绕开。 */
+/** Re-extract the source copy independently of copy.generated.ts, so the
+ *  mapping itself is verified rather than assumed.
+ *  Note: this cannot be written as `new URL('../../frontend/...', import.meta.url)`.
+ *  Vite's import-analysis plugin recognises that literal pattern statically as
+ *  an "asset URL" and rewrites it away; see the comment at the top of
+ *  web/test/tokens.test.ts. Build the path by hand with node:path instead. */
 let legacy: Awaited<ReturnType<typeof extractLegacyCopy>>
 
 beforeAll(async () => {
@@ -19,7 +21,7 @@ beforeAll(async () => {
   legacy = await extractLegacyCopy(dataJsPath)
 })
 
-/** 新 slug -> 旧 model name */
+/** New slug -> legacy model name */
 const SLUG_TO_LEGACY: Record<string, string> = {
   'the-breast': 'normal',
   'density-a': 'density_1',
@@ -34,7 +36,8 @@ const SLUG_TO_LEGACY: Record<string, string> = {
   'cancer-ductal': 'cancer_ductal',
 }
 
-/** 每个模态该取哪张原文表。挂错表是本任务最真实的风险。 */
+/** Which source table each modality draws from. Wiring one to the wrong table
+ *  is this task's most realistic failure. */
 const MODALITY_TO_TABLE = {
   anatomy: 'leftPanelText',
   mammogram: 'middlePanelText',
@@ -141,7 +144,7 @@ describe('every modality carries the right paragraph, byte for byte', () => {
   }
 
   it('does not cross-wire the anatomy and MRI tables', () => {
-    // 这两张表最容易搞混：都在讲"看得见/看不见"。
+    // The easiest pair to confuse: both discuss what is and isn't visible.
     const d = getCase('density-d')!
     expect(d.modalities.find(m => m.id === 'anatomy')!.text)
       .toBe(legacy.leftPanelText.density_4)

@@ -1,7 +1,7 @@
 import { anatomyText, mammogramText, mriText } from './copy.generated'
 import type { BiRads, Case, Modality, ModalityId } from './types'
 
-/** 构造一个模态条目，统一保证 keyFacts 为空数组（全局约束）。 */
+/** Build a modality entry, always with an empty keyFacts (global constraint). */
 function modality(
   id: ModalityId,
   label: string,
@@ -12,15 +12,17 @@ function modality(
   return { id, label, asset, viewPreset, text, keyFacts: [] }
 }
 
-// ── 病例目录 ───────────────────────────────────────────────
-// 医学原文来自 ./copy.generated.ts（由 scripts/extract-copy.mjs 生成）。
+// ── Case catalogue ─────────────────────────────────────────
+// The medical copy comes from ./copy.generated.ts (produced by
+// scripts/extract-copy.mjs).
 //
-// 模态序列由资产真相驱动（设计文档 §3.1 的 md5 审计）：
-//   · m2d.nrrd  4 份 = 2 张图，density A 与 D 相同 → 全部弃用
-//   · u2d.nrrd  5 份 = 1 张图，原为 Cyst 制作 → 仅 Cyst 保留
-//   · GLB 仅 density-1..4 存在 → benign/cancer 无 anatomy 模态
+// Modality sequences are driven by what the assets actually are (the md5
+// audit in design doc §3.1):
+//   · m2d.nrrd  4 files = 2 images, density A and D identical -> all dropped
+//   · u2d.nrrd  5 files = 1 image, originally made for Cyst -> Cyst only
+//   · GLBs exist only for density-1..4 -> benign/cancer have no anatomy
 
-/** density 系列共用的构造器：三个模态、同一目录布局。 */
+/** Shared builder for the density series: three modalities, one directory layout. */
 function densityCase(
   slug: string,
   dir: string,
@@ -44,7 +46,7 @@ function densityCase(
   }
 }
 
-/** benign/cancer 系列：无 anatomy，两个或三个影像模态。 */
+/** benign/cancer series: no anatomy, two or three imaging modalities. */
 function lesionCase(
   slug: string,
   group: 'benign' | 'cancer',
@@ -75,7 +77,7 @@ export const cases: Case[] = [
     group: 'overview',
     title: 'The Breast',
     heading: 'The Breast',
-    // 无自有资产，全部借用 density-1（设计文档 §4.4）
+    // Has no assets of its own; borrows density-1 throughout (design doc §4.4)
     referenceDensity: 'A',
     modalities: [
       modality('anatomy', 'Anatomy', 'density-1/left/density25.glb', 'left_breast_view.json', anatomyText.normal),
@@ -97,8 +99,9 @@ export const cases: Case[] = [
   lesionCase('cancer-ductal', 'cancer', 'cancer-ductal', 'Ductal', 'Ductal', 27, 'cancer_ductal'),
 
   {
-    // 文案与病灶索引齐备，但无任何影像资产（设计文档 §4.4）。
-    // 保留以免文案丢失；不生成路由与导航入口。
+    // Copy and lesion index are both present, but there are no imaging
+    // assets at all (design doc §4.4). Kept so the copy is not lost;
+    // generates no route and no nav entry.
     slug: 'benign-calcifications',
     group: 'benign',
     title: 'Calcifications',

@@ -6,7 +6,6 @@ build
 .claude
 plan
 
-/node_modules
 web/node_modules
 web/.nuxt
 web/.output

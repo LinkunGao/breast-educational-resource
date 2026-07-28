@@ -2,8 +2,9 @@
 /**
  * frontend/plugins/data.js  ->  web/content/copy.generated.ts
  *
- * 医学文案零改动是硬约束，所以这些字符串永远由脚本生成，不手写。
- * data.js 变了就重跑本脚本；生成文件入库，以便审阅 diff。
+ * Leaving the medical copy untouched is a hard constraint, so these strings
+ * are always generated, never hand-written. Re-run this script whenever
+ * data.js changes; the generated file is committed so the diff is reviewable.
  */
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
