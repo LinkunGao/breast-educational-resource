@@ -6,11 +6,9 @@ build
 .claude
 plan
 
-web/node_modules
-web/.nuxt
-web/.output
-web/dist
-web/.tmp-extract-copy
-
+# Uncompressed source imaging. scripts/optimize-assets.mjs reads this and
+# writes the compressed build into web/public/modelView.
 assets-src/
-web/public/modelView/
+
+# web/ ignores its own build outputs, node_modules and staging directories
+# in web/.gitignore -- do not duplicate them here.

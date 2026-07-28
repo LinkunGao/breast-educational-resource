@@ -13,6 +13,17 @@ dist
 public/modelView.staging
 public/modelView.complete
 
+# Compressed imaging build, produced by scripts/optimize-assets.mjs from
+# assets-src/. Task 12 must bring this under version control when frontend/
+# (which currently holds the only committed copy of the assets) is deleted,
+# or the deployed site will have no models to serve.
+public/modelView/
+
+# Shim modules written by scripts/lib/extract-copy.mjs. They live inside
+# web/ rather than the OS tmpdir so Vite's fs.allow boundary covers them;
+# each is unlinked in a finally block, so this directory stays empty.
+.tmp-extract-copy
+
 # Node dependencies
 node_modules
 
