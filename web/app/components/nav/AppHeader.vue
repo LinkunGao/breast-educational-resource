@@ -8,7 +8,7 @@ const store = useViewerStore()
   >
     <button
       type="button"
-      class="rounded-ctl p-2 text-text-muted hover:bg-surface-sunken xl:hidden"
+      class="flex size-11 shrink-0 items-center justify-center rounded-ctl text-text-muted hover:bg-surface-sunken xl:hidden"
       :aria-expanded="store.sidebarOpen"
       aria-controls="case-sidebar"
       aria-label="Toggle case navigation"
@@ -26,7 +26,7 @@ const store = useViewerStore()
 
     <NuxtLink
       to="/about"
-      class="ml-auto rounded-ctl px-3 py-2 text-body-sm text-text-muted hover:bg-surface-sunken hover:text-text"
+      class="ml-auto flex min-h-11 items-center rounded-ctl px-3 text-body-sm text-text-muted hover:bg-surface-sunken hover:text-text"
     >
       About
     </NuxtLink>

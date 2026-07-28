@@ -91,6 +91,25 @@
     outline: 2px solid var(--color-brand);
     outline-offset: 2px;
   }
+
+  /* Global constraint: prefers-reduced-motion disables motion, it does not
+   * merely shorten it. Zero duration/delay (not a "fast" 1ms) so transitions
+   * and animations resolve to their end state with no intermediate frames,
+   * and page/anchor scrolling jumps instead of animating. default.vue's
+   * drawer transition is the first thing in the app that animates; every
+   * later task's animation (Task 9/10 camera choreography included)
+   * inherits this rule for free because it's global, not per-component. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0s !important;
+      animation-delay: 0s !important;
+      transition-duration: 0s !important;
+      transition-delay: 0s !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }
 
 @utility prose-medical {

@@ -1,4 +1,4 @@
-import { computed, reactive, ref, watch, watchEffect } from 'vue'
+import { computed, nextTick, reactive, ref, watch, watchEffect } from 'vue'
 import { vi } from 'vitest'
 import { useViewerStore } from '../app/stores/viewer'
 
@@ -12,4 +12,5 @@ vi.stubGlobal('computed', computed)
 vi.stubGlobal('reactive', reactive)
 vi.stubGlobal('watch', watch)
 vi.stubGlobal('watchEffect', watchEffect)
+vi.stubGlobal('nextTick', nextTick)
 vi.stubGlobal('useViewerStore', useViewerStore)

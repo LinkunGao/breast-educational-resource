@@ -111,3 +111,35 @@ describe('modality ink and fill are distinguishable from each other', () => {
     })
   }
 })
+
+describe('prefers-reduced-motion disables motion globally, not just here', () => {
+  // Global constraint: this must DISABLE motion, not shorten it. A CSS
+  // engine isn't available in happy-dom, so this can only check the source
+  // declares zero-duration overrides -- it cannot confirm a real browser
+  // actually suppresses a specific transition. That needs a manual check
+  // (or an e2e test) with OS-level "reduce motion" turned on.
+  const css = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../app/assets/css/tokens.css'),
+    'utf8',
+  )
+  const query = css.match(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n {2}\}/)
+
+  it('declares an @media (prefers-reduced-motion: reduce) block', () => {
+    expect(query, 'no prefers-reduced-motion block found in tokens.css').not.toBeNull()
+  })
+
+  it('zeroes duration and delay for both transitions and animations, not a shortened value', () => {
+    const body = query![1]!
+    // Zero, not merely "short" (e.g. 1ms) -- a nonzero value would still
+    // run a (very fast) animation, which is exactly what this constraint
+    // forbids.
+    expect(body).toMatch(/animation-duration:\s*0s\s*!important/)
+    expect(body).toMatch(/animation-delay:\s*0s\s*!important/)
+    expect(body).toMatch(/transition-duration:\s*0s\s*!important/)
+    expect(body).toMatch(/transition-delay:\s*0s\s*!important/)
+  })
+
+  it('also forces instant (non-animated) scrolling', () => {
+    expect(query![1]!).toMatch(/scroll-behavior:\s*auto\s*!important/)
+  })
+})
