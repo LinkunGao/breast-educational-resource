@@ -25,7 +25,7 @@
  * below and the pipeline will copy the uncompressed original instead.
  */
 import { execFileSync } from 'node:child_process'
-import { cpSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { glob } from 'node:fs/promises'
 import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -63,6 +63,29 @@ function isPlaceholder(rel) {
   if (p.includes('u2d.nrrd') && !p.startsWith('benign-cyst/')) return true
   if (p.includes('u_view.json') && !p.startsWith('benign-cyst/')) return true
   return false
+}
+
+// Recognise an interrupted final swap before touching anything. The swap
+// below is: (1) rmSync(out), (2) renameSync(staging, out). If a previous run
+// died between those two calls, `out` is missing but `staging` holds a
+// complete build. That exact combination can only mean that: an ordinary
+// abandoned mid-loop run always has `out` still present (the loop writes
+// into `staging` and never touches `out` until the very end), and the
+// mid-loop failure handler further down always deletes `staging` itself
+// before this script exits. So "out absent, staging present" is unambiguous
+// proof of a complete build stranded by an interrupted swap -- promoting it
+// is strictly better than the alternative of unconditionally deleting a
+// complete, already-compressed ~349MB build (forcing a full rebuild) just
+// because the last run's rename step happened to fail, and it also stops
+// `out` from staying missing across every subsequent run for no reason.
+if (!existsSync(out) && existsSync(staging)) {
+  try {
+    renameSync(staging, out)
+    console.log(`  recovered  ${staging} held a complete build stranded by a run that was interrupted during its final swap; promoted it to ${out}`)
+  } catch (err) {
+    console.error(`\n  RECOVERY FAILED -- ${out} is missing and ${staging} looks like a complete build from an interrupted run, but promoting it failed: ${err.message}\n  Inspect ${staging} by hand; if it looks complete, rename it to ${out} yourself.`)
+    throw err
+  }
 }
 
 // Start every run with a fresh staging directory, never the live `out`.
@@ -131,18 +154,45 @@ try {
   }
 } catch (err) {
   // The run did not complete: discard the half-built staging directory so it
-  // can never look like a finished build, and leave the previous successful
-  // build in `out` untouched -- the app keeps serving it.
+  // can never look like a finished build, and leave whatever was in `out`
+  // (a previous successful build, or nothing at all on a first-ever run)
+  // exactly as it was -- the app keeps serving it if it exists.
   rmSync(staging, { recursive: true, force: true })
-  console.error(`\n  FAILED -- ${out} is untouched and still holds the previous build.`)
+  console.error(existsSync(out)
+    ? `\n  FAILED -- ${out} is untouched and still holds the previous build.`
+    : `\n  FAILED -- no build exists at ${out} yet (this looks like the first run, or a previous run never completed successfully).`)
   throw err
 }
 
 // Every file in this run succeeded: swap the new build into place. Both
 // directories are on the same filesystem (under web/public/), so this is a
 // cheap, near-atomic rename rather than a second multi-hundred-MB copy.
-rmSync(out, { recursive: true, force: true })
-renameSync(staging, out)
+//
+// Guarded like the loop above, because on Windows a running `nuxt dev`
+// holding web/public/modelView open, or an antivirus scan, can make either
+// call throw EBUSY/EPERM. The two failure points leave the world in very
+// different states and must be reported differently:
+//   - rmSync(out) throws: `out` was never touched, so the previous build is
+//     still intact and still being served.
+//   - rmSync(out) succeeds but renameSync then throws: `out` is now GONE,
+//     and the complete new build is sitting, unpromoted, in `staging`. The
+//     startup recovery step above will pick this exact state up and
+//     promote it automatically next run, but say so here too, with the
+//     manual fix, in case the site needs to be back sooner than "run this
+//     script again".
+let outRemoved = false
+try {
+  rmSync(out, { recursive: true, force: true })
+  outRemoved = true
+  renameSync(staging, out)
+} catch (err) {
+  if (!outRemoved) {
+    console.error(`\n  FAILED -- could not remove ${out} to swap in the new build: ${err.message}\n  The previous build is untouched and still being served.`)
+  } else {
+    console.error(`\n  FAILED -- ${out} was removed but the new build could not be promoted from ${staging}: ${err.message}\n  ${out} is currently MISSING. The complete new build is sitting in ${staging} -- promote it by hand with:\n    mv "${staging}" "${out}"\n  (or just re-run this script: it detects and recovers this exact state on startup).`)
+  }
+  throw err
+}
 
 console.log(`\n  total  ${mb(srcTotal)}MB -> ${mb(outTotal)}MB`)
 console.log(`  skipped ${skipped} placeholder file(s)`)
