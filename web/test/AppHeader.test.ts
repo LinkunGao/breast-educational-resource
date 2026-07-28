@@ -22,11 +22,16 @@ describe('AppHeader', () => {
     setActivePinia(createPinia())
   })
 
-  it('reflects the store\'s sidebarOpen state on the toggle button', () => {
+  // Both the mobile drawer toggle and the desktop panel-collapse toggle
+  // carry aria-controls="case-sidebar" (they control the same element, just
+  // at different tiers), so `button[aria-controls="case-sidebar"]` alone is
+  // ambiguous now -- every selector below disambiguates by aria-label.
+
+  it('reflects the store\'s sidebarOpen state on the mobile/tablet drawer toggle', () => {
     const store = useViewerStore()
     store.sidebarOpen = false
     const wrapper = mountHeader()
-    const toggle = wrapper.get('button[aria-controls="case-sidebar"]')
+    const toggle = wrapper.get('button[aria-label="Toggle case navigation"]')
     expect(toggle.attributes('aria-expanded')).toBe('false')
   })
 
@@ -34,20 +39,31 @@ describe('AppHeader', () => {
     const store = useViewerStore()
     store.sidebarOpen = false
     const wrapper = mountHeader()
-    await wrapper.get('button[aria-controls="case-sidebar"]').trigger('click')
+    const hamburger = wrapper.get('button[aria-label="Toggle case navigation"]')
+    await hamburger.trigger('click')
     expect(store.sidebarOpen).toBe(true)
-    await wrapper.get('button[aria-controls="case-sidebar"]').trigger('click')
+    await hamburger.trigger('click')
     expect(store.sidebarOpen).toBe(false)
   })
 
-  it('aria-controls matches the id CaseSidebar actually renders, so the a11y contract holds', () => {
+  it('the hamburger is mobile/tablet only: xl+ has its own dedicated collapse button instead', () => {
+    // Round 3 made this button visible at every width so one field/control
+    // could serve both the drawer and the desktop collapse -- which is
+    // exactly what let sidebarOpen's single default be wrong for one tier
+    // or the other. Reverted: the hamburger only ever drives the drawer.
+    const wrapper = mountHeader()
+    const hamburger = wrapper.get('button[aria-label="Toggle case navigation"]')
+    expect(hamburger.classes()).toContain('xl:hidden')
+  })
+
+  it('the mobile drawer toggle\'s aria-controls matches the id CaseSidebar actually renders', () => {
     // Previously compared aria-controls to the literal 'case-sidebar' without
     // ever mounting CaseSidebar, so renaming CaseSidebar's id would still
     // pass. Mounting both and comparing the live values means either side
     // drifting from the other actually fails this.
     const header = mountHeader()
     const sidebar = mount(CaseSidebar, { global: { stubs: { NuxtLink: NuxtLinkStub } } })
-    expect(header.get('button').attributes('aria-controls'))
+    expect(header.get('button[aria-label="Toggle case navigation"]').attributes('aria-controls'))
       .toBe(sidebar.get('nav').attributes('id'))
   })
 
@@ -65,7 +81,7 @@ describe('AppHeader', () => {
     // thing controlling the size (size-11 = 44px, min-h-11 = 44px min
     // height). Sizing needs a real browser to confirm the rendered box.
     const wrapper = mountHeader()
-    const hamburger = wrapper.get('button[aria-controls="case-sidebar"]')
+    const hamburger = wrapper.get('button[aria-label="Toggle case navigation"]')
     expect(hamburger.classes()).toContain('size-11')
 
     const about = wrapper.findAllComponents(NuxtLinkStub)
@@ -73,13 +89,34 @@ describe('AppHeader', () => {
     expect(about.classes()).toContain('min-h-11')
   })
 
-  it('the case-nav toggle stays visible at every width (design doc §10.1: xl+ collapses, it does not hide)', () => {
-    // Below xl this opens/closes a drawer; at xl+ the same control instead
-    // collapses the resident sidebar to 0 width -- so unlike a mobile-only
-    // hamburger, it must never carry `xl:hidden`.
-    const wrapper = mountHeader()
-    const hamburger = wrapper.get('button[aria-controls="case-sidebar"]')
-    expect(hamburger.classes()).not.toContain('xl:hidden')
+  describe('sidebar-panel toggle (design doc §10.1, desktop-only)', () => {
+    it('reflects and toggles store.sidebarExpanded, independently of sidebarOpen', async () => {
+      const store = useViewerStore()
+      store.sidebarOpen = false
+      store.sidebarExpanded = true
+      const wrapper = mountHeader()
+      const toggle = wrapper.get('button[aria-label="Toggle case navigation panel"]')
+      expect(toggle.attributes('aria-expanded')).toBe('true')
+
+      await toggle.trigger('click')
+      expect(store.sidebarExpanded).toBe(false)
+      expect(store.sidebarOpen).toBe(false) // untouched by the desktop control
+      expect(toggle.attributes('aria-expanded')).toBe('false')
+    })
+
+    it('only renders (as a flex box) at xl+, since below xl this is the drawer\'s job instead', () => {
+      const wrapper = mountHeader()
+      const toggle = wrapper.get('button[aria-label="Toggle case navigation panel"]')
+      expect(toggle.classes()).toContain('hidden')
+      expect(toggle.classes()).toContain('xl:flex')
+    })
+
+    it('aria-controls matches the id CaseSidebar actually renders, same as the drawer toggle', () => {
+      const header = mountHeader()
+      const sidebar = mount(CaseSidebar, { global: { stubs: { NuxtLink: NuxtLinkStub } } })
+      expect(header.get('button[aria-label="Toggle case navigation panel"]').attributes('aria-controls'))
+        .toBe(sidebar.get('nav').attributes('id'))
+    })
   })
 
   describe('content-panel toggle (design doc §10.1, desktop-only)', () => {

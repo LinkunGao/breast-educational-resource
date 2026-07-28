@@ -14,19 +14,32 @@ export const useViewerStore = defineStore('viewer', () => {
 
   // Panel presence state -- tracks the user's explicit intent only; CSS
   // decides what that intent actually renders as at a given width (see
-  // default.vue, design doc §10.1-10.3). Both fields mean "is this panel in
-  // its normal, visible resting state" -- what that resting state looks
-  // like is a different CSS treatment at each of the three tiers:
+  // default.vue, design doc §10.1-10.3).
   //
-  // sidebarOpen (case navigation):
-  //   - xl+ (desktop, §10.1): the sidebar is resident; this toggles it
-  //     between its normal 240px width and fully collapsed (0px), the
-  //     "collapse both panels for projection" feature.
+  // sidebarOpen (case navigation drawer, below xl only):
   //   - md..xl (tablet, §10.2): a drawer sliding in from the left.
   //   - <md (phone, §10.3): a drawer dropping down from the top.
+  //   - xl+: no consumer. This used to also gate xl+'s panel-collapse, on
+  //     the reasoning that every consumer was max-xl:-scoped so the field
+  //     was provably inert there -- true when it was written, but false the
+  //     moment §10.1's desktop collapse gained a consumer of its own here,
+  //     which is exactly how a desktop visitor ended up with no sidebar on
+  //     first paint (round 3's regression). One field cannot have two
+  //     correct defaults for two tiers with opposite "normal" states, so
+  //     desktop collapse now has its own field below. Do not add an xl+
+  //     consumer to this one again.
   //   Defaults closed: below xl this is a full-screen drawer + dimming
   //   scrim, so a narrow-viewport visitor's first paint must be the case
   //   they came for, not a drawer already covering it.
+  //
+  // sidebarExpanded (case navigation panel, xl+ only):
+  //   - xl+ (desktop, §10.1): the sidebar is resident; this toggles it
+  //     between its normal 240px width and fully collapsed (0px), one half
+  //     of the "collapse both panels for projection" feature.
+  //   - Below xl: no consumer -- the drawer's presence is sidebarOpen's job.
+  //   Defaults expanded: §10.1 shows the sidebar resident by default, only
+  //   collapsed on demand, so a desktop visitor's first paint has case
+  //   navigation exactly as before this field existed.
   //
   // contentOpen (case content -- ModalityText, prev/next):
   //   - xl+ only: toggles the content column between its normal 400px
@@ -45,8 +58,12 @@ export const useViewerStore = defineStore('viewer', () => {
   //     just inline in the single column.
   //   Defaults open: this is the desktop-only "expanded by default, collapse
   //     on demand" panel the design doc describes, so xl+ visitors see it
-  //     exactly as before this field had any consumer.
+  //     exactly as before this field had any consumer. contentOpen never
+  //     had sidebarOpen's bug because it never had a second, below-xl
+  //     consumer needing the opposite default -- sidebarExpanded exists
+  //     specifically because sidebarOpen did.
   const sidebarOpen = ref(false)
+  const sidebarExpanded = ref(true)
   const contentOpen = ref(true)
 
   const cameraSnapshots = ref<Record<string, CameraSnapshot>>({})
@@ -67,6 +84,7 @@ export const useViewerStore = defineStore('viewer', () => {
     caseSlug,
     modalityId,
     sidebarOpen,
+    sidebarExpanded,
     contentOpen,
     cameraSnapshots,
     snapshotKey,

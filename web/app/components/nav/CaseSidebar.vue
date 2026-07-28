@@ -22,14 +22,15 @@ const groups = computed(() => {
 })
 
 // Below xl this <nav> is an off-canvas modal drawer (default.vue makes it
-// `max-xl:fixed`); at xl and above it's a permanently resident panel and
-// none of the modal behaviour below should engage. Rather than duplicating
-// the `xl` breakpoint as a JS pixel literal (the thing the "CSS decides
-// layout" constraint forbids), this asks the browser what CSS already
-// decided for this exact element: `max-xl:fixed` only takes effect below
-// xl, so reading the computed `position` back is a point-in-time query of
-// CSS's own decision, not a parallel width measurement that could drift
-// from it or run before CSS has painted.
+// `fixed` -- `max-md:fixed` at phone, `md:max-xl:fixed` at tablet); at xl
+// and above it's a permanently resident (collapsible, but never modal)
+// panel and none of the modal behaviour below should engage. Rather than
+// duplicating the `xl`/`md` breakpoints as JS pixel literals (the thing the
+// "CSS decides layout" constraint forbids), this asks the browser what CSS
+// already decided for this exact element: neither below-xl tier's `fixed`
+// rule takes effect at xl+, so reading the computed `position` back is a
+// point-in-time query of CSS's own decision, not a parallel width
+// measurement that could drift from it or run before CSS has painted.
 const navEl = ref<HTMLElement | null>(null)
 let previouslyFocused: HTMLElement | null = null
 

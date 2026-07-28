@@ -145,35 +145,98 @@ describe('default layout', () => {
     expect(sidebar.classes()).toContain('md:max-xl:visible')
   })
 
-  it('xl+: collapses the sidebar to 0 width when closed, instead of drawer-translating it', async () => {
-    // Design doc §10.1: both side panels are collapsible at desktop, for
-    // near-full-screen projection/immersive viewing. At xl+ there's no
-    // drawer -- sidebarOpen instead toggles width.
-    const store = useViewerStore()
-    store.sidebarOpen = true
-    const wrapper = mountLayout()
-    const sidebar = wrapper.getComponent(CaseSidebarStub)
-    expect(sidebar.classes()).not.toContain('xl:w-0')
+  describe('xl+ desktop collapse (design doc §10.1)', () => {
+    it('CRITICAL REGRESSION PIN: sidebarExpanded defaults true, so a desktop visitor has case navigation on first paint', () => {
+      // This is the bug: sidebarOpen used to double as xl+'s collapse flag,
+      // and defaulted false (correct for the drawer, wrong for a resident
+      // panel) -- a desktop visitor landed on xl:w-0. Every test that
+      // existed at the time set the flag before mounting, which is exactly
+      // why 188 passing tests didn't catch it. This one deliberately sets
+      // NEITHER sidebarOpen nor sidebarExpanded, so it exercises the real
+      // defaults, not a value the test forced.
+      const wrapper = mountLayout()
+      const sidebar = wrapper.getComponent(CaseSidebarStub)
+      expect(sidebar.classes()).not.toContain('xl:w-0')
+      expect(sidebar.classes()).not.toContain('xl:invisible')
+      expect(sidebar.classes()).toContain('xl:visible')
+    })
 
-    store.sidebarOpen = false
-    await wrapper.vm.$nextTick()
-    expect(sidebar.classes()).toContain('xl:w-0')
-    expect(sidebar.classes()).toContain('xl:border-0')
-  })
+    it('CRITICAL REGRESSION PIN: sidebarOpen defaults false, independent of sidebarExpanded, so the drawer is still closed below xl', () => {
+      // The fix for the above must not just flip the bug the other way and
+      // reopen the drawer by default below xl -- the two fields are
+      // deliberately independent.
+      const wrapper = mountLayout()
+      const sidebar = wrapper.getComponent(CaseSidebarStub)
+      expect(sidebar.classes()).toContain('max-md:-translate-y-full')
+      expect(sidebar.classes()).toContain('md:max-xl:-translate-x-full')
+    })
 
-  it('xl+: collapses the content column to 0 width via contentOpen, independent of the sidebar', async () => {
-    const store = useViewerStore()
-    store.contentOpen = true
-    const wrapper = mountLayout()
-    const content = wrapper.get('#case-content-panel')
-    expect(content.classes()).toContain('xl:w-100')
-    expect(content.classes()).not.toContain('xl:w-0')
+    it('collapses the sidebar to 0 width via sidebarExpanded, not sidebarOpen', async () => {
+      const store = useViewerStore()
+      store.sidebarExpanded = true
+      const wrapper = mountLayout()
+      const sidebar = wrapper.getComponent(CaseSidebarStub)
+      expect(sidebar.classes()).not.toContain('xl:w-0')
 
-    store.contentOpen = false
-    await wrapper.vm.$nextTick()
-    expect(content.classes()).toContain('xl:w-0')
-    expect(content.classes()).toContain('xl:border-0')
-    expect(content.classes()).not.toContain('xl:w-100')
+      store.sidebarExpanded = false
+      await wrapper.vm.$nextTick()
+      expect(sidebar.classes()).toContain('xl:w-0')
+      expect(sidebar.classes()).toContain('xl:border-0')
+
+      // toggling sidebarOpen (the drawer field) must not affect any of this
+      store.sidebarOpen = true
+      await wrapper.vm.$nextTick()
+      expect(sidebar.classes()).toContain('xl:w-0')
+    })
+
+    it('collapsed panels are also invisible at xl+, not just clipped -- otherwise ~10 links stay tabbable off-screen', async () => {
+      const store = useViewerStore()
+      store.sidebarExpanded = false
+      store.contentOpen = false
+      const wrapper = mountLayout()
+      const sidebar = wrapper.getComponent(CaseSidebarStub)
+      const content = wrapper.get('#case-content-panel')
+      expect(sidebar.classes()).toContain('xl:invisible')
+      expect(content.classes()).toContain('xl:invisible')
+
+      store.sidebarExpanded = true
+      store.contentOpen = true
+      await wrapper.vm.$nextTick()
+      expect(sidebar.classes()).toContain('xl:visible')
+      expect(content.classes()).toContain('xl:visible')
+    })
+
+    it('does not force xl:overflow-hidden unconditionally on the sidebar -- only while collapsed', async () => {
+      // xl:overflow-hidden merges onto CaseSidebar's own unconditional
+      // overflow-y-auto (same DOM element, Vue merges parent + component
+      // classes). Present at all times, it silently disables the case
+      // list's own scrolling even while expanded -- clipping it with no
+      // scrollbar at 200% zoom or a short viewport (§11).
+      const store = useViewerStore()
+      store.sidebarExpanded = true
+      const wrapper = mountLayout()
+      const sidebar = wrapper.getComponent(CaseSidebarStub)
+      expect(sidebar.classes()).not.toContain('xl:overflow-hidden')
+
+      store.sidebarExpanded = false
+      await wrapper.vm.$nextTick()
+      expect(sidebar.classes()).toContain('xl:overflow-hidden')
+    })
+
+    it('xl+: collapses the content column to 0 width via contentOpen, independent of the sidebar', async () => {
+      const store = useViewerStore()
+      store.contentOpen = true
+      const wrapper = mountLayout()
+      const content = wrapper.get('#case-content-panel')
+      expect(content.classes()).toContain('xl:w-100')
+      expect(content.classes()).not.toContain('xl:w-0')
+
+      store.contentOpen = false
+      await wrapper.vm.$nextTick()
+      expect(content.classes()).toContain('xl:w-0')
+      expect(content.classes()).toContain('xl:border-0')
+      expect(content.classes()).not.toContain('xl:w-100')
+    })
   })
 
   describe('tablet bottom sheet (design doc §10.2)', () => {
@@ -216,6 +279,53 @@ describe('default layout', () => {
       expect(content.classes()).toContain('md:max-xl:fixed')
       expect(content.classes()).toContain('md:max-xl:bottom-0')
     })
+
+    it('reserves space for its own peek height in <main>, so the peek never permanently covers content', () => {
+      // The sheet is `fixed bottom-0`, outside <main>'s normal flow, so
+      // without matching bottom padding its peek height (max-h-20 = 80px)
+      // permanently hides whatever <main> would otherwise end on -- Task
+      // 7's control bar.
+      const wrapper = mountLayout()
+      const main = wrapper.get('main')
+      expect(main.classes()).toContain('md:max-xl:pb-20')
+    })
+
+    it('sits below the drawer scrim in stacking order, so it is dimmed and unclickable while the drawer is open', () => {
+      // The scrim is a fixed z-20 layer (see the "insets the scrim" test
+      // below). The sheet previously used z-30 -- *above* the scrim -- so
+      // it stayed undimmed and interactive while the case-nav drawer was
+      // supposedly a modal overlay.
+      const wrapper = mountLayout()
+      const content = wrapper.get('#case-content-panel')
+      expect(content.classes()).toContain('md:max-xl:z-10')
+      expect(content.classes()).not.toContain('md:max-xl:z-30')
+    })
+
+    it('the handle meets the 44px tap-target floor and a 3:1 non-text contrast on its only visual affordance', () => {
+      // happy-dom can't measure rendered pixels or compute contrast against
+      // a stylesheet, so this asserts the utilities that control both:
+      // min-h-11 = 44px, and text-muted (6.36:1 on surface, tokens.test.ts
+      // already proves this generically) in place of border-strong (a
+      // re-derived 1.73:1 on surface -- under the 3:1 floor).
+      const wrapper = mountLayout()
+      const handle = wrapper.get('button[aria-label="Expand content panel"]')
+      expect(handle.classes()).toContain('min-h-11')
+      const indicator = handle.get('span')
+      expect(indicator.classes()).toContain('bg-text-muted')
+      expect(indicator.classes()).not.toContain('bg-border-strong')
+    })
+  })
+
+  it('the tablet drawer runs flush to the viewport bottom, matching the scrim (no dead gap)', () => {
+    // inset-y-14 insets both top AND bottom by 56px, leaving a 56px strip at
+    // the bottom where the scrim (which correctly runs to bottom-0) shows
+    // through undimmed by the drawer. Phone's top drawer already gets this
+    // right with top-14/bottom-0; tablet's left drawer should match.
+    const wrapper = mountLayout()
+    const sidebar = wrapper.getComponent(CaseSidebarStub)
+    expect(sidebar.classes()).toContain('md:max-xl:top-14')
+    expect(sidebar.classes()).toContain('md:max-xl:bottom-0')
+    expect(sidebar.classes()).not.toContain('md:max-xl:inset-y-14')
   })
 
   it('only renders the drawer overlay while the sidebar is explicitly open', async () => {
@@ -271,9 +381,14 @@ describe('default layout', () => {
     // In a column flex layout with a shrink-0 sibling, flex-1 alone lets a
     // flex-basis-0 stage resolve to 0px once content exceeds the container
     // (negative free space defeats flex-grow). A min-height floors it.
+    // Exact-token match, not a /min-h-\d/-shaped regex: that pattern is
+    // satisfied by a stray `min-h-1` (4px) just as much as the intended
+    // `min-h-100` (400px), so it would pass without actually pinning the
+    // floor's value.
     const wrapper = mountLayout()
     const stage = wrapper.find('.stage-marker').element.closest('section')
-    expect(stage?.className).toMatch(/md:max-xl:min-h-\d/)
+    const classes = stage?.className.split(/\s+/) ?? []
+    expect(classes).toContain('md:max-xl:min-h-100')
   })
 
   it('forces the stage to an exact 1:1 square at phone, per design doc §10.3', () => {

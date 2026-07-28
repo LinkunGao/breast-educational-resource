@@ -34,25 +34,35 @@ const sheetExpanded = ref(false)
            (`getComputedStyle(nav).position === 'fixed'`) relies on -- it
            doesn't care which edge the drawer comes from, only whether it's
            a drawer at all, so introducing the phone tier here doesn't
-           require touching that gate.
+           require touching that gate. Neither below-xl tier nor xl+'s
+           collapse ever sets `position` at xl+, so the gate stays false
+           there in both the expanded and collapsed state, as it should --
+           collapsing to 0 width isn't a modal, so it needs no trap, only a
+           reachable reopen control (AppHeader's dedicated xl+ button,
+           which lives outside this element entirely).
 
-           `invisible`/`visible` (not just the transform) keeps a closed
-           drawer's ~10 links out of the tab order and off-screen-reader,
-           since a translated-off-screen element is still focusable by
-           default. The delay pairing lets the close transition finish
-           before the panel actually goes non-interactive; opening reacts
-           instantly. -->
+           `invisible`/`visible` (not just the transform/width) keeps a
+           closed drawer's ~10 links, and a collapsed desktop panel's same
+           links, out of the tab order and off-screen-reader -- a
+           translated-off-screen or 0-width element is still focusable by
+           default. The delay pairing lets the closing/collapsing
+           transition finish before the panel actually goes
+           non-interactive; opening/expanding reacts instantly. -->
       <CaseSidebar
         class="max-md:fixed max-md:inset-x-0 max-md:top-14 max-md:bottom-0 max-md:z-30 max-md:w-full
                max-md:shadow-lg max-md:transition-[transform,visibility] max-md:duration-200
-               md:max-xl:fixed md:max-xl:inset-y-14 md:max-xl:left-0 md:max-xl:z-30 md:max-xl:shadow-lg
+               md:max-xl:fixed md:max-xl:top-14 md:max-xl:bottom-0 md:max-xl:left-0 md:max-xl:z-30 md:max-xl:shadow-lg
                md:max-xl:transition-[transform,visibility] md:max-xl:duration-200
-               xl:overflow-hidden xl:transition-[width] xl:duration-200"
-        :class="store.sidebarOpen
-          ? 'max-md:visible max-md:translate-y-0 max-md:delay-0 md:max-xl:visible md:max-xl:translate-x-0 md:max-xl:delay-0'
-          : `max-md:invisible max-md:-translate-y-full max-md:delay-200
-             md:max-xl:invisible md:max-xl:-translate-x-full md:max-xl:delay-200
-             xl:w-0 xl:border-0`"
+               xl:transition-[width,visibility] xl:duration-200"
+        :class="[
+          store.sidebarOpen
+            ? 'max-md:visible max-md:translate-y-0 max-md:delay-0 md:max-xl:visible md:max-xl:translate-x-0 md:max-xl:delay-0'
+            : `max-md:invisible max-md:-translate-y-full max-md:delay-200
+               md:max-xl:invisible md:max-xl:-translate-x-full md:max-xl:delay-200`,
+          store.sidebarExpanded
+            ? 'xl:visible xl:delay-0'
+            : 'xl:invisible xl:w-0 xl:border-0 xl:overflow-hidden xl:delay-200',
+        ]"
       />
 
       <!-- Drawer scrim, below xl only, while the drawer is open. Inset below
@@ -75,11 +85,17 @@ const sheetExpanded = ref(false)
            required phone order (case heading -> stepper -> 1:1 stage ->
            control bar -> body copy -> prev/next) -- nesting each region in
            that order once and switching flex-direction per tier produces
-           the right order at every tier without any CSS `order` juggling. -->
+           the right order at every tier without any CSS `order` juggling.
+
+           md:max-xl:pb-20 reserves space for the tablet bottom sheet's own
+           peek height (max-h-20 below): the sheet is `fixed bottom-0` and
+           so is not part of this element's normal flow, and without this
+           padding its last 80px permanently covers whatever the scrollable
+           content ends on -- which will be Task 7's control bar. -->
       <main
         id="main-content"
         tabindex="-1"
-        class="flex min-w-0 flex-1 flex-col overflow-y-auto xl:flex-row xl:overflow-hidden"
+        class="flex min-w-0 flex-1 flex-col overflow-y-auto md:max-xl:pb-20 xl:flex-row xl:overflow-hidden"
       >
         <div class="flex min-h-0 min-w-0 flex-1 flex-col">
           <!-- Placeholder: Task 6's CaseHeader (case title + BI-RADS badge)
@@ -130,32 +146,42 @@ const sheetExpanded = ref(false)
              single column). The two xl+ width utilities and the two
              tablet max-height utilities are each mutually exclusive (never
              both present at once), so there's no same-variant specificity
-             ambiguity between them. -->
+             ambiguity between them.
+
+             md:max-xl:z-10, below the drawer scrim's z-20: without this the
+             sheet sat *above* the scrim, so it stayed undimmed and
+             clickable while the case-nav drawer was supposedly modal. -->
         <div
           id="case-content-panel"
           class="shrink-0 border-border bg-surface
                  max-md:border-t
-                 md:max-xl:fixed md:max-xl:inset-x-0 md:max-xl:bottom-0 md:max-xl:z-30 md:max-xl:overflow-y-auto
+                 md:max-xl:fixed md:max-xl:inset-x-0 md:max-xl:bottom-0 md:max-xl:z-10 md:max-xl:overflow-y-auto
                  md:max-xl:rounded-t-card md:max-xl:border md:max-xl:shadow-lg
                  md:max-xl:transition-[max-height] md:max-xl:duration-200
-                 xl:overflow-y-auto xl:border-l xl:transition-[width] xl:duration-200"
+                 xl:overflow-y-auto xl:border-l xl:transition-[width,visibility] xl:duration-200"
           :class="[
-            store.contentOpen ? 'xl:w-100' : 'xl:w-0 xl:border-0 xl:overflow-hidden',
+            store.contentOpen
+              ? 'xl:w-100 xl:visible xl:delay-0'
+              : 'xl:w-0 xl:border-0 xl:overflow-hidden xl:invisible xl:delay-200',
             sheetExpanded ? 'md:max-xl:max-h-[50dvh]' : 'md:max-xl:max-h-20',
           ]"
         >
           <!-- Bottom-sheet handle, tablet only. Dragging it open needs a
                real pointer/touch gesture (a browser, not this test suite);
                tapping it is the keyboard- and gesture-free equivalent of
-               "pull up to half-screen". -->
+               "pull up to half-screen". min-h-11 (not the visually-smaller
+               py-2 box it used to be) meets the 44px tap-target floor;
+               bg-text-muted (not bg-border-strong, 1.73:1 on surface) meets
+               the 3:1 non-text contrast floor for the handle's only visual
+               affordance. -->
           <button
             type="button"
-            class="hidden w-full items-center justify-center py-2 md:max-xl:flex"
+            class="hidden min-h-11 w-full items-center justify-center md:max-xl:flex"
             :aria-expanded="sheetExpanded"
             :aria-label="sheetExpanded ? 'Collapse content panel' : 'Expand content panel'"
             @click="sheetExpanded = !sheetExpanded"
           >
-            <span class="h-1 w-10 rounded-full bg-border-strong" aria-hidden="true" />
+            <span class="h-1 w-10 rounded-full bg-text-muted" aria-hidden="true" />
           </button>
 
           <slot name="content" />
