@@ -6,9 +6,12 @@
 .cache
 dist
 
-# Asset pipeline staging directory (scripts/optimize-assets.mjs) --
-# disposable, swapped into public/modelView only on a successful run.
+# Asset pipeline staging directories (scripts/optimize-assets.mjs) --
+# disposable. .staging holds an in-progress run; .complete holds a finished
+# run once it's been marked complete, right before it's swapped into
+# public/modelView.
 public/modelView.staging
+public/modelView.complete
 
 # Node dependencies
 node_modules
