@@ -2,16 +2,27 @@
 import { enabledCases, getCase } from '~~/content/cases'
 import type { ModalityId } from '~~/content/types'
 
+// This must be a route guard, not a setup-time `throw createError`. Today
+// <NuxtPage> happens to remount this component on every param change
+// because its key interpolates the route path, so a top-level throw fires
+// on every navigation. Tasks 5/6 pin the page key so the WebGL canvas
+// survives modality switches -- once that happens, setup no longer re-runs
+// on navigation, so a throw here would only catch the *first* load. A
+// `validate` guard runs on every navigation regardless of component reuse,
+// so it keeps 404 behaviour correct after the key is pinned. Do not
+// "simplify" this back to a throw.
+definePageMeta({
+  validate: (route) => {
+    const c = getCase(String(route.params.slug))
+    return Boolean(c && !c.disabled)
+  },
+})
+
 const route = useRoute()
 const store = useViewerStore()
 
 const slug = computed(() => String(route.params.slug))
 const current = computed(() => getCase(slug.value))
-
-// Unknown or disabled case -> 404
-if (!current.value || current.value.disabled) {
-  throw createError({ statusCode: 404, statusMessage: 'Case not found', fatal: true })
-}
 
 /** Falls back to the first modality in the sequence when the URL omits one. */
 const modalityId = computed<ModalityId>(() => {

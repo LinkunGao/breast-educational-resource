@@ -1,22 +1,24 @@
 /**
- * Old site route -> new route (design doc §4.5).
- * Source: `generate.routes` in frontend/nuxt.config.js.
- * These paths may be bookmarked or linked externally and must stay reachable.
+ * Runtime-side view onto the legacy route table. The table itself lives in
+ * `content/legacyRoutes.ts` so nuxt.config.ts can build `routeRules` from
+ * the same data without depending on the app/ alias graph -- see that
+ * file's header comment for why. Imported by relative path (not `~~`) so
+ * this module also resolves under plain Vitest, with no Nuxt alias setup.
  */
-export const LEGACY_ROUTES: Record<string, string> = {
-  '/model-breast': '/case/the-breast',
-  '/density-1': '/case/density-a',
-  '/density-2': '/case/density-b',
-  '/density-3': '/case/density-c',
-  '/density-4': '/case/density-d',
-  '/benign-cyst': '/case/benign-cyst',
-  '/benign-fibroadenoma': '/case/benign-fibroadenoma',
-  '/cancer-dcis': '/case/cancer-dcis',
-  '/cancer-lobular': '/case/cancer-lobular',
-  '/cancer-ductal': '/case/cancer-ductal',
-}
+import { LEGACY_ROUTES } from '../../content/legacyRoutes'
 
+export { LEGACY_ROUTES }
+
+/**
+ * Resolves a legacy path client-side.
+ *
+ * Note: case-sensitive and does not strip a `?query` or `#hash` suffix, so
+ * e.g. `/density-4?utm_source=fb` returns undefined even though Nitro's
+ * `routeRules` (path-only matching) would still redirect it correctly at
+ * the server. Harmless today because nothing calls this for anything other
+ * than exact paths; revisit if a client-side fallback ever consumes
+ * `location.pathname + location.search`.
+ */
 export function resolveLegacy(path: string): string | undefined {
-  const normalised = path.length > 1 ? path.replace(/\/+$/, '') : path
-  return LEGACY_ROUTES[normalised]
+  return LEGACY_ROUTES[path.replace(/\/+$/, '')]
 }
