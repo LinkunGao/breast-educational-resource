@@ -34,11 +34,18 @@ export function splitNrrd(buf) {
   }
 }
 
+// Capture the line's trailing \r (if any) separately from the value, rather
+// than letting a generic \s*$ swallow it: \r is whitespace, so a pattern
+// like /^encoding:\s*\S+\s*$/m matches (and therefore replaces) the \r along
+// with the value on a CRLF header, leaving that one line ending in a bare
+// \n while every other header line still ends \r\n.
+const ENCODING_LINE = /^(encoding:\s*)\S+(\r?)$/m
+
 export function rewriteEncoding(header, encoding) {
-  if (!/^encoding:\s*\S+\s*$/m.test(header)) {
+  if (!ENCODING_LINE.test(header)) {
     throw new Error('NRRD header has no encoding field')
   }
-  return header.replace(/^encoding:\s*\S+\s*$/m, `encoding: ${encoding}`)
+  return header.replace(ENCODING_LINE, (_match, prefix, cr) => `${prefix}${encoding}${cr}`)
 }
 
 export function readEncoding(header) {

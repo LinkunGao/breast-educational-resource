@@ -73,6 +73,15 @@ describe('rewriteEncoding', () => {
   it('throws when the header has no encoding field', () => {
     expect(() => rewriteEncoding('type: short\n', 'gzip')).toThrow(/encoding/i)
   })
+
+  it('preserves a CRLF header\'s line-ending style on the rewritten line', () => {
+    // \s* before the end-of-line anchor is greedy enough to swallow a
+    // trailing \r along with the value, so a naive replace drops it and
+    // leaves the encoding line ending in a bare \n while its neighbours
+    // still end \r\n.
+    const header = 'type: short\r\nencoding: raw\r\nendian: little\r\n'
+    expect(rewriteEncoding(header, 'gzip')).toBe('type: short\r\nencoding: gzip\r\nendian: little\r\n')
+  })
 })
 
 describe('gzipNrrd', () => {
@@ -96,5 +105,18 @@ describe('gzipNrrd', () => {
 
   it('throws, naming the encoding, for anything that is neither raw nor already compressed', () => {
     expect(() => gzipNrrd(makeNrrd('ascii'))).toThrow(/ascii/)
+  })
+
+  it('round-trips a CRLF-terminated NRRD end to end', () => {
+    // Exercises gzipNrrd itself, not just splitNrrd/rewriteEncoding in
+    // isolation, on a CRLF fixture: the output must still gunzip back to the
+    // original data AND still be a well-formed CRLF header that splitNrrd
+    // can parse again.
+    const original = Buffer.from([9, 8, 7, 6, 5, 4, 3, 2])
+    const out = gzipNrrd(makeNrrd('raw', original, '\r\n'))
+    const { header, data } = splitNrrd(out)
+    expect(header).toContain('encoding: gzip\r\n')
+    expect(header.endsWith('\r\n\r\n')).toBe(true)
+    expect(gunzipSync(data)).toEqual(original)
   })
 })

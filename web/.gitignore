@@ -6,6 +6,10 @@
 .cache
 dist
 
+# Asset pipeline staging directory (scripts/optimize-assets.mjs) --
+# disposable, swapped into public/modelView only on a successful run.
+public/modelView.staging
+
 # Node dependencies
 node_modules
 
