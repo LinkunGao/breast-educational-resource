@@ -466,15 +466,21 @@ Pinia，仅存 UI 状态：当前病例 slug、当前模态 id、侧边栏/内�
 
 ### 9.1 压缩
 
-| 手段 | 预期 | 说明 |
+| 手段 | 实测 | 说明 |
 |---|---|---|
-| NRRD 启用 gzip 编码 | 398MB → ~180MB | three 的 `NRRDLoader` 原生支持 gzip 编码的 NRRD；`fflate` 已是 copper3d 依赖。零渲染代码改动 |
-| GLB 走 Draco / Meshopt | 56MB → ~8MB | `gltf-transform optimize` |
-| 弃用 m2d / u2d 占位副本 | −8 个文件 | §3.1，主要收益是内容诚实性而非体积 |
+| NRRD 启用 gzip 编码 | 399.5MB → 346.2MB | three 的 `NRRDLoader` 原生支持 gzip 编码的 NRRD；`fflate` 已是 copper3d 依赖。零渲染代码改动 |
+| GLB 走 Draco / Meshopt | 53.5MB → 3.2MB（−94%） | `gltf-transform optimize --compress draco --texture-compress webp --simplify false` |
+| 弃用 m2d / u2d 占位副本 | −12 个文件 | §3.1，主要收益是内容诚实性而非体积 |
 
-`scripts/optimize-assets.mjs` 读取 `assets-src/`，输出到 `web/public/modelView/`，幂等可重跑。
+**总计 451.7MB → 349.4MB。**
 
-**验收前提**：压缩后必须逐文件验证 copper3d 能正确加载，且渲染结果与压缩前一致。若某文件 gzip 后加载失败，该文件保留未压缩版本并记录。
+> **实测修正（2026-07-29）**：本节初稿预计压缩到 ~190MB，该估算是错的——它假设全部 NRRD 都是 `encoding: raw`。实际上 18 个非占位 NRRD 中有 17 个**本来就是 gzip**，唯一的 raw 文件是 `cancer-dcis/right/mri.nrrd`（67.4MB → 15.5MB，−77%）。因此 NRRD 侧只有约 52MB 可压，其余降幅全部来自 GLB。
+>
+> 决策：**接受 349MB，不再进一步压缩**。继续压缩需要裁剪或降采样体数据，属有损操作，而本 app 教的恰恰是「致密组织如何遮蔽病灶」——降采样会直接削弱它的教学论点。§9.3 表明 349MB 距离 GitHub Pages 的各项限制仍有充裕余量。
+
+`scripts/optimize-assets.mjs` 读取 `assets-src/`，输出到 `web/public/modelView/`，幂等可重跑。它是 `web/` 的一个 script（`cd web && yarn assets`）——本仓库只有 `web/` 一个 Node 工程，根目录不设 `package.json`。
+
+**验收前提**：压缩后必须逐文件验证 copper3d 能正确加载，且渲染结果与压缩前一致。若某文件 gzip 后加载失败，该文件保留未压缩版本并记录（`optimize-assets.mjs` 的 `SKIP_GZIP` 数组）。
 
 ### 9.2 加载策略
 
@@ -488,13 +494,17 @@ Pinia，仅存 UI 状态：当前病例 slug、当前模态 id、侧边栏/内�
 
 ### 9.3 GitHub Pages 可行性
 
-| 限制 | 现状 | 处理后 |
-|---|---|---|
-| 单文件 100MB 硬限制 | 最大 70.6MB | ~30MB |
-| 站点大小 1GB | 454MB | ~190MB |
-| 带宽 ~100GB/月（软） | ~450MB/人 → 约 220 人打满 | 20–40MB/人 → 约 2500–5000 人 |
+| 限制 | 现状 | 处理后（实测） | 余量 |
+|---|---|---|---|
+| 单文件 100MB 硬限制 | 最大 70.6MB | 最大 50.8MB（`cancer-lobular/right/mri.nrrd`，源文件本就是 gzip） | 约 2× |
+| 站点大小 1GB | 454MB | 349.4MB | 约 2.9× |
+| 带宽 ~100GB/月（软） | ~450MB/人 → 约 220 人打满 | 20–40MB/人 → 约 2500–5000 人 | — |
+
+带宽这一行的收益来自**按模态懒加载**，而非总体积——单个访客本来就不会拉取全部 349MB。总体积只决定站点大小与仓库负担，这两项余量都很充裕。
 
 压缩与懒加载对公开部署是**可行性前提**，而非优化项。
+
+**部署前提（Task 12 必须处理）**：`web/public/modelView/` 目前在 `.gitignore` 中，而旧资产提交在 `frontend/static/modelView/`。Task 12 删除 `frontend/` 后，若不同时把压缩产物纳入版本控制，GitHub Pages 部署将没有任何模型可服务。两件事必须同一次完成，并与 §13.2 的历史清理一并执行。
 
 ---
 
@@ -575,7 +585,7 @@ Pinia，仅存 UI 状态：当前病例 slug、当前模态 id、侧边栏/内�
 11. 三档响应式在 375 / 834 / 1440 / 1920 宽度下无横向滚动
 12. `prefers-reduced-motion` 开启时无任何相机运动
 13. 仓库内不再存在 Vue 2 / Vuetify / SCSS / marked / axios 依赖
-14. 站点构建产物 < 200MB
+14. 站点构建产物 < 400MB（实测 349.4MB；原定 200MB 的依据见 §9.1 的实测修正）
 15. §4.5 表中全部 10 条旧 URL 均能到达对应新页面
 
 ---
@@ -589,12 +599,12 @@ Pinia，仅存 UI 状态：当前病例 slug、当前模态 id、侧边栏/内�
 | NRRD gzip 后 copper3d 加载失败 | 压缩收益归零 | §9.1 要求逐文件验证；失败者保留未压缩版 |
 | `copperRendererOnDemond` 与相机动画协作不佳 | 动画掉帧 | §7.6 定义了升/降级策略；若不可行，回退至常规 `copperRenderer` 并接受常驻渲染 |
 | GLB Draco 压缩改变模型外观 | 教学准确性受损 | 压缩前后并排目视比对，由领域负责人确认 |
-| 70MB 的 `cancer-dcis` MRI 即使压缩后仍偏大 | 该病例加载慢 | 接受；以进度环 + 预取缓解。降采样属内容决策，超出本 spec |
+| 单个 MRI 体数据即使压缩后仍偏大 | 该病例加载慢 | 接受；以进度环 + 预取缓解。降采样属内容决策，超出本 spec。实测最大者为 `cancer-lobular/right/mri.nrrd` 50.8MB（源文件本就是 gzip，无可压空间）；`cancer-dcis` 已由 67.4MB 降至 15.5MB |
 | 三个 renderer 合一后 scene 间状态串扰 | 渲染异常 | scene 按 `${caseSlug}-${modalityId}` 命名隔离；切换时显式 `setCurrentScene` |
 
 ### 13.2 后续动作（明确不在本 spec 内）
 
-1. **git 历史清理**：压缩落地后，历史中仍保留 454MB 未压缩版本，`.git` 将增长至约 940MB。届时执行一次 `git filter-repo` 移除历史中的 `*.nrrd` / `*.glb`，`.git` 可降至约 200MB。**破坏性操作**：需先 `git clone --mirror` 完整备份、通知全部协作者、强推后所有人重新 clone。
+1. **git 历史清理**：压缩落地后，历史中仍保留 454MB 未压缩版本，`.git`（当前已 750MB）将增长至约 1.1GB。届时执行一次 `git filter-repo` 移除历史中 `frontend/static/modelView/` 下的 `*.nrrd` / `*.glb`，`.git` 可降至约 350MB。**破坏性操作**：需先 `git clone --mirror` 完整备份、通知全部协作者、强推后所有人重新 clone。与 §9.3 末尾的部署前提是同一件事的两半——把压缩产物纳入版本控制、把未压缩历史移出去——应一并规划。
 2. **补齐 benign/cancer 的解剖模型**：6 个病变病例目前无自有 GLB，Anatomy 模态因此缺失。
 3. **补齐 `benign_calcifications` 影像资产**：文案已就绪。
 4. **补齐真实的 2D 乳腺X光与各病例超声**：现有均为占位副本。
