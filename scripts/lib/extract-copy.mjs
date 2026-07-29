@@ -3,7 +3,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 /**
- * Pull the four lookup tables out of frontend/plugins/data.js.
+ * Pull the four lookup tables out of legacy/data.js (was
+ * frontend/plugins/data.js before Task 12 deleted the Nuxt 2 app).
  *
  * data.js default-exports a Nuxt 2 plugin function, so importing it directly
  * would also run inject(). Instead, slice off everything before

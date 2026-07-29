@@ -7,16 +7,19 @@ import type { ModalityId } from '../content/types'
 
 /** Re-extract the source copy independently of copy.generated.ts, so the
  *  mapping itself is verified rather than assumed.
- *  Note: this cannot be written as `new URL('../../frontend/...', import.meta.url)`.
+ *  Note: this cannot be written as `new URL('../../legacy/...', import.meta.url)`.
  *  Vite's import-analysis plugin recognises that literal pattern statically as
  *  an "asset URL" and rewrites it away; see the comment at the top of
  *  web/test/tokens.test.ts. Build the path by hand with node:path instead. */
 let legacy: Awaited<ReturnType<typeof extractLegacyCopy>>
 
 beforeAll(async () => {
+  // Was frontend/plugins/data.js until Task 12 deleted the Nuxt 2 app. The
+  // file is kept verbatim under legacy/ precisely so this comparison keeps
+  // having two independent sides -- see legacy/README.md.
   const dataJsPath = resolve(
     dirname(fileURLToPath(import.meta.url)),
-    '../../frontend/plugins/data.js',
+    '../../legacy/data.js',
   )
   legacy = await extractLegacyCopy(dataJsPath)
 })

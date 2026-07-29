@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * frontend/plugins/data.js  ->  web/content/copy.generated.ts
+ * legacy/data.js  ->  web/content/copy.generated.ts
  *
  * Leaving the medical copy untouched is a hard constraint, so these strings
  * are always generated, never hand-written. Re-run this script whenever
@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { extractLegacyCopy } from './lib/extract-copy.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const copy = await extractLegacyCopy(join(root, 'frontend', 'plugins', 'data.js'))
+const copy = await extractLegacyCopy(join(root, 'legacy', 'data.js'))
 
 function table(name, obj) {
   const rows = Object.entries(obj)
@@ -22,7 +22,7 @@ function table(name, obj) {
 }
 
 const out = `// GENERATED FILE — DO NOT EDIT BY HAND.
-// Source: frontend/plugins/data.js
+// Source: legacy/data.js
 // Regenerate: node scripts/extract-copy.mjs
 //
 // These paragraphs are clinical copy and must stay byte-for-byte identical
