@@ -1,4 +1,4 @@
-import { computed, nextTick, reactive, ref, watch, watchEffect } from 'vue'
+import { computed, nextTick, onMounted, onScopeDispose, reactive, ref, shallowRef, watch, watchEffect } from 'vue'
 import { vi } from 'vitest'
 import { useViewerStore } from '../app/stores/viewer'
 
@@ -8,9 +8,12 @@ import { useViewerStore } from '../app/stores/viewer'
 // identifiers unless something puts them on globalThis first. This runs
 // before every test file (see vitest.config.ts's `setupFiles`).
 vi.stubGlobal('ref', ref)
+vi.stubGlobal('shallowRef', shallowRef)
 vi.stubGlobal('computed', computed)
 vi.stubGlobal('reactive', reactive)
 vi.stubGlobal('watch', watch)
 vi.stubGlobal('watchEffect', watchEffect)
 vi.stubGlobal('nextTick', nextTick)
+vi.stubGlobal('onMounted', onMounted)
+vi.stubGlobal('onScopeDispose', onScopeDispose)
 vi.stubGlobal('useViewerStore', useViewerStore)

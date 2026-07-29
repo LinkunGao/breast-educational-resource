@@ -2,15 +2,15 @@
 import { getCase } from '~~/content/cases'
 import type { ModalityId } from '~~/content/types'
 
-// This must be a route guard, not a setup-time `throw createError`. Today
-// <NuxtPage> happens to remount this component on every param change
-// because its key interpolates the route path, so a top-level throw fires
-// on every navigation. Tasks 5/6 pin the page key so the WebGL canvas
-// survives modality switches -- once that happens, setup no longer re-runs
-// on navigation, so a throw here would only catch the *first* load. A
-// `validate` guard runs on every navigation regardless of component reuse,
-// so it keeps 404 behaviour correct after the key is pinned. Do not
-// "simplify" this back to a throw.
+// This must be a route guard, not a setup-time `throw createError`.
+// app.vue's <NuxtPage :page-key> now pins this component's instance to the
+// case slug only (not the modality param, review fix #6), so the WebGL
+// canvas survives modality switches -- setup no longer re-runs on a
+// modality-only navigation, so a throw here would only ever catch the
+// *first* load of a given case. A `validate` guard runs on every
+// navigation regardless of component reuse, so it keeps 404 behaviour
+// correct even with the key pinned. Do not "simplify" this back to a
+// throw.
 definePageMeta({
   validate: (route) => {
     const c = getCase(String(route.params.slug))
@@ -67,7 +67,7 @@ useHead(() => ({
     </template>
 
     <template #stage>
-      <CopperStage :modality="modalityId" />
+      <CopperStage :modality="modalityId" :label="modality.label" />
     </template>
 
     <template #content>

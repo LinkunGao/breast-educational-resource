@@ -156,9 +156,28 @@ export interface CopperRenderer {
   getSceneByName: (name: string) => CopperScene | undefined
   createScene: (name: string) => CopperScene | undefined
   setCurrentScene: (scene: CopperScene) => void
+  /**
+   * Inherited from `baseRenderer` (Renderer/baseRenderer.d.ts:24). Before
+   * `setCurrentScene` is first called this returns the renderer's own
+   * placeholder `baseScene`, not a `copperSceneOnDemond` -- fine for the
+   * `onWindowResize` use this exists for (review fix #5), since that's a
+   * `baseScene` method too, but don't assume the full `CopperScene`
+   * surface (e.g. `loadGltf`) is present on whatever this returns.
+   */
+  getCurrentScene: () => CopperScene
   render: () => void
-  stop?: () => void
-  dispose?: () => void
+  /**
+   * Non-optional: `baseRenderer.d.ts` declares both `stop()` and
+   * `dispose()` without `?`. Typing them optional here let a call site
+   * write `renderer.value?.stop?.()`, which silently no-ops with no
+   * compile error if either is ever renamed upstream -- exactly the
+   * teardown design doc §12.5 depends on. Verified `dispose()`
+   * (dist/bundle.esm.js:69962-69974) really does free the GPU context
+   * (`renderer.dispose()` + `renderer.forceContextLoss()`), not just stop
+   * the loop.
+   */
+  stop: () => void
+  dispose: () => void
 }
 
 /** The parts of `import('copper3d')` we use. */
@@ -175,6 +194,11 @@ export interface StageApi {
   renderer: Ref<CopperRenderer | undefined>
   Copper: Ref<CopperModule | undefined>
   ready: Ref<boolean>
+  /** Set if the dynamic `import('copper3d')` itself rejects (e.g. a chunk
+   * load failure). Otherwise stays undefined -- this is not a general
+   * error channel, just this one failure mode surfaced instead of an
+   * unhandled rejection. */
+  loadError: Ref<Error | undefined>
   requestContinuous: () => void
   releaseContinuous: () => void
 }
