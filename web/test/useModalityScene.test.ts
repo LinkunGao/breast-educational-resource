@@ -152,6 +152,10 @@ describe('useModalityScene', () => {
     // not the fire-and-forget loadViewUrl, so there is a completion signal
     // to render after.
     expect(scene.loadView).toHaveBeenCalledWith(DEFAULT_VIEWPOINT)
+    // Task 9 controller correction C2: the fetched preset is also exposed
+    // as data (not just applied instantly), so a camera flight has
+    // something to interpolate toward instead of only ever jumping there.
+    expect(modalityScene.viewpoint.value).toEqual(DEFAULT_VIEWPOINT)
   })
 
   it('reuses an existing scene instead of recreating it or re-downloading', async () => {
@@ -223,6 +227,41 @@ describe('useModalityScene', () => {
 
     expect(sceneB.controls.enabled).toBe(false)
     expect(sceneA.controls.enabled).toBe(true)
+  })
+
+  // Task 9 controller correction C2's `viewpoint` ref, mirroring
+  // sliceStateByScene's per-scene caching: switching back to a cached scene
+  // must restore ITS OWN preset, not whichever scene's preset fetch
+  // resolved last.
+  it('restores each cached scene\'s own view preset when switching back to it', async () => {
+    const sceneA = makeFakeScene()
+    const sceneB = makeFakeScene()
+    const renderer = makeFakeRenderer(sceneA)
+    const stage = makeFakeStage(renderer)
+    const modalityScene = useModalityScene(stage)
+    const modalityA = makeModality({ id: 'mammogram' })
+    const viewpointA: CopperViewPoint = { ...DEFAULT_VIEWPOINT, eyePosition: [1, 1, 1] }
+    const viewpointB: CopperViewPoint = { ...DEFAULT_VIEWPOINT, eyePosition: [2, 2, 2] }
+
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(viewpointA) } as Response))
+    const loadA = modalityScene.load('the-breast', modalityA)
+    resolveNrrd(sceneA)
+    await loadA
+    expect(modalityScene.viewpoint.value).toEqual(viewpointA)
+
+    vi.mocked(renderer.createScene).mockReturnValueOnce(sceneB)
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(viewpointB) } as Response))
+    const loadB = modalityScene.load('the-breast', makeModality({ id: 'mri', asset: 'x/mri.nrrd' }))
+    resolveNrrd(sceneB)
+    await loadB
+    expect(modalityScene.viewpoint.value).toEqual(viewpointB)
+
+    // Switch back to the cached mammogram scene -- its own preset, not B's.
+    vi.mocked(renderer.getSceneByName).mockReturnValueOnce(sceneA)
+    await modalityScene.load('the-breast', modalityA)
+    expect(modalityScene.viewpoint.value).toEqual(viewpointA)
   })
 
   it('keeps enableRotate/enablePan true for non-ultrasound (3D) modalities', async () => {
@@ -615,6 +654,7 @@ describe('useModalityScene', () => {
 
     expect(modalityScene.loadError.value).toBeInstanceOf(Error)
     expect(scene.loadView).not.toHaveBeenCalled()
+    expect(modalityScene.viewpoint.value).toBeUndefined()
   })
 
   it('surfaces createScene() returning undefined through loadError rather than throwing unhandled', async () => {

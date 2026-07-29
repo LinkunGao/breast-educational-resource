@@ -54,11 +54,27 @@ export function useModalityScene(stage: StageApi) {
    * `stage.loadError` (Task 7), which covers copper3d's own chunk failing
    * to import -- CopperStage renders both through the same pattern. */
   const loadError = shallowRef<Error>()
+  /**
+   * The raw view-preset JSON for the scene now current -- exposed as DATA,
+   * not just applied instantly via `loadView` below. Task 9's controller
+   * correction C2: copper3d has no public, importable `resolveViewPose`/
+   * `orbitFraming` (the deep-importable file behind those names pulls in a
+   * second, distinct copy of `three`, which is unusable here -- see
+   * cameraTransitions.ts's header). A camera flight still needs *something*
+   * to interpolate toward instead of only ever jumping straight there, and
+   * this is the same preset data that would have fed those functions, so
+   * nothing is lost by using it directly instead.
+   */
+  const viewpoint = shallowRef<CopperViewPoint>()
 
   /** Per-scene slice info, keyed by scene name, so switching back to a
    * cached NRRD scene restores its own slice position instead of showing
    * whichever scene last finished loading. */
   const sliceStateByScene = new Map<string, SliceState | null>()
+  /** Per-scene view preset, mirroring sliceStateByScene: switching back to a
+   * cached scene must restore ITS OWN preset, not whatever scene loaded
+   * last. */
+  const viewpointByScene = new Map<string, CopperViewPoint>()
 
   /** Bumped on every `load()` call. Guards against a stale async result
    * (a slow network response, or a timeout/stall) landing after the user
@@ -129,6 +145,7 @@ export function useModalityScene(stage: StageApi) {
     if (existing) {
       activateScene(renderer, existing)
       sliceState.value = sliceStateByScene.get(name) ?? null
+      viewpoint.value = viewpointByScene.get(name)
       loading.value = false
       progress.value = 1
       renderer.render()
@@ -183,13 +200,17 @@ export function useModalityScene(stage: StageApi) {
       // state, no camera preset, `getSceneByName` short-circuiting on it
       // forever.
       sliceStateByScene.set(name, slice)
-      const viewpoint = await fetchViewPoint(url(modality.viewPreset))
+      // Named `preset`, not `viewpoint`, to avoid shadowing the outer
+      // `viewpoint` ref this composable exposes.
+      const preset = await fetchViewPoint(url(modality.viewPreset))
       if (disposed) return
-      next.loadView(viewpoint)
+      next.loadView(preset)
+      viewpointByScene.set(name, preset)
 
       if (token !== loadToken) return // superseded by a later load() call
 
       sliceState.value = slice
+      viewpoint.value = preset
       next.onWindowResize()
       loading.value = false
       progress.value = 1
@@ -364,7 +385,7 @@ export function useModalityScene(stage: StageApi) {
     disposed = true
   })
 
-  return { scene, loading, progress, sliceState, loadError, load }
+  return { scene, loading, progress, sliceState, loadError, viewpoint, load }
 }
 
 /**

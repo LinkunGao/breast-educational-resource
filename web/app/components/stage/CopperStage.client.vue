@@ -31,13 +31,48 @@ watch(
 )
 
 /**
+ * Design doc §7: camera choreography for the loaded scene. Task 9 wires
+ * only the entrance orbit and interrupt-on-input here -- deciding *when* to
+ * run a density morph vs. a modality flight (chooseTransition) belongs to
+ * whatever drives case/modality navigation, which is Task 10's job
+ * (controller correction C5). `camera` is exposed below so that wiring can
+ * reach `flyTo`/`captureOrientation`/`applyOrientation`/`locateLesion`
+ * without this component needing to know about them yet.
+ */
+const camera = useCameraChoreography(stage, modalityScene.scene)
+
+// Runs the entrance orbit once a load finishes (design doc §7.4). Watches
+// the loading->not-loading transition specifically (not just "loading is
+// false"), so it never fires on initial mount before any load has started.
+watch(loading, (isLoading, was) => {
+  if (was && !isLoading) camera.orbitIntro()
+})
+
+/**
+ * Any user input immediately interrupts an in-flight animation and hands
+ * control back to OrbitControls (design doc §7.4). Controller correction
+ * C3: `camera.interrupt()` itself stops the camera exactly where the
+ * current frame left it, rather than snapping to either end of the
+ * animation, so this handles both the orbit intro and any future flight.
+ */
+function onUserInput() { camera.interrupt() }
+onMounted(() => {
+  host.value?.addEventListener('pointerdown', onUserInput)
+  host.value?.addEventListener('wheel', onUserInput, { passive: true })
+})
+onScopeDispose(() => {
+  host.value?.removeEventListener('pointerdown', onUserInput)
+  host.value?.removeEventListener('wheel', onUserInput)
+})
+
+/**
  * Design doc §5.3: imaging modalities get a dark reading-lightbox
  * background, Anatomy gets a light one. copper3d's canvas is alpha:true,
  * so the background is entirely CSS's call here.
  */
 const isFilm = computed(() => props.modality.id !== 'anatomy')
 
-defineExpose({ stage, modalityScene, host })
+defineExpose({ stage, modalityScene, host, camera })
 </script>
 
 <template>
