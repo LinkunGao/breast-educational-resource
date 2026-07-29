@@ -42,3 +42,4 @@ logs
 !.env.example
 
 test-results
+legacy/*

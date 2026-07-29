@@ -68,7 +68,23 @@ export const organisations: Organisation[] = [
     members: ['Kika Faagatu', 'Misty Edmonds'].map(member),
   },
   {
-    name: 'Auckland Bioengineering Institute',
+    /**
+     * ONE group, not two.
+     *
+     * The legacy sheet laid these twelve people out as two separate rows,
+     * each against its own badge -- the University lockup above, the group's
+     * breast-mesh render below -- which reads as two organisations and was
+     * transcribed that way at first. They are all members of the Breast
+     * Biomechanics Research Group at the Auckland Bioengineering Institute;
+     * the two rows were a layout decision on a sheet that had no room for
+     * twelve portraits across.
+     *
+     * `scripts/extract-team-photos.mjs` still knows about four STRIPS,
+     * because that is a fact about the source image's geometry. How the
+     * people are GROUPED for display is this file's business and does not
+     * have to match.
+     */
+    name: 'Auckland Bioengineering Institute — Breast Biomechanics Research Group',
     logo: 'auckland-bioengineering-institute.webp',
     logoWidth: 12,
     members: [
@@ -78,11 +94,6 @@ export const organisations: Organisation[] = [
       'Martyn Nash',
       'Poul Nielsen',
       'Gonzalo Maso Talou',
-    ].map(member),
-  },
-  {
-    name: 'Breast Biomechanics Research Group',
-    members: [
       'Chinchien Lin',
       'Xinyue Zhong',
       'Matthew French',

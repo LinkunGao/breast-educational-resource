@@ -86,7 +86,22 @@ export default defineNuxtConfig({
         { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
         {
           rel: 'stylesheet',
-          href: 'https://fonts.googleapis.com/css2?family=Inria+Sans:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&display=swap',
+          /**
+           * Inter, replacing Inria Sans.
+           *
+           * Inria Sans is a handsome face with a lot of personality -- a
+           * single-storey `g`, flared stems, wide apertures -- and personality
+           * is the thing this particular application should not have. It is a
+           * clinical reference read by patients and students, where the type's
+           * job is to disappear. Inter is the neutral humanist grotesk that
+           * the medical references this is modelled on use, it was drawn for
+           * screens at small sizes, and its tabular figures matter here: the
+           * slice readout counts up and down under the reader's hand.
+           *
+           * Weights are 400/500/600/700 -- 500 for the tab strip and 600 for
+           * headings, so emphasis does not have to jump straight to bold.
+           */
+          href: 'https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,400&display=swap',
         },
       ],
       meta: [
