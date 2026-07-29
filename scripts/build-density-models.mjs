@@ -1,5 +1,5 @@
 /**
- * Rebuilds the density-1/2/4 anatomy models from density-3.
+ * Rebuilds all four density anatomy models from density-3's source.
  *
  * The four `density*.glb` models differ in ONE thing: how many mammary lobes
  * the breast contains. Everything else -- fat, areola, nipple, ducts,
@@ -13,8 +13,13 @@
  * connected lobe islands: density-1 had 4 of 19 (-79%), density-2 had 7
  * (-63%), and density-4 was not thinned or thickened by lobe at all -- it
  * carried THREE whole copies of the lobes mesh at ~1cm offsets, 227,364
- * triangles for what should be roughly half again the baseline. That
- * triplication is what read as geometry "not deleted cleanly".
+ * triangles for what should be roughly half again the baseline.
+ *
+ * And the source itself carries four fragments that no duct reaches --
+ * lobes whose duct was deleted in Blender, left floating unattached inside
+ * the fat layer. Those are dropped from every model including density-3,
+ * which is why density-3 is rebuilt here too despite its lobe count being
+ * unchanged. See ORPHAN_DISTANCE. The real baseline is 15 lobes, not 19.
  *
  * ## Method
  *
@@ -55,6 +60,30 @@ const { NodeIO } = await import(`file:///${modules}/@gltf-transform/core/dist/in
 const { ALL_EXTENSIONS } = await import(`file:///${modules}/@gltf-transform/extensions/dist/index.js`)
 const SOURCE = join(root, 'assets-src/modelView/density-3/left/density75.glb')
 const LOBES = 'VH_F_mammary_lobes_L'
+const DUCTS = 'VH_F_main_lactiferous_ducts_L'
+
+/**
+ * How close a lobe's nearest vertex must come to duct geometry to count as
+ * a real lobe rather than debris.
+ *
+ * Read off the source model's own distribution rather than guessed. Measured
+ * on density75.glb, the nineteen islands fall into two groups with nothing
+ * between them:
+ *
+ *   15 lobes    3,398-6,802 triangles   0.00003-0.00026 from a duct
+ *    4 shards       2-200 triangles     0.00193-0.00793 from a duct
+ *
+ * Seven times the distance and a seventeenth of the size; both criteria
+ * select the same four. Those four are the geometry the human pointed at --
+ * lobes whose duct was deleted in Blender and which were left floating
+ * unattached. 0.001 sits in the gap.
+ */
+const ORPHAN_DISTANCE = 0.001
+
+/** Refuse to run if the filter would take an implausible share of the model.
+ * A threshold that has drifted out of the gap should stop the build, not
+ * quietly halve the anatomy. */
+const MAX_ORPHAN_FRACTION = 0.35
 const DRY_RUN = process.argv.includes('--dry-run')
 
 /** Output file per target, and the lobe count each should end up with as a
@@ -62,6 +91,10 @@ const DRY_RUN = process.argv.includes('--dry-run')
 const TARGETS = [
   { dir: 'density-1', file: 'density25.glb', ratio: 0.5 },
   { dir: 'density-2', file: 'density50.glb', ratio: 0.75 },
+  // density-3 is the baseline and its lobe count is unchanged, but it is
+  // rebuilt like the others so the orphan shards come out of it too. It
+  // shipped with them.
+  { dir: 'density-3', file: 'density75.glb', ratio: 1 },
   { dir: 'density-4', file: 'density100.glb', ratio: 1.5 },
 ]
 
@@ -215,17 +248,124 @@ function rewriteLobes(doc, prim, kept, duplicates, cloudCentre) {
   return outIdx.length / 3
 }
 
+/**
+ * A spatial hash over the duct mesh's vertices, with a nearest-point query.
+ *
+ * Searched shell by shell outward from the query point and stopped as soon
+ * as the best hit is closer than the shell being examined, so the common
+ * case -- a lobe sitting right on its duct -- costs one bucket lookup.
+ */
+function buildDuctIndex(doc) {
+  const mesh = doc.getRoot().listMeshes().find(m => m.getName().startsWith(DUCTS))
+  const prim = mesh?.listPrimitives()[0]
+  if (!prim) throw new Error(`No ${DUCTS} mesh in ${SOURCE}`)
+  const pos = prim.getAttribute('POSITION').getArray()
+  const count = prim.getAttribute('POSITION').getCount()
+
+  const CELL = 0.004
+  const grid = new Map()
+  const key = (a, b, c) => `${a},${b},${c}`
+  for (let i = 0; i < count; i++) {
+    const k = key(
+      Math.floor(pos[i * 3] / CELL),
+      Math.floor(pos[i * 3 + 1] / CELL),
+      Math.floor(pos[i * 3 + 2] / CELL),
+    )
+    let bucket = grid.get(k)
+    if (!bucket) { bucket = []; grid.set(k, bucket) }
+    bucket.push(i)
+  }
+
+  return function nearest(x, y, z) {
+    const cx = Math.floor(x / CELL)
+    const cy = Math.floor(y / CELL)
+    const cz = Math.floor(z / CELL)
+    let best = Infinity
+    for (let r = 0; r <= 25; r++) {
+      for (let a = cx - r; a <= cx + r; a++) {
+        for (let b = cy - r; b <= cy + r; b++) {
+          for (let c = cz - r; c <= cz + r; c++) {
+            // Shell only: skip the interior, which earlier rings covered.
+            if (r > 0 && Math.abs(a - cx) !== r && Math.abs(b - cy) !== r && Math.abs(c - cz) !== r) continue
+            for (const i of grid.get(key(a, b, c)) ?? []) {
+              const d = Math.hypot(pos[i * 3] - x, pos[i * 3 + 1] - y, pos[i * 3 + 2] - z)
+              if (d < best) best = d
+            }
+          }
+        }
+      }
+      if (best <= r * CELL) return best
+    }
+    return best
+  }
+}
+
+/**
+ * Drops lobes that no duct reaches -- the "删除不彻底" geometry: fragments
+ * left behind when a lobe's duct was deleted in Blender, which then float
+ * unattached inside the fat layer.
+ *
+ * See ORPHAN_DISTANCE for where the threshold comes from. Throws rather than
+ * proceeds if it would take an implausible share of the model.
+ */
+function dropOrphans(islands, prim, nearestDuct) {
+  const idx = prim.getIndices().getArray()
+  const pos = prim.getAttribute('POSITION').getArray()
+
+  const attached = []
+  const orphans = []
+  for (const island of islands) {
+    let min = Infinity
+    outer: for (const t of island.tris) {
+      for (let k = 0; k < 3; k++) {
+        const v = idx[t + k] * 3
+        const d = nearestDuct(pos[v], pos[v + 1], pos[v + 2])
+        if (d < min) min = d
+        if (min <= ORPHAN_DISTANCE) break outer
+      }
+    }
+    ;(min <= ORPHAN_DISTANCE ? attached : orphans).push({ ...island, ductDistance: min })
+  }
+
+  if (orphans.length / islands.length > MAX_ORPHAN_FRACTION) {
+    throw new Error(
+      `Orphan filter would drop ${orphans.length} of ${islands.length} lobes, `
+      + `over the ${MAX_ORPHAN_FRACTION * 100}% ceiling. ORPHAN_DISTANCE `
+      + `(${ORPHAN_DISTANCE}) no longer sits in this model's distribution.`,
+    )
+  }
+  return { attached, orphans }
+}
+
+
 const baseline = await io.read(SOURCE)
 const baseLobes = baseline.getRoot().listMeshes().find(m => m.getName().startsWith(LOBES))
 if (!baseLobes) throw new Error(`No ${LOBES} mesh in ${SOURCE}`)
-const baseIslands = findIslands(baseLobes.listPrimitives()[0])
-console.log(`baseline (density-3): ${baseIslands.length} lobes, ${baseLobes.listPrimitives()[0].getIndices().getCount() / 3} triangles\n`)
+const basePrim = baseLobes.listPrimitives()[0]
+const { attached: baseAttached, orphans: baseOrphans } = dropOrphans(
+  findIslands(basePrim), basePrim, buildDuctIndex(baseline),
+)
+console.log(
+  `source: ${baseAttached.length + baseOrphans.length} lobe islands, `
+  + `${basePrim.getIndices().getCount() / 3} triangles`,
+)
+for (const o of baseOrphans) {
+  console.log(
+    `  ORPHAN dropped: ${String(o.tris.length).padStart(5)} tris, `
+    + `${o.ductDistance.toFixed(5)} from the nearest duct`,
+  )
+}
+console.log(`baseline after filtering: ${baseAttached.length} lobes\n`)
 
 for (const target of TARGETS) {
   const doc = await io.read(SOURCE)
   const mesh = doc.getRoot().listMeshes().find(m => m.getName().startsWith(LOBES))
   const prim = mesh.listPrimitives()[0]
-  const islands = findIslands(prim)
+  // Orphans go first, so every ratio below is a fraction of the REAL lobe
+  // count rather than of a count inflated by debris.
+  const { attached: islands } = dropOrphans(
+    findIslands(prim), prim, buildDuctIndex(doc),
+  )
 
   // Ordered by centroid height, so an even stride thins the breast evenly
   // rather than clearing it from one end.
