@@ -41,9 +41,28 @@ const store = useViewerStore()
       </svg>
     </button>
 
-    <NuxtLink to="/" class="flex items-center gap-2">
-      <span class="size-3 rounded-full bg-brand" aria-hidden="true" />
-      <span class="text-h3 font-bold text-text">Te Uma</span>
+    <!--
+      The wordmark carries BOTH names, te reo above English.
+
+      It used to read "Te Uma" alone. `Te Uma` is te reo Māori for the breast
+      and belongs on this app -- it is a New Zealand resource built with Iwi
+      United Engaged -- but on its own it told a reader who does not speak te
+      reo nothing at all about what they were looking at. Pairing the names is
+      the ordinary treatment here, and it costs one line of 12px type.
+
+      `leading-none` on both, so the pair occupies about the same height the
+      single line did and the 56px header does not grow.
+    -->
+    <NuxtLink to="/" class="flex items-center gap-2.5">
+      <span class="size-2.5 shrink-0 rounded-full bg-brand" aria-hidden="true" />
+      <span class="flex flex-col gap-0.5">
+        <span class="text-caption font-medium leading-none tracking-[0.14em] text-text-muted">
+          TE UMA
+        </span>
+        <span class="text-body-sm font-bold leading-none tracking-tight text-text sm:text-h3">
+          Breast Educational Resource
+        </span>
+      </span>
     </NuxtLink>
 
     <!-- Desktop-only (design doc §10.1): the content column's other half of
