@@ -58,3 +58,16 @@ describe('case page stage placeholder: ink on the sunken stage background (14px 
     expect(rejected).toBeLessThan(AA_BODY)
   })
 })
+
+describe('CaseHeader: BI-RADS badge ink on its own highlight background (12px caption text)', () => {
+  it('text-brand-hover on bg-brand-subtle meets AA body (text-brand does not)', () => {
+    const used = contrastRatio(t['brand-hover']!, t['brand-subtle']!)
+    // Pin the failure Task 6's own brief markup shipped with: text-brand on
+    // brand-subtle is the same class of bug the stage placeholder above
+    // guards against -- a token that reads fine on white failing once it's
+    // paired with the app's highlight background instead.
+    const rejected = contrastRatio(t.brand!, t['brand-subtle']!)
+    expect(used).toBeGreaterThanOrEqual(AA_BODY)
+    expect(rejected).toBeLessThan(AA_BODY)
+  })
+})

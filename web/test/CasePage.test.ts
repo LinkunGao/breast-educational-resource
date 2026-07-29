@@ -1,6 +1,10 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import CaseHeader from '../app/components/content/CaseHeader.vue'
+import ModalityText from '../app/components/content/ModalityText.vue'
+import { splitLede } from '../app/components/content/splitLede'
+import ModalityStepper from '../app/components/stage/ModalityStepper.vue'
 import { getModality } from '../content/cases'
 import CasePage from '../app/pages/case/[slug]/[[modality]].vue'
 
@@ -22,15 +26,31 @@ const NuxtLayoutStub = {
   template: `
     <div>
       <div class="heading-slot"><slot name="heading" /></div>
+      <div class="stepper-slot"><slot name="stepper" /></div>
       <div class="stage-slot"><slot name="stage" /></div>
       <div class="content-slot"><slot name="content" /></div>
     </div>
   `,
 }
 
+// ModalityStepper (rendered into #stepper) links between modalities with
+// NuxtLink, matching the stub CaseSidebar.test.ts already uses for the
+// same reason: plain Vitest has no Nuxt router to resolve it against.
+const NuxtLinkStub = {
+  props: ['to'],
+  template: '<a :href="to"><slot /></a>',
+}
+
 function mountPage() {
   return mount(CasePage, {
-    global: { stubs: { NuxtLayout: NuxtLayoutStub } },
+    global: {
+      stubs: { NuxtLayout: NuxtLayoutStub, NuxtLink: NuxtLinkStub },
+      // Nuxt auto-registers these three by directory scanning at build
+      // time (nuxt.config.ts's `components: [{ pathPrefix: false }]`);
+      // plain Vitest has no such step, so they need registering by hand to
+      // render for real rather than warning and rendering nothing.
+      components: { CaseHeader, ModalityStepper, ModalityText },
+    },
   })
 }
 
@@ -40,7 +60,7 @@ describe('case page', () => {
     capturedPageMeta = undefined
   })
 
-  it('renders heading/stage/content into NuxtLayout\'s slots, falling back to the first modality', () => {
+  it('renders heading/stepper/stage/content into NuxtLayout\'s slots, falling back to the first modality', () => {
     stubRoute({ slug: 'density-d', modality: undefined })
     const wrapper = mountPage()
 
@@ -49,7 +69,11 @@ describe('case page', () => {
     // puts it atop the stage column, not the content column).
     expect(wrapper.find('.heading-slot h1').text()).toBe('Extremely dense')
     expect(wrapper.find('.content-slot h1').exists()).toBe(false)
-    expect(wrapper.find('.content-slot p.text-caption').text()).toBe('Anatomy')
+    // The modality stepper (also atop the stage column, its own #stepper
+    // slot) carries the active modality's label instead of a caption in
+    // the content column.
+    expect(wrapper.find('.stepper-slot').text()).toContain('Anatomy')
+    expect(wrapper.find('.stepper-slot a[aria-current="step"]').text()).toContain('Anatomy')
   })
 
   it('honours an explicit modality in the URL instead of the fallback', () => {
@@ -57,16 +81,27 @@ describe('case page', () => {
     const wrapper = mountPage()
 
     expect(wrapper.find('.heading-slot h1').text()).toBe('DCIS')
-    expect(wrapper.find('.content-slot p.text-caption').text()).toBe('3D MRI')
+    expect(wrapper.find('.stepper-slot a[aria-current="step"]').text()).toContain('3D MRI')
     expect(wrapper.find('.stage-slot').text()).toContain('3D MRI')
+    // cancer-dcis has no anatomy modality (design doc §3.1's asset audit) --
+    // the stepper must never hard-code the modality sequence.
+    expect(wrapper.find('.stepper-slot').text()).not.toContain('Anatomy')
   })
 
   it('renders the frozen medical copy for the resolved modality, byte for byte', () => {
     stubRoute({ slug: 'benign-cyst', modality: 'ultrasound' })
     const wrapper = mountPage()
     const expected = getModality('benign-cyst', 'ultrasound')!.text
-    // Rendered via v-html, so compare against the source paragraph's raw HTML.
-    expect(wrapper.find('.content-slot .prose-medical').element.innerHTML).toBe(expected)
+    const { lede, rest } = splitLede(expected)
+
+    // Rendered as separate <p v-html> elements (the lede enlarged, the rest
+    // as body paragraphs), so compare each against splitLede's own output
+    // rather than the whole modality text in one node.
+    const paragraphs = wrapper.findAll('.content-slot .prose-medical > p')
+    expect(paragraphs[0]!.element.innerHTML).toBe(lede)
+    rest.forEach((para, i) => {
+      expect(paragraphs[i + 1]!.element.innerHTML).toBe(para)
+    })
   })
 
   it('the validate guard 404s disabled and unknown cases but not enabled ones', () => {
