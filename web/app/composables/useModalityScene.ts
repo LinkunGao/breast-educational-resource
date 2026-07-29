@@ -205,7 +205,22 @@ export function useModalityScene(stage: StageApi) {
       // entry must not survive under its own name, or a later visit to
       // that modality finds it via getSceneByName regardless of which
       // load happened to be "current" when it failed.
-      if (next) delete renderer.sceneMap[name]
+      if (next) {
+        delete renderer.sceneMap[name]
+        // `delete` on a property that no longer exists is a silent no-op,
+        // so a copper3d upgrade that restructures sceneMap (say, into a
+        // Map) would stop evicting without a crash or a type error --
+        // quietly restoring the poisoned-cache bug this whole branch
+        // exists to fix. Confirm through the library's OWN accessor, which
+        // survives that kind of change, and fail loudly if it didn't take.
+        if (renderer.getSceneByName(name)) {
+          throw new Error(
+            `copper3d scene "${name}" survived eviction: its sceneMap is no `
+            + `longer a plain object keyed by scene name. Failed loads will `
+            + `poison the cache until this is updated to match the new shape.`,
+          )
+        }
+      }
       if (token !== loadToken) return
       loadError.value = err instanceof Error ? err : new Error(String(err))
       loading.value = false
