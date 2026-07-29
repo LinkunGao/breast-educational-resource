@@ -41,10 +41,23 @@ const NuxtLinkStub = {
   template: '<a :href="to"><slot /></a>',
 }
 
+// Task 7 replaced the #stage placeholder with the real CopperStage, which
+// dynamically imports copper3d in onMounted and drives a WebGL canvas --
+// none of which plain Vitest/happy-dom can do (no WebGL) or should try to
+// (see web/test/*.test.ts's testing notes: don't fake a passing render
+// test). Stubbed here, the only thing worth asserting is that the page
+// still resolves and forwards the right ModalityId prop -- the same
+// per-modality wiring the old placeholder text used to prove, just via a
+// prop instead of display text now that #stage renders a real viewer.
+const CopperStageStub = {
+  props: ['modality'],
+  template: '<div class="copper-stage-stub">{{ modality }}</div>',
+}
+
 function mountPage() {
   return mount(CasePage, {
     global: {
-      stubs: { NuxtLayout: NuxtLayoutStub, NuxtLink: NuxtLinkStub },
+      stubs: { NuxtLayout: NuxtLayoutStub, NuxtLink: NuxtLinkStub, CopperStage: CopperStageStub },
       // Nuxt auto-registers these three by directory scanning at build
       // time (nuxt.config.ts's `components: [{ pathPrefix: false }]`);
       // plain Vitest has no such step, so they need registering by hand to
@@ -64,7 +77,9 @@ describe('case page', () => {
     stubRoute({ slug: 'density-d', modality: undefined })
     const wrapper = mountPage()
 
-    expect(wrapper.find('.stage-slot').text()).toContain('Anatomy')
+    // The stage slot now renders CopperStage (stubbed above); what matters
+    // is that it receives the resolved ModalityId, not the display label.
+    expect(wrapper.find('.stage-slot .copper-stage-stub').text()).toBe('anatomy')
     // Case heading lives in its own #heading slot (design doc §10.1's ASCII
     // puts it atop the stage column, not the content column).
     expect(wrapper.find('.heading-slot h1').text()).toBe('Extremely dense')
@@ -82,7 +97,7 @@ describe('case page', () => {
 
     expect(wrapper.find('.heading-slot h1').text()).toBe('DCIS')
     expect(wrapper.find('.stepper-slot a[aria-current="step"]').text()).toContain('3D MRI')
-    expect(wrapper.find('.stage-slot').text()).toContain('3D MRI')
+    expect(wrapper.find('.stage-slot .copper-stage-stub').text()).toBe('mri')
     // cancer-dcis has no anatomy modality (design doc §3.1's asset audit) --
     // the stepper must never hard-code the modality sequence.
     expect(wrapper.find('.stepper-slot').text()).not.toContain('Anatomy')

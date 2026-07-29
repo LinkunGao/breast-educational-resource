@@ -67,12 +67,7 @@ useHead(() => ({
     </template>
 
     <template #stage>
-      <!-- Placeholder: Task 7 replaces this with the copper3d viewer. -->
-      <div class="flex flex-1 items-center justify-center bg-surface-sunken">
-        <p class="text-body-sm text-text-muted">
-          Stage placeholder — {{ modality.label }}
-        </p>
-      </div>
+      <CopperStage :modality="modalityId" />
     </template>
 
     <template #content>
