@@ -93,12 +93,24 @@ export interface SceneObject {
 
 export interface SceneObjectChild {
   isMesh?: boolean
+  /** three's Object3D always has this (default `""`), never undefined --
+   * used to find the anatomy GLB's fat-layer mesh by name (see
+   * useModalityScene's `tintFatLayer`, matching
+   * frontend/components/model/LeftModel.vue:162's `child.name ==
+   * "VH_F_fat_L"` check, the legacy app's only GLB material treatment). */
+  name: string
   geometry?: { dispose: () => void }
   material?: {
     dispose: () => void
     transparent: boolean
     opacity: number
     depthWrite: boolean
+    /** Present on the PBR materials glTF's default material maps to
+     * (MeshStandardMaterial/MeshPhysicalMaterial); modelled narrowly as the
+     * one mutator useModalityScene needs, not the full three.js `Color`
+     * class. Deliberately not importing `three` for this type: see this
+     * file's header comment on why only one hoisted copy may exist. */
+    color?: { set: (value: string) => void }
   }
 }
 
@@ -150,6 +162,22 @@ export interface CopperScene extends CopperBaseScene {
    */
   loadGltf: (url: string, callback?: (content: SceneObject) => void) => void
   loadViewUrl: (url: string) => void
+  /**
+   * `copperSceneOnDemond`'s constructor does
+   * `window.addEventListener("resize", this.confirmResize, false)`
+   * (Scene/copperSceneOnDemond.js:9-12,27) and nothing in copper3d ever
+   * calls the matching `removeEventListener` -- every scene this renderer
+   * creates leaks that listener (and everything it closes over) for the
+   * life of the page. `confirmResize` is declared public on the class
+   * (Scene/copperSceneOnDemond.d.ts), assigned to `this` before the
+   * `addEventListener` call runs, so reading it back through this type is
+   * the exact same function reference that got registered --
+   * `window.removeEventListener('resize', scene.confirmResize, false)`
+   * (capture flag matching the original `false`) genuinely unsubscribes
+   * it. useModalityScene does this for every scene it creates, in its own
+   * `onScopeDispose`.
+   */
+  confirmResize: () => void
   // No `resetView` here: it exists only on `copperScene`
   // (Scene/copperScene.d.ts:57, dist/bundle.esm.js:84635), not on
   // `baseScene`/`copperSceneOnDemond`'s prototype chain (confirmed absent

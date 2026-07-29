@@ -67,7 +67,7 @@ useHead(() => ({
     </template>
 
     <template #stage>
-      <CopperStage :modality="modalityId" :label="modality.label" />
+      <CopperStage :slug="slug" :modality="modality" />
     </template>
 
     <template #content>

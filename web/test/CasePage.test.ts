@@ -45,13 +45,15 @@ const NuxtLinkStub = {
 // dynamically imports copper3d in onMounted and drives a WebGL canvas --
 // none of which plain Vitest/happy-dom can do (no WebGL) or should try to
 // (see web/test/*.test.ts's testing notes: don't fake a passing render
-// test). Stubbed here, the only thing worth asserting is that the page
-// still resolves and forwards the right ModalityId prop -- the same
-// per-modality wiring the old placeholder text used to prove, just via a
-// prop instead of display text now that #stage renders a real viewer.
+// test). Task 8 gave CopperStage a `slug` prop (scene namespacing) and
+// widened `modality` from a bare ModalityId to the full Modality object
+// (asset/viewPreset paths). Stubbed here, the only thing worth asserting is
+// that the page still resolves and forwards the right slug/modality -- the
+// same per-modality wiring the old placeholder text used to prove, just via
+// props instead of display text now that #stage renders a real viewer.
 const CopperStageStub = {
-  props: ['modality'],
-  template: '<div class="copper-stage-stub">{{ modality }}</div>',
+  props: ['slug', 'modality'],
+  template: '<div class="copper-stage-stub" :data-slug="slug">{{ modality.id }}</div>',
 }
 
 function mountPage() {
@@ -78,8 +80,10 @@ describe('case page', () => {
     const wrapper = mountPage()
 
     // The stage slot now renders CopperStage (stubbed above); what matters
-    // is that it receives the resolved ModalityId, not the display label.
+    // is that it receives the resolved Modality and the case slug (Task 8
+    // needs both to namespace copper3d scenes as `${slug}:${modality.id}`).
     expect(wrapper.find('.stage-slot .copper-stage-stub').text()).toBe('anatomy')
+    expect(wrapper.find('.stage-slot .copper-stage-stub').attributes('data-slug')).toBe('density-d')
     // Case heading lives in its own #heading slot (design doc §10.1's ASCII
     // puts it atop the stage column, not the content column).
     expect(wrapper.find('.heading-slot h1').text()).toBe('Extremely dense')
