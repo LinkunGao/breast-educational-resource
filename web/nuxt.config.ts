@@ -1,4 +1,5 @@
 import tailwindcss from '@tailwindcss/vite'
+import { enabledCases } from './content/cases'
 import { LEGACY_ROUTES } from './content/legacyRoutes'
 
 export default defineNuxtConfig({
@@ -46,6 +47,23 @@ export default defineNuxtConfig({
       { redirect: { to, statusCode: 301 } },
     ]),
   ),
+
+  nitro: {
+    prerender: {
+      // Nitro's crawler cannot discover the case pages on its own. It seeds
+      // from `/`, and pages/index.vue turns that into a redirect -- under
+      // `nuxi generate` a meta-refresh stub, which has no links to follow.
+      // Left to itself the build emits nine files (the stub, /about, the
+      // legacy redirect stubs, 200/404) and not one case page, so every case
+      // URL would 404 on a static host. Seed them explicitly instead, from
+      // the same table the pages read, so a case added to content/cases.ts is
+      // deployed without touching this file.
+      routes: enabledCases().flatMap(c => [
+        `/${c.slug}`,
+        ...c.modalities.map(m => `/${c.slug}/${m.id}`),
+      ]),
+    },
+  },
 
   app: {
     head: {
