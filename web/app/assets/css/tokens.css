@@ -1,0 +1,119 @@
+@import "tailwindcss";
+
+/* Tailwind 4 CSS-first config: variables in @theme also generate utilities.
+   For example --color-brand yields bg-brand / text-brand / border-brand. */
+@theme {
+  /* ── Neutral layer (70%) ─────────────────────── */
+  --color-bg:             #FBF7F8;
+  --color-surface-sunken: #F4EEF0;
+  --color-border:         #E8DCE0;
+  --color-border-strong:  #D4C0C7;
+
+  /* ── Card layer (20%) ────────────────────────── */
+  --color-surface:        #FFFFFF;
+
+  /* ── Text ────────────────────────────────────── */
+  --color-text:           #241319;
+  --color-text-muted:     #6E5A62;
+  --color-text-subtle:    #93818A;  /* only ≥18.66px, or graphics */
+
+  /* ── Brand layer (10%) ───────────────────────── */
+  --color-brand:          #D81B60;
+  --color-brand-hover:    #AD1457;
+  --color-brand-subtle:   #FCE7EE;
+  --color-accent-plum:    #7D1E7D;
+  --color-accent-hot:     #EB3175;  /* 4.02:1 — graphics only, never body text */
+
+  /* ── Film lightbox ───────────────────────────── */
+  --color-film-bg:        #0E0A0C;
+  --color-film-bg-2:      #171012;
+  --color-film-border:    #2A1F24;
+
+  /* ── Modality semantic colours ───────────────── */
+  /* anatomy-ink is one step darker than --color-brand: the stepper's active
+     chip is ink-on-fill, and #D81B60 on #FCE7EE is only 4.27:1, short of
+     the AA floor for body text. */
+  --color-anatomy-ink:      #C2185B;
+  --color-anatomy-fill:     #FCE7EE;
+  --color-mammogram-ink:    #7D1E7D;
+  --color-mammogram-fill:   #F3E5F5;
+  --color-ultrasound-ink:   #0E7490;
+  --color-ultrasound-fill:  #E0F2F1;
+  --color-mri-ink:          #1D4ED8;
+  --color-mri-fill:         #E8EEFC;
+
+  /* ── Typography ──────────────────────────────── */
+  --font-sans: "Inria Sans", ui-sans-serif, system-ui, sans-serif;
+
+  --text-display:      2.5rem;    /* 40 */
+  --text-display--line-height: 2.75rem;  /* 44 */
+  --text-h1:           1.75rem;   /* 28 */
+  --text-h1--line-height:      2.125rem; /* 34 */
+  --text-h2:           1.25rem;   /* 20 */
+  --text-h2--line-height:      1.75rem;  /* 28 */
+  --text-h3:           1rem;      /* 16 */
+  --text-h3--line-height:      1.5rem;   /* 24 */
+  --text-body:         1rem;      /* 16 */
+  --text-body--line-height:    1.6875rem;/* 27 = 1.7 */
+  --text-body-sm:      0.875rem;  /* 14 */
+  --text-body-sm--line-height: 1.375rem; /* 22 */
+  --text-caption:      0.75rem;   /* 12 */
+  --text-caption--line-height: 1rem;     /* 16 */
+
+  /* ── Corner radii ────────────────────────────── */
+  --radius-chip:   4px;
+  --radius-ctl:    8px;
+  --radius-card:   12px;
+
+  /* ── Shadows (tinted toward the brand, not pure black) ── */
+  --shadow-sm: 0 1px 2px rgb(36 19 25 / .06);
+  --shadow-md: 0 2px 8px rgb(36 19 25 / .08);
+  --shadow-lg: 0 8px 24px rgb(36 19 25 / .10);
+}
+
+/* Spacing keeps Tailwind's default 4px base (1 = 4px), so design doc §5.5's
+   4·8·12·16·24·32·48·64 maps to 1·2·3·4·6·8·12·16. */
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* One focus style everywhere (design doc §11) */
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+
+  /* Global constraint: prefers-reduced-motion disables motion, it does not
+   * merely shorten it. Zero duration/delay (not a "fast" 1ms) so transitions
+   * and animations resolve to their end state with no intermediate frames,
+   * and page/anchor scrolling jumps instead of animating. default.vue's
+   * drawer transition is the first thing in the app that animates; every
+   * later task's animation (Task 9/10 camera choreography included)
+   * inherits this rule for free because it's global, not per-component. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0s !important;
+      animation-delay: 0s !important;
+      transition-duration: 0s !important;
+      transition-delay: 0s !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@utility prose-medical {
+  max-width: 65ch;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+}

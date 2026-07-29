@@ -1,0 +1,157 @@
+import { createPinia, setActivePinia } from 'pinia'
+import { mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { useViewerStore } from '../app/stores/viewer'
+import AppHeader from '../app/components/nav/AppHeader.vue'
+import CaseSidebar from '../app/components/nav/CaseSidebar.vue'
+import DefaultLayout from '../app/layouts/default.vue'
+
+const NuxtLinkStub = {
+  props: ['to'],
+  template: '<a :href="to"><slot /></a>',
+}
+
+function mountHeader() {
+  return mount(AppHeader, {
+    global: { stubs: { NuxtLink: NuxtLinkStub } },
+  })
+}
+
+describe('AppHeader', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  // Both the mobile drawer toggle and the desktop panel-collapse toggle
+  // carry aria-controls="case-sidebar" (they control the same element, just
+  // at different tiers), so `button[aria-controls="case-sidebar"]` alone is
+  // ambiguous now -- every selector below disambiguates by aria-label.
+
+  it('reflects the store\'s sidebarOpen state on the mobile/tablet drawer toggle', () => {
+    const store = useViewerStore()
+    store.sidebarOpen = false
+    const wrapper = mountHeader()
+    const toggle = wrapper.get('button[aria-label="Toggle case navigation"]')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+  })
+
+  it('toggles store.sidebarOpen when the hamburger is clicked', async () => {
+    const store = useViewerStore()
+    store.sidebarOpen = false
+    const wrapper = mountHeader()
+    const hamburger = wrapper.get('button[aria-label="Toggle case navigation"]')
+    await hamburger.trigger('click')
+    expect(store.sidebarOpen).toBe(true)
+    await hamburger.trigger('click')
+    expect(store.sidebarOpen).toBe(false)
+  })
+
+  it('the hamburger is mobile/tablet only: xl+ has its own dedicated collapse button instead', () => {
+    // Round 3 made this button visible at every width so one field/control
+    // could serve both the drawer and the desktop collapse -- which is
+    // exactly what let sidebarOpen's single default be wrong for one tier
+    // or the other. Reverted: the hamburger only ever drives the drawer.
+    const wrapper = mountHeader()
+    const hamburger = wrapper.get('button[aria-label="Toggle case navigation"]')
+    expect(hamburger.classes()).toContain('xl:hidden')
+  })
+
+  it('the mobile drawer toggle\'s aria-controls matches the id CaseSidebar actually renders', () => {
+    // Previously compared aria-controls to the literal 'case-sidebar' without
+    // ever mounting CaseSidebar, so renaming CaseSidebar's id would still
+    // pass. Mounting both and comparing the live values means either side
+    // drifting from the other actually fails this.
+    const header = mountHeader()
+    const sidebar = mount(CaseSidebar, { global: { stubs: { NuxtLink: NuxtLinkStub } } })
+    expect(header.get('button[aria-label="Toggle case navigation"]').attributes('aria-controls'))
+      .toBe(sidebar.get('nav').attributes('id'))
+  })
+
+  it('links to home and about', () => {
+    const wrapper = mountHeader()
+    const links = wrapper.findAllComponents(NuxtLinkStub)
+    const targets = links.map(l => l.props('to'))
+    expect(targets).toContain('/')
+    expect(targets).toContain('/about')
+  })
+
+  it('the hamburger and the About link both meet the 44px tap-target floor', () => {
+    // happy-dom has no real layout engine, so this can't measure actual
+    // rendered pixels -- it asserts the Tailwind utilities that are the only
+    // thing controlling the size (size-11 = 44px, min-h-11 = 44px min
+    // height). Sizing needs a real browser to confirm the rendered box.
+    const wrapper = mountHeader()
+    const hamburger = wrapper.get('button[aria-label="Toggle case navigation"]')
+    expect(hamburger.classes()).toContain('size-11')
+
+    const about = wrapper.findAllComponents(NuxtLinkStub)
+      .find(l => l.props('to') === '/about')!
+    expect(about.classes()).toContain('min-h-11')
+  })
+
+  describe('sidebar-panel toggle (design doc §10.1, desktop-only)', () => {
+    it('reflects and toggles store.sidebarExpanded, independently of sidebarOpen', async () => {
+      const store = useViewerStore()
+      store.sidebarOpen = false
+      store.sidebarExpanded = true
+      const wrapper = mountHeader()
+      const toggle = wrapper.get('button[aria-label="Toggle case navigation panel"]')
+      expect(toggle.attributes('aria-expanded')).toBe('true')
+
+      await toggle.trigger('click')
+      expect(store.sidebarExpanded).toBe(false)
+      expect(store.sidebarOpen).toBe(false) // untouched by the desktop control
+      expect(toggle.attributes('aria-expanded')).toBe('false')
+    })
+
+    it('only renders (as a flex box) at xl+, since below xl this is the drawer\'s job instead', () => {
+      const wrapper = mountHeader()
+      const toggle = wrapper.get('button[aria-label="Toggle case navigation panel"]')
+      expect(toggle.classes()).toContain('hidden')
+      expect(toggle.classes()).toContain('xl:flex')
+    })
+
+    it('aria-controls matches the id CaseSidebar actually renders, same as the drawer toggle', () => {
+      const header = mountHeader()
+      const sidebar = mount(CaseSidebar, { global: { stubs: { NuxtLink: NuxtLinkStub } } })
+      expect(header.get('button[aria-label="Toggle case navigation panel"]').attributes('aria-controls'))
+        .toBe(sidebar.get('nav').attributes('id'))
+    })
+  })
+
+  describe('content-panel toggle (design doc §10.1, desktop-only)', () => {
+    it('reflects and toggles store.contentOpen', async () => {
+      const store = useViewerStore()
+      store.contentOpen = true
+      const wrapper = mountHeader()
+      const toggle = wrapper.get('button[aria-label="Toggle content panel"]')
+      expect(toggle.attributes('aria-expanded')).toBe('true')
+
+      await toggle.trigger('click')
+      expect(store.contentOpen).toBe(false)
+      expect(toggle.attributes('aria-expanded')).toBe('false')
+    })
+
+    it('only renders (as a flex box) at xl+, since below xl the content pane has no collapse concept', () => {
+      const wrapper = mountHeader()
+      const toggle = wrapper.get('button[aria-label="Toggle content panel"]')
+      expect(toggle.classes()).toContain('hidden')
+      expect(toggle.classes()).toContain('xl:flex')
+    })
+
+    it('aria-controls matches the id the content panel actually renders, so the a11y contract holds', () => {
+      const header = mountHeader()
+      const layout = mount(DefaultLayout, {
+        global: {
+          stubs: {
+            AppHeader: { template: '<header />' },
+            CaseSidebar: { template: '<nav id="case-sidebar" />' },
+          },
+        },
+        slots: { stage: '<div />', content: '<div />' },
+      })
+      expect(header.get('button[aria-label="Toggle content panel"]').attributes('aria-controls'))
+        .toBe(layout.get('#case-content-panel').attributes('id'))
+    })
+  })
+})
