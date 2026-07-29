@@ -213,46 +213,21 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
     }
   }
 
-  /**
-   * §7.3 modality-flight: arcs the camera from wherever it currently is to
-   * `target` over `durationMs`. The actual geometry is
-   * `interpolateFlightPose` (cameraTransitions.ts, pure and unit-tested);
-   * this just drives it frame by frame and writes the result back through
-   * copper3d's own setters.
+  /*
+   * §7.3's `flyTo` (inter-modality camera flight) and §7.4's `orbitIntro`
+   * (entrance orbit) were built here and then DELETED at the human's
+   * explicit instruction: "去掉所有的模型和image上的旋转动画", and, asked
+   * separately about the flight, "一起去掉，瞬间切换". Both moved the camera
+   * away from wherever the reader had put it, which is precisely what they
+   * did not want. §7.2's camera push-in went with them (see
+   * CopperStage's `onLocate`).
+   *
+   * What is left in this file is not camera choreography any more: it is the
+   * single animation driver (`animate`/`interrupt`), which the §7.1 density
+   * CROSSFADE and the slice follower still share, plus the two instant
+   * keyboard camera steps below. Nothing here moves the camera on its own
+   * initiative -- every remaining writer is responding to a key press.
    */
-  async function flyTo(target: Pose, durationMs = 1200) {
-    const from = currentPose()
-    if (!from) return
-    await animate(durationMs, t => writePose(interpolateFlightPose(from, target, t)))
-  }
-
-  /**
-   * §7.4 entrance orbit: swings out by `turns` and back to the framed
-   * preset view -- see `orbitSwingAngle`'s doc and controller correction C4
-   * (net rotation is intentionally zero, so `turns` reads as amplitude, not
-   * an orbit count). Skipped entirely under reduced motion (C6): unlike
-   * `flyTo`, this is pure decoration with no end-state difference from not
-   * running it at all, so there is nothing to jump to instantly either.
-   */
-  async function orbitIntro(durationMs = 3000, turns = 0.6) {
-    const cam = scene.value?.camera
-    if (!cam || prefersReducedMotion.value) return
-
-    const pivot = pivotOf(scene.value)
-    const startOffset: [number, number, number] = [
-      cam.position.x - pivot[0],
-      cam.position.y - pivot[1],
-      cam.position.z - pivot[2],
-    ]
-    const axis = tuple(cam.up)
-
-    await animate(durationMs, (t) => {
-      const angle = orbitSwingAngle(t, turns)
-      const rotated = rotateAroundAxis(startOffset, axis, angle)
-      cam.position.set(pivot[0] + rotated[0], pivot[1] + rotated[1], pivot[2] + rotated[2])
-      cam.lookAt(pivot[0], pivot[1], pivot[2])
-    })
-  }
 
   /**
    * §11 keyboard camera control. Both of these are deliberately INSTANT
@@ -279,143 +254,6 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
     stage.renderer.value?.render()
   }
 
-  /**
-   * §7.2 "Locate lesion": pushes the camera in toward the lesion region
-   * WHILE gliding the slice index to `targetIndex`.
-   *
-   * Controller correction C9 -- LOAD-BEARING: this composable has a single
-   * `cancelCurrent` slot, so starting the dolly as its own `animate()` call
-   * alongside the glide would cancel the glide (whichever started second
-   * wins), shipping a locator whose two halves fight each other. Both are
-   * therefore driven from ONE `animate()` call, one frame callback. Do not
-   * split them back apart, and do not add a second cancel slot to make
-   * splitting them work.
-   *
-   * `sliceRaw.index` is a world coordinate (copper-types.ts's `NrrdSlice`
-   * doc), so it is converted to/from a slice number via `volume.spacing[2]`.
-   */
-  async function locateLesion(
-    sliceRaw: NrrdSlice | undefined,
-    targetIndex: number,
-    opts: LocateLesionOptions = {},
-  ) {
-    if (!sliceRaw) return
-    const { durationMs = 900, dollyTo, onIndex } = opts
-    const spacing = sliceRaw.volume.spacing[2]
-    const fromIndex = sliceRaw.index / spacing
-    /**
-     * Fix round 1, Critical -- a property of the driver, not a patch for one
-     * caller. copper3d does NO bounds checking on the way in:
-     * `VolumeSlice.repaint` -> `Volume.extractPerpendicularPlane`
-     * (dist/bundle.esm.js:60796, :61153) positions the plane mesh straight
-     * from the index it is handed, so an out-of-range value translates the
-     * plane bodily outside the volume and then samples past the end of
-     * `volume.data` -- every voxel `undefined` -> NaN -> clamped to 0. The
-     * result is a blank plane floating outside the model while the readout
-     * confidently names a slice that does not exist. Nothing downstream of
-     * here can catch that, so nothing upstream may be trusted not to cause
-     * it.
-     */
-    const endIndex = Math.min(sliceRaw.MaxIndex, Math.max(0, targetIndex))
-
-    // Resolved before the animation starts so the frame callback stays pure
-    // arithmetic. `dollyTo` is an absolute orbit radius, not a factor, and
-    // is only honoured when it would bring the camera CLOSER -- "push in"
-    // must never pull the camera back out from a view the user zoomed into
-    // themselves, and an absolute target makes repeated clicks idempotent.
-    let dollyFrom: Pose | null = null
-    let dollyEnd: Pose | null = null
-    if (dollyTo !== undefined) {
-      dollyFrom = currentPose()
-      if (dollyFrom) {
-        const distance = poseDistance(dollyFrom)
-        if (distance > dollyTo && distance > 0) {
-          dollyEnd = zoomPose(dollyFrom, dollyTo / distance)
-        }
-      }
-    }
-
-    await animate(durationMs, (t) => {
-      const index = fromIndex + (endIndex - fromIndex) * t
-      sliceRaw.index = index * spacing
-      sliceRaw.repaint.call(sliceRaw)
-      onIndex?.(index)
-      if (dollyFrom && dollyEnd) writePose(interpolateFlightPose(dollyFrom, dollyEnd, t))
-    })
-  }
-
-  /**
-   * Each modality's scene owns its own camera (Task 8's per-modality scene
-   * cache), so a cross-modality flight cannot interpolate between two
-   * camera instances directly -- there is only ever one "current" camera to
-   * read or write. Instead this captures the OUTGOING camera's orientation
-   * (unit direction from its pivot, plus its up vector) so the incoming
-   * scene's camera can be snapped to the same apparent orientation, at that
-   * new scene's own composition distance, as the flight's starting pose --
-   * then `flyTo` carries it on to the incoming scene's real preset. The
-   * viewer sees one continuous camera swinging across, not a cut followed
-   * by an unrelated flight.
-   */
-  function captureOrientation(): { dir: [number, number, number], up: [number, number, number] } | null {
-    const cam = scene.value?.camera
-    if (!cam) return null
-    const pivot = pivotOf(scene.value)
-    const offset: [number, number, number] = [
-      cam.position.x - pivot[0],
-      cam.position.y - pivot[1],
-      cam.position.z - pivot[2],
-    ]
-    const len = Math.hypot(offset[0], offset[1], offset[2]) || 1
-    return {
-      dir: [offset[0] / len, offset[1] / len, offset[2] / len],
-      up: tuple(cam.up),
-    }
-  }
-
-  /**
-   * Applies a captured orientation to the current scene's camera, at
-   * `distance` from its OWN pivot (`controls.target`, or the origin if
-   * unset) -- the counterpart to `captureOrientation`. Review round 1, S1 /
-   * I-2: this used to place the camera relative to the origin and aim
-   * `cam.lookAt(0, 0, 0)` unconditionally -- the exact defect C7 calls
-   * load-bearing, left standing in this sibling function. If
-   * `controls.target` was not already the origin (a scene revisited after
-   * an earlier flight had re-aimed it elsewhere), the camera ended up aimed
-   * at the origin while `controls.target` still held the old point, and the
-   * user's next drag called `controls.update()`, which re-aimed the camera
-   * back at that stale target and silently undid this call. Reading
-   * `controls.target` via `pivotOf` and aiming `cam.lookAt` at that SAME
-   * point -- rather than always the origin -- is what closes S1: the camera
-   * and `controls.target` necessarily agree, because both come from the one
-   * value `pivotOf` read.
-   *
-   * Review round 2, NEW-2: an earlier version of this function also wrote
-   * `controls?.target?.set(...pivot)` here. That was always a no-op --
-   * `pivot` IS `controls.target`'s own current value, read one line above --
-   * and its doc comment claimed it "keeps both consistent," which described
-   * work that wasn't happening. Removed rather than kept as inert
-   * boilerplate: a future reader trusting that comment could "simplify"
-   * `cam.lookAt(pivot)` back toward a fixed point while leaving the
-   * write-back in place, silently reintroducing S1 with the comment still
-   * implying it's guarded.
-   */
-  function applyOrientation(
-    o: { dir: [number, number, number], up: [number, number, number] } | null,
-    distance: number,
-  ) {
-    const cam = scene.value?.camera
-    if (!cam || !o) return
-    const pivot = pivotOf(scene.value)
-    cam.position.set(
-      pivot[0] + o.dir[0] * distance,
-      pivot[1] + o.dir[1] * distance,
-      pivot[2] + o.dir[2] * distance,
-    )
-    cam.up.set(o.up[0], o.up[1], o.up[2])
-    cam.lookAt(pivot[0], pivot[1], pivot[2])
-    cam.updateProjectionMatrix()
-  }
-
   return {
     prefersReducedMotion,
     /**
@@ -431,14 +269,9 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
      * animation in `web/app` still passes through here.
      */
     animate,
-    flyTo,
-    orbitIntro,
-    locateLesion,
     nudgeOrbit,
     zoomBy,
     interrupt,
-    captureOrientation,
-    applyOrientation,
     currentPose,
   }
 }

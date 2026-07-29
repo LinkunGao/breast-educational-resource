@@ -84,14 +84,18 @@ function makeScene() {
       lookAt: vi.fn(),
       updateProjectionMatrix: vi.fn(),
     },
+    // OrbitControls, as copper3d's constructor leaves it;
+    // `installTrackballControls` replaces it during `load()`.
     controls: {
       rotateSpeed: 0,
       panSpeed: 0,
-      enableRotate: true,
-      enablePan: true,
       enabled: true,
       target: makeVec3(0, 0, 0),
+      removeEventListener: vi.fn(),
+      dispose: vi.fn(),
     },
+    renderer: { domElement: document.createElement('canvas') },
+    requestRenderIfNotRequested: vi.fn(),
     scene: {
       // `loadGlb` (useModalityScene.ts) now does `target.scene.add(group)`
       // itself -- this is what actually populates `objects`, where
@@ -144,6 +148,23 @@ vi.mock('copper3d', () => ({
     loadingContainer: document.createElement('div'),
     progress: document.createElement('div'),
   }),
+  // Returns a plain object, so `new Copper3dTrackballControls(...)` yields it
+  // (a constructor returning an object overrides `this`). Shaped as the
+  // trackball, which is what production reads back off `scene.controls`.
+  Copper3dTrackballControls: vi.fn(() => ({
+    rotateSpeed: 1,
+    panSpeed: 0.3,
+    noRotate: false,
+    noPan: false,
+    staticMoving: false,
+    enabled: true,
+    target: makeVec3(0, 0, 0),
+    handleResize: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispose: vi.fn(),
+  })),
+  addBoxHelper: vi.fn(),
 }))
 
 class FakeResizeObserver {

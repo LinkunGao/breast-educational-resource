@@ -29,6 +29,35 @@ const GLB_LOAD_TIMEOUT_MS = 30_000
  */
 const NRRD_STALL_TIMEOUT_MS = 15_000
 
+/**
+ * The fat layer's tint. NOT the legacy app's literal `#a3932a`
+ * (LeftModel.vue:167), and the reason is arithmetic, not taste.
+ *
+ * At 40% opacity the layer composites with whatever is behind it, and the
+ * legacy app's page background was `rgba(251,113,133)` -- a saturated coral
+ * (assets/sass/global.scss:4). That is where the flesh tone the human
+ * remembers actually came from:
+ *
+ *   0.4*(163,147,42) + 0.6*(251,113,133) = (216,127,97)  -- salmon
+ *
+ * This app's stage background is near-white (`#FBF7F8`), and the same layer
+ * over it composites to
+ *
+ *   0.4*(163,147,42) + 0.6*(251,247,248) = (216,207,166)  -- khaki
+ *
+ * which is exactly the "太土了" the human reported, and is reproduced
+ * pixel-for-pixel by a screenshot of this app. Nothing is wrong with the
+ * model or the material; the background changed underneath it.
+ *
+ * Solving for the colour that lands on a warm flesh (`#E8C4A8`) over THIS
+ * background gives `#CB7830`. (Reproducing the legacy salmon exactly is
+ * impossible here: solved over a near-white background at 40% it needs
+ * negative green and blue. Raising the opacity instead would hide the
+ * fibroglandular tissue underneath, which is the entire point of the layer
+ * being translucent.)
+ */
+const FAT_LAYER_COLOR = '#CB7830'
+
 export interface SliceState {
   /**
    * There is deliberately NO `index` field here (fix round 1, Important).
@@ -89,7 +118,31 @@ export function useModalityScene(stage: StageApi) {
    * progress text -- see NRRD_STALL_TIMEOUT_MS's doc); GLB loads only ever
    * report 0 then 1, since `loadGltf` has no progress signal at all. */
   const progress = ref(0)
-  const sliceState = ref<SliceState | null>(null)
+  /**
+   * `shallowRef`, NOT `ref` -- and this is a performance correctness issue,
+   * not a style preference.
+   *
+   * A deep `ref` hands its contents to Vue 3's reactive Proxy, and a
+   * `SliceState` transitively contains `raw.volume.data`: the decoded NRRD,
+   * a typed array of hundreds of thousands of voxels. Vue 3 proxies ANY
+   * object, typed arrays included, so every single voxel read inside
+   * copper3d's per-pixel repaint loop went through Vue's `get` trap.
+   *
+   * Measured with V8's sampling profiler while dragging the slice plane on
+   * `/case/density-a/mri`: Vue's `get` (13.0%), `isRef` (10.1%), and its
+   * shared helpers (4.9%) together accounted for ~29% of all CPU during a
+   * scrub -- for a value nothing renders from.
+   *
+   * The legacy Vue 2 app never hit this: Vue 2's `observe()` walks only
+   * arrays and plain objects, and a typed array is neither, so its voxel
+   * data was left untouched. That is why the human reports the old MRI and
+   * mammogram viewers as smooth.
+   *
+   * Shallow is also semantically right: a `SliceState` is replaced wholesale
+   * on every load, and nothing reads its fields reactively -- the scrub
+   * position is published through `useSliceControl`'s own `index` ref.
+   */
+  const sliceState = shallowRef<SliceState | null>(null)
   /** Set only when an asset genuinely fails to load (a stall/timeout, or
    * copper3d refusing to create a scene at all). Distinct from
    * `stage.loadError` (Task 7), which covers copper3d's own chunk failing
@@ -484,10 +537,17 @@ export function useModalityScene(stage: StageApi) {
       window.removeEventListener('resize', next.confirmResize, false)
 
       activateScene(renderer, next)
-      next.controls.rotateSpeed = 3.0
-      // Legacy control feel (frontend/components/model/LeftModel.vue:157 vs
-      // Model.vue:237): the anatomy viewer pans slower than the imaging
+      // Must come before any controls tuning: this REPLACES the controls
+      // object copper3d's constructor built, so anything written first would
+      // land on the instance being discarded.
+      installTrackballControls(Copper, next)
+      // Legacy control feel, on the class the legacy app actually tuned
+      // (LeftModel.vue:156-157, Model.vue:236-237). 3.0 is a TRACKBALL
+      // number; the same value on the OrbitControls this used to run against
+      // is 3x that class's default, which is what made imaging rotation feel
+      // uncontrollable. The anatomy viewer pans slower than the imaging
       // viewers, which orbit a much larger NRRD volume.
+      next.controls.rotateSpeed = 3.0
       next.controls.panSpeed = modality.id === 'anatomy' ? 0.2 : 0.5
 
       const slice = modality.id === 'anatomy'
@@ -583,7 +643,10 @@ export function useModalityScene(stage: StageApi) {
       // the model would load correctly and never appear.
       target.controls.maxDistance = size * 10
       target.scene.add(group)
-      tintFatLayer(group)
+      // Awaited: it swaps the fat layer's material, and returning before that
+      // lands would let the morph's `collectFadeTargets` capture the GLB's
+      // original material and then fade a material no longer on the mesh.
+      await tintFatLayer(group)
       return group
     }
     finally {
@@ -752,7 +815,7 @@ export function useModalityScene(stage: StageApi) {
           assetUrl,
           bar,
           true,
-          (_volume, meshes, slices) => {
+          (volume, meshes, slices) => {
             settle()
             target.addObject(meshes.z)
             meshes.z.name = 'z'
@@ -793,20 +856,28 @@ export function useModalityScene(stage: StageApi) {
             // Called via `.call` because copper3d's own scrubbing does the
             // same (`frontend/plugins/copper.js:110`): `repaint` is taken
             // off the slice object and needs its `this` bound back.
+            // Before the first paint, so that paint already uses it. Async,
+            // but the `repaint` below is safe either way: it is the original
+            // until the patch lands, and the patch is a drop-in replacement.
+            void installFastSliceRepaint(slices.z)
             slices.z.repaint.call(slices.z)
 
             if (flat) {
-              // copperSceneOnDemond hardcodes OrbitControls, not
-              // TrackballControls (copper-types.ts's CopperControls doc) --
-              // `noRotate`/`noPan` (what the legacy 2D views actually used,
-              // frontend/components/model/Model.vue:268-269, running on a
-              // different controls class) do not exist here and would
-              // silently no-op, leaving the view rotatable.
-              target.controls.enableRotate = false
-              target.controls.enablePan = false
+              // The same two properties the legacy 2D views set
+              // (frontend/components/model/Model.vue:268-269). They work now
+              // that `installTrackballControls` has put a trackball here --
+              // previously this wrote OrbitControls' `enableRotate`/
+              // `enablePan`, which do not exist on a trackball, silently
+              // no-oped, and left every flat view rotatable.
+              target.controls.noRotate = true
+              target.controls.noPan = true
               resolve(null)
             }
             else {
+              // 3D modalities only, exactly like the legacy app: the flat
+              // branch above returns before this, and Model.vue:267-283 put
+              // the box in the same `else`.
+              void addVolumeBoundingBox(target, volume.RASDimensions)
               const z = slices.z
               resolve({ max: z.MaxIndex, raw: z, mesh: meshes.z })
             }
@@ -938,21 +1009,51 @@ function disposeUnusedSlicePlane(mesh: NrrdMesh) {
  * appearance (a flat pink tint, as an earlier draft of this task assumed,
  * would not have matched the original app at all).
  *
- * Mutates the mesh's existing material in place rather than constructing a
- * new material instance, so this file never needs its own `import`
- * of `three`: copper3d's dist/bundle.esm.js has three's source inlined,
- * not imported (`from "three"` appears nowhere in it), so a material built
- * from the hoisted `node_modules/three` (a dependency of copper3d, not of
- * this app -- global constraint) would be a different, if
- * version-identical, class from whatever GLTFLoader actually attached to
- * this mesh. Mutating the object already there sidesteps that boundary
- * entirely.
+ * REPLACES the material, as the legacy app does. An earlier version instead
+ * mutated the GLB's own material in place -- setting `transparent`,
+ * `opacity` and `color` on it -- to avoid importing `three` here. That is
+ * not the same thing, and it is what the human meant by "颜色不是很对啊 ...
+ * 太土了":
+ *
+ *   - `material.color` MULTIPLIES `material.map` in three. The GLB's fat
+ *     mesh carries a flesh-toned baseColor texture, so tinting it olive
+ *     produced flesh x olive = a muddy khaki. The legacy material has no
+ *     `map` at all, so `#a3932a` is the literal colour of a clean 40%
+ *     translucent film, and the flesh tones the human remembers come from
+ *     the tissue READ THROUGH it.
+ *   - The original also keeps its normal/roughness/metalness maps, which
+ *     the legacy material does not have (a fresh MeshPhysicalMaterial is
+ *     roughness 1, metalness 0, no maps).
+ *
+ * Importing `three` for this is now fine and was not before: `loadGltfModel`
+ * already imports it, pinned to `three@0.185.1`, the exact revision copper3d
+ * inlines -- see that file's header for why identical versions interoperate
+ * across the two copies.
  */
-function tintFatLayer(group: SceneObject) {
+async function tintFatLayer(group: SceneObject): Promise<void> {
+  const targets: NonNullable<SceneObjectChild['material']>[] = []
+  const meshes: SceneObjectChild[] = []
   group.traverse((child) => {
     if (!child.isMesh || child.name !== 'VH_F_fat_L' || !child.material) return
-    child.material.transparent = true
-    child.material.opacity = 0.4
-    child.material.color?.set('#a3932a')
+    meshes.push(child)
+    targets.push(child.material)
   })
+  if (!meshes.length) return
+
+  const { MeshPhysicalMaterial } = await import('three')
+  for (const mesh of meshes) {
+    mesh.material = new MeshPhysicalMaterial({
+      transparent: true,
+      opacity: 0.4,
+      color: FAT_LAYER_COLOR,
+    }) as unknown as SceneObjectChild['material']
+  }
+  // The GLB's own material (and its textures) are now unreferenced. copper3d
+  // never disposes materials it did not create, and the density morph swaps
+  // models repeatedly, so dropping these here is the difference between a
+  // bounded and an unbounded texture footprint.
+  for (const material of targets) {
+    material.map?.dispose?.()
+    material.dispose()
+  }
 }

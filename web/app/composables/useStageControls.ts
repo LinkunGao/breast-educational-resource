@@ -47,7 +47,6 @@ export interface StageControlsContext {
   settledSliceIndex: Ref<number>
   /** True while the stage is showing an imaging modality, which the bar
    * matches with the dark reading-lightbox palette (§5.3). */
-  film: Ref<boolean>
   actions: ShallowRef<StageActions | null>
 }
 
@@ -61,7 +60,6 @@ export function provideStageControls(): StageControlsContext {
     sliceIndex: ref(0),
     sliceMax: ref(0),
     settledSliceIndex: ref(0),
-    film: ref(false),
     actions: shallowRef(null),
   }
   provide(STAGE_CONTROLS, context)

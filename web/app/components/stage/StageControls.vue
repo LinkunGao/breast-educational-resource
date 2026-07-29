@@ -19,8 +19,6 @@ const props = defineProps<{
   /** The case's lesion slice, or 0 when it has none. §7.2 shows the locate
    * control only for the five cases that actually have a lesion. */
   lesionSliceIndex: number
-  /** Dark reading-lightbox palette for imaging modalities (§5.3). */
-  film: boolean
   /** False until the stage's renderer exists; the buttons do nothing until
    * then, so they say so rather than silently no-opping. */
   ready: boolean
@@ -75,8 +73,7 @@ onScopeDispose(() => {
 })
 
 /** Shared by all three buttons. `min-h-11` is §11's 44px touch-target
- * floor; `hover:bg-current/10` tints from whichever foreground the film /
- * light variant already set, so one class works on both. */
+ * floor; `hover:bg-current/10` tints from the bar's own foreground colour. */
 const buttonClass = 'flex min-h-11 items-center gap-1.5 rounded-ctl px-3 text-body-sm '
   + 'hover:bg-current/10 disabled:opacity-50 disabled:hover:bg-transparent'
 </script>
@@ -84,10 +81,8 @@ const buttonClass = 'flex min-h-11 items-center gap-1.5 rounded-ctl px-3 text-bo
 <template>
   <div
     ref="root"
-    class="flex shrink-0 flex-wrap items-center gap-2 border-t px-4 py-2"
-    :class="props.film
-      ? 'border-film-border bg-film-bg text-surface'
-      : 'border-border bg-surface text-text'"
+    class="flex shrink-0 flex-wrap items-center gap-2 border-t border-border
+           bg-surface px-4 py-2 text-text"
   >
     <button
       type="button"

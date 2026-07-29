@@ -37,21 +37,46 @@ export interface CopperCamera {
 }
 
 /**
- * `copperSceneOnDemond` (the only scene class `copperRendererOnDemond`
- * ever constructs) hardcodes `new OrbitControls(...)` in its constructor
- * regardless of the renderer's `controls` option -- that option is only
- * read by the *other* scene class, `copperScene`
- * (dist/bundle.esm.js:83629-83637 branches on `opt.controls`;
- * dist/Scene/copperSceneOnDemond.d.ts's constructor takes no such option
- * and dist/bundle.esm.js:84290 always does `new OrbitControls(...)`).
- * So this is shaped like OrbitControls (`enableRotate`/`enablePan`), not
- * TrackballControls (`noRotate`/`noPan`).
+ * `Copper3dTrackballControls` -- copper3d's own TrackballControls variant,
+ * which is what the legacy app used everywhere (`controls: "copper3d"`,
+ * frontend/plugins/copper.js:20).
+ *
+ * `copperSceneOnDemond` builds `new OrbitControls(...)` in its constructor
+ * and ignores the renderer's `controls` option entirely (that option is read
+ * only by the sibling `copperScene` class, dist/bundle.esm.js:83629-83637).
+ * So the trackball is installed by REPLACING `scene.controls` after
+ * construction -- see `installTrackballControls`. That is safe because
+ * `copperSceneOnDemond` reads `this.controls` fresh on every use
+ * (`render`/`onWindowResize` call `this.controls.update()`, `loadGltf` writes
+ * `this.controls.maxDistance`) and never captures the instance anywhere
+ * except the one `change` listener the installer re-registers.
+ *
+ * Shaped accordingly: `noRotate`/`noPan`, not `enableRotate`/`enablePan`.
  */
 export interface CopperControls {
   rotateSpeed: number
   panSpeed: number
-  enableRotate: boolean
-  enablePan: boolean
+  /** TrackballControls' rotate/pan locks. The legacy app's 2D views used
+   * exactly these (frontend/components/model/Model.vue:268-269), and so does
+   * its slice-scrub raycaster (frontend/plugins/copper.js:80,86). */
+  noRotate: boolean
+  noPan: boolean
+  /**
+   * `true` = no inertia: the camera stops the instant the pointer does.
+   * The legacy app left this at `false` (its `staticMoving = true` lines are
+   * commented out, Model.vue:235 and PanelControls.vue:123), i.e. it drifted
+   * on release. Turned ON here at the human's explicit request -- "该转动到
+   * 哪个位置就是哪个位置". This is a deliberate divergence from legacy feel,
+   * not an oversight.
+   */
+  staticMoving: boolean
+  /**
+   * TrackballControls caches the canvas's page-relative box in `screen` and
+   * only recomputes it here -- unlike OrbitControls, which measures per
+   * event. Without a call after every container resize, rotation is computed
+   * against stale bounds and the model appears to swing off-axis.
+   */
+  handleResize: () => void
   minDistance?: number
   maxDistance?: number
   target?: Vec3
@@ -65,16 +90,22 @@ export interface CopperControls {
    * controls of whatever scene it's switching away from, so with more
    * than one cached scene, a single mouse drag reaches every one of
    * their controls and the last-created scene paints last, regardless of
-   * which is actually on screen. `enabled` (three's own `Controls` base
-   * class, node_modules/three/src/extras/Controls.js:43, inherited by
-   * OrbitControls) is the real, documented off switch: every early-return
-   * guard in OrbitControls.js checks `this.enabled === false` before
-   * touching any pointer/wheel state, so setting it `false` genuinely
-   * stops that scene's controls from ever dispatching `change`.
-   * useModalityScene sets this `false` on the outgoing scene and `true`
-   * on the incoming one at every switch.
+   * which is actually on screen. `enabled` is the real off switch on
+   * `Copper3dTrackballControls` too (its own field, bundle.esm.js:66306;
+   * every pointer handler returns early on `scope.enabled === false`), so
+   * setting it `false` genuinely stops that scene's controls from ever
+   * dispatching `change`. useModalityScene sets this `false` on the
+   * outgoing scene and `true` on the incoming one at every switch.
    */
   enabled: boolean
+  /** Re-registering the scene's own `requestRenderIfNotRequested` is what
+   * keeps on-demand rendering working after the controls are swapped; see
+   * `installTrackballControls`. */
+  addEventListener?: (type: 'change', listener: () => void) => void
+  /** Detaches the pointer/wheel listeners the constructor put on the shared
+   * canvas. Called on the OrbitControls instance being replaced -- leaving
+   * it live would give every drag two controls to drive. */
+  dispose?: () => void
   /**
    * From three's `EventDispatcher`, which `Controls` extends. The one
    * listener that matters here is the `change` handler
@@ -178,6 +209,10 @@ export interface SceneObjectChild {
      * class. Deliberately not importing `three` for this type: see this
      * file's header comment on why only one hoisted copy may exist. */
     color?: { set: (value: string) => void }
+    /** The baseColor texture a glTF material carries. Needs its own dispose
+     * when the material is replaced -- `Material.dispose()` does not cascade
+     * into it. See `tintFatLayer`. */
+    map?: { dispose?: () => void }
   }
 }
 
@@ -200,7 +235,17 @@ export interface CopperBaseScene {
 
 export interface CopperScene extends CopperBaseScene {
   camera: CopperCamera
+  /** Writable: `installTrackballControls` replaces copper3d's hardcoded
+   * OrbitControls instance here. See `CopperControls`. */
   controls: CopperControls
+  /**
+   * The shared `WebGLRenderer` this scene draws with (`this.renderer`,
+   * assigned in `copperSceneOnDemond`'s constructor, bundle.esm.js:84400).
+   * Needed only for `domElement` -- the canvas the replacement controls must
+   * attach their pointer listeners to, the same element copper3d passed to
+   * its own `new OrbitControls(this.camera, renderer.domElement)`.
+   */
+  renderer: { domElement: HTMLCanvasElement }
   /**
    * copper3d's own record of the key this scene is registered under in
    * `CopperRenderer.sceneMap` (`baseScene`'s field, written by
@@ -397,6 +442,21 @@ export interface CopperModule {
     options?: Record<string, unknown>,
   ) => CopperRenderer
   loading: (svg?: string) => LoadingBar
+  /** copper3d's own TrackballControls variant, a named export
+   * (bundle.esm.js:105359). Taken from the module rather than from
+   * `three/examples/jsm/controls/TrackballControls.js` so the controls and
+   * the camera they drive come from the same copy of three -- the one thing
+   * `loadGltfModel`'s header warns is not guaranteed to interoperate. */
+  Copper3dTrackballControls: new (
+    camera: CopperCamera,
+    domElement: HTMLElement,
+  ) => CopperControls
+  /**
+   * Adds a `BoxHelper` around `boxCube`, transformed into the volume's own
+   * space (bundle.esm.js `addBoxHelper`). This is the bounding box the
+   * legacy app drew around every NRRD slice plane.
+   */
+  addBoxHelper: (scene: CopperScene, volume: { matrix: unknown }, boxCube?: unknown) => void
 }
 
 /** useCopperStage's return contract; Tasks 8-10 depend on it. */

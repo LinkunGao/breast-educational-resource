@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { CaseGroup, Modality } from '~~/content/types'
-import { chooseTransition, poseDistance, viewPointToPose } from '~/composables/cameraTransitions'
+import { chooseTransition } from '~/composables/cameraTransitions'
 import type { ViewKey } from '~/composables/cameraTransitions'
 
 /**
@@ -25,20 +25,10 @@ const props = defineProps<{
   modality: Modality
 }>()
 
-/** §7.1: the crossfade's own duration. */
+/** §7.1: the crossfade's own duration. This is a MATERIAL crossfade between
+ * two density models, not camera motion, so it survives the human's "no
+ * animation" ruling -- nothing about it moves the view. */
 const MORPH_MS = 800
-/** §7.3: a modality flight. */
-const FLIGHT_MS = 1200
-/** §7.2: the locate glide (camera push-in and slice glide together). */
-const LOCATE_MS = 900
-/** §7.2's "push in toward the lesion region", expressed as a fraction of
- * the modality's own framed composition distance rather than of wherever
- * the user happens to be. That makes repeated clicks idempotent, and it
- * cannot creep the camera into the volume over a run of them. */
-const LESION_DOLLY = 0.6
-/** "Reset view" is a short flight rather than a jump so the user can see
- * where the view went; reduced motion collapses it to the jump. */
-const RESET_MS = 500
 /** §11: one 5-degree orbit step per arrow key, 10% per `+`/`-`. */
 const ORBIT_STEP = Math.PI / 36
 const ZOOM_STEP = 0.9
@@ -64,12 +54,18 @@ const camera = useCameraChoreography(stage, modalityScene.scene)
  */
 const slice = useSliceControl(host, modalityScene.scene, modalityScene.sliceState, camera.animate)
 
-/**
- * Design doc §5.3: imaging modalities get a dark reading-lightbox
- * background, Anatomy gets a light one. copper3d's canvas is alpha:true,
- * so the background is entirely CSS's call here.
+/*
+ * §5.3's dark "reading lightbox" background for imaging modalities is GONE,
+ * at the human's instruction: "所有images的panel背景为何是黑色的呢？不应该
+ * 是要一致都是透明色吗？". Every modality now sits on the same background,
+ * and copper3d's canvas is alpha:true, so that background is entirely CSS's
+ * -- exactly as the legacy app had it (frontend/plugins/copper.js's
+ * `alpha: true` on all three renderers, with the page's own colour showing
+ * through).
+ *
+ * The `film` flag on `useStageControls` went with it; the control bar is a
+ * single appearance now.
  */
-const isFilm = computed(() => props.modality.id !== 'anatomy')
 
 /** Nothing has failed and something is actually on screen. Every action and
  * every transition checks this: `useModalityScene`'s catch clears neither
@@ -171,30 +167,17 @@ async function enterView() {
   if (transition === 'density-morph' && await runDensityMorph(token)) return
   if (token !== navToken) return
 
-  // Captured BEFORE the load: a flight starts from the outgoing scene's
-  // orientation, and `load()` switches the renderer to the incoming scene's
-  // own camera (each modality owns one -- Task 8's per-modality cache).
-  const orientation = transition === 'modality-flight' ? camera.captureOrientation() : null
-
+  // Every modality switch is a hard cut, and the first view of a case has no
+  // entrance orbit. Both §7.3's inter-modality camera flight and §7.4's
+  // entrance orbit were built and then removed at the human's explicit
+  // instruction ("去掉所有的模型和image上的旋转动画", and the flight with it):
+  // they moved the camera away from wherever the reader had put it and got
+  // in the way of the interactions this stage exists for. `load()` applies
+  // the modality's own view preset and renders, which is the whole job now.
+  //
+  // `chooseTransition` is still consulted above -- the density morph is a
+  // material crossfade with a stationary camera, and is unaffected.
   await modalityScene.load(props.slug, props.modality)
-  if (token !== navToken || !isHealthy()) return
-
-  const preset = modalityScene.viewpoint.value
-  if (!preset) return
-  const destination = viewPointToPose(preset)
-
-  if (orientation) {
-    // Snap the incoming camera to the apparent orientation the outgoing one
-    // had, at the incoming scene's own composition distance, then fly on to
-    // its framed preset. The viewer sees one camera swinging across rather
-    // than a cut followed by an unrelated flight.
-    camera.applyOrientation(orientation, poseDistance(destination))
-    await camera.flyTo(destination, FLIGHT_MS)
-    return
-  }
-
-  // §7.4: the first view of a case gets the entrance orbit instead.
-  await camera.orbitIntro()
 }
 
 watch(
@@ -219,23 +202,26 @@ watch(
  * what the user first saw, which is what "Reset view" means here -- is
  * `modalityScene.viewpoint`.
  *
- * Routed through `flyTo` rather than `loadView` + `render`: it lands on the
- * identical pose, and it means the `controls.target` sync C3 flags as
- * load-bearing lives in exactly one place instead of being re-remembered at
- * every call site. Under reduced motion the driver collapses this to the
- * instant jump C3 describes, with no lease taken.
+ * An instant jump, not a flight: see `enterView` on why no camera animation
+ * survives on this stage. `loadView` writes the camera AND `controls.target`
+ * together (Scene/baseScene.js:88-98), which is the sync correction C3
+ * flagged as load-bearing -- so going through it directly, rather than
+ * through an animation driver, keeps that in one place too.
  */
 function onReset() {
   if (!isHealthy()) return
+  const target = modalityScene.scene.value
   const preset = modalityScene.viewpoint.value
-  if (!preset) return
-  void camera.flyTo(viewPointToPose(preset), RESET_MS).catch(() => {})
+  if (!target || !preset) return
+  target.loadView(preset)
+  stage.renderer.value?.render()
 }
 
 /**
- * §7.2. Controller correction C9: the camera push-in and the slice glide
- * are ONE animation (see `locateLesion`), because this driver has a single
- * cancel slot and two calls would cancel each other.
+ * §7.2, reduced to what survives the no-camera-animation ruling: jump the
+ * slice to the one holding the lesion. §7.2's camera push-in is gone with
+ * every other camera move (see `enterView`), so this no longer needs the
+ * animation driver at all -- it writes the index, repaints, and renders.
  *
  * The third thing §7.2 asks for -- a 600ms outline highlight on arrival --
  * is NOT built. There is nothing in this app that knows where a lesion is:
@@ -247,19 +233,9 @@ function onReset() {
 function onLocate() {
   if (!isHealthy()) return
   const state = modalityScene.sliceState.value
-  const preset = modalityScene.viewpoint.value
   if (!state || props.lesionSliceIndex <= 0) return
 
-  void camera.locateLesion(state.raw, props.lesionSliceIndex, {
-    durationMs: LOCATE_MS,
-    dollyTo: preset ? poseDistance(viewPointToPose(preset)) * LESION_DOLLY : undefined,
-    // The glide writes `raw.index` directly, so the readout has to be told;
-    // per frame, not once at the end, or the number sits still and then
-    // jumps.
-    onIndex: () => slice.syncFromRaw(),
-  })
-    .then(() => slice.settle())
-    .catch(() => {})
+  slice.jumpTo(props.lesionSliceIndex)
 }
 
 // ── Input ────────────────────────────────────────────────────────────────
@@ -290,7 +266,7 @@ function onStageKeydown(event: KeyboardEvent) {
   // The 2D ultrasound modality has rotation disabled (there is one flat
   // slice to look at), so the arrow keys must not quietly re-enable by
   // another route what the pointer cannot do.
-  const canRotate = modalityScene.scene.value?.controls.enableRotate !== false
+  const canRotate = modalityScene.scene.value?.controls.noRotate !== true
 
   switch (event.key) {
     case 'ArrowLeft': if (!canRotate) return; camera.nudgeOrbit(-ORBIT_STEP, 0); break
@@ -304,7 +280,11 @@ function onStageKeydown(event: KeyboardEvent) {
   event.preventDefault()
 }
 
-onMounted(() => {
+// `await nextTick()` for the same reason as useSliceControl's `attach` and
+// useCopperStage's mount hook: `host` is not bound yet when `onMounted`
+// fires, so both of these registered on `undefined` and did nothing.
+onMounted(async () => {
+  await nextTick()
   host.value?.addEventListener('pointerdown', onUserInput)
   host.value?.addEventListener('wheel', onUserInput, { passive: true })
 })
@@ -325,7 +305,6 @@ if (stageControls) {
     stageControls.sliceIndex.value = slice.index.value
     stageControls.sliceMax.value = slice.max.value
     stageControls.settledSliceIndex.value = slice.settledIndex.value
-    stageControls.film.value = isFilm.value
   })
   onMounted(() => {
     stageControls.actions.value = { reset: onReset, locateLesion: onLocate }
@@ -340,10 +319,7 @@ defineExpose({ stage, modalityScene, host, camera, slice })
 
 <template>
   <div
-    class="relative flex-1 transition-colors duration-500"
-    :class="isFilm
-      ? 'bg-linear-to-b from-film-bg to-film-bg-2'
-      : 'bg-linear-to-b from-surface-sunken to-bg'"
+    class="relative flex-1 bg-linear-to-b from-surface-sunken to-bg"
   >
     <!--
       `tabindex="0"` is back, together with the handlers Task 7 said to wait
@@ -351,9 +327,8 @@ defineExpose({ stage, modalityScene, host, camera, slice })
       box: the stage is `absolute inset-0` inside a column that scrolls and
       clips, so the default +2px offset would put the ring outside the
       stage's own bounds where it can be cut off. `--color-brand` on the
-      dark film background measures 3.98:1 and on the light one 3.72:1,
-      both clear of §11's 3:1 non-text floor (asserted in
-      test/nav-contrast.test.ts).
+      stage background measures 3.72:1, clear of §11's 3:1 non-text floor
+      (asserted in test/nav-contrast.test.ts).
 
       Always mounted, never behind a v-if (a bug fixed while wiring Task 8):
       useCopperStage builds its one WebGLRenderer against whatever DOM node
@@ -388,8 +363,7 @@ defineExpose({ stage, modalityScene, host, camera, slice })
     <p
       v-if="chunkLoadError || assetLoadError"
       role="alert"
-      class="absolute inset-0 flex items-center justify-center p-4 text-center text-body-sm text-text-muted"
-      :class="isFilm ? 'bg-film-bg' : 'bg-bg'"
+      class="absolute inset-0 flex items-center justify-center bg-bg p-4 text-center text-body-sm text-text-muted"
     >
       Couldn't load the 3D viewer. Check your connection and reload the page.
     </p>
@@ -399,8 +373,7 @@ defineExpose({ stage, modalityScene, host, camera, slice })
       class="pointer-events-none absolute inset-0 flex items-center justify-center"
     >
       <div
-        class="flex items-center gap-3 rounded-card px-4 py-3 backdrop-blur-sm"
-        :class="isFilm ? 'bg-film-bg/70 text-surface' : 'bg-surface/80 text-text'"
+        class="flex items-center gap-3 rounded-card bg-surface/80 px-4 py-3 text-text backdrop-blur-sm"
         role="status"
         aria-live="polite"
       >

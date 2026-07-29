@@ -110,6 +110,8 @@ export function useCopperStage(host: Ref<HTMLElement | undefined>): StageApi {
   }
 
   let resizeObserver: ResizeObserver | undefined
+  /** Set once the input pump below is wired; see its comment. */
+  let detachInput: (() => void) | undefined
 
   onMounted(async () => {
     // Belt-and-braces: onMounted itself never runs during SSR (Vue skips
@@ -224,10 +226,64 @@ export function useCopperStage(host: Ref<HTMLElement | undefined>): StageApi {
       if (!host.value) return
       const { width, height } = host.value.getBoundingClientRect()
       if (width === 0 || height === 0) return
-      renderer.value?.getCurrentScene().onWindowResize()
+      const current = renderer.value?.getCurrentScene()
+      current?.onWindowResize()
+      // TrackballControls caches the canvas's page-relative box in `screen`
+      // and recomputes it ONLY here -- unlike OrbitControls, which measures
+      // per pointer event. Skip this and every drag after a panel collapse
+      // or a window resize is computed against stale bounds, so the model
+      // swings off-axis. Guarded rather than asserted: `getCurrentScene()`
+      // can still be the renderer's placeholder `baseScene`, which has no
+      // controls at all (see CopperBaseScene).
+      ;(current as { controls?: { handleResize?: () => void } }).controls?.handleResize?.()
       renderer.value?.render()
     })
     resizeObserver.observe(host.value)
+
+    /**
+     * Pumps a frame while the user is manipulating the camera.
+     *
+     * LOAD-BEARING, and not obvious. `Copper3dTrackballControls` dispatches
+     * `change` ONLY from inside its `update()` (bundle.esm.js:66479-66522);
+     * its pointer handlers just record positions and dispatch `start`/`end`.
+     * `update()` in turn only runs inside `scene.render()`. Under on-demand
+     * rendering that closes a deadlock: no render, so no `update()`, so the
+     * camera never moves, so no `change`, so nothing ever requests a render.
+     * The whole viewer goes dead to the mouse -- which is exactly what
+     * happened when the trackball first replaced OrbitControls (OrbitControls
+     * has no such problem: it moves the camera in the pointer handler itself
+     * and dispatches `change` there). copper3d's own trackball scenes do not
+     * hit this because they run a continuous `animate()` rAF loop.
+     *
+     * `requestRenderIfNotRequested` rather than `render()`: it coalesces to
+     * one frame per rAF, so a 1000Hz mouse still costs 60 renders a second.
+     * Routed through `getCurrentScene()` so it always drives the scene that
+     * is actually on screen, never a cached one.
+     */
+    const pump = () => {
+      const current = renderer.value?.getCurrentScene() as
+        { requestRenderIfNotRequested?: () => void } | undefined
+      current?.requestRenderIfNotRequested?.()
+    }
+    // `buttons !== 0` limits the move case to an actual drag; a bare hover
+    // must not schedule frames, and the trackball ignores it anyway.
+    const onMove = (e: PointerEvent) => { if (e.buttons !== 0) pump() }
+    const el = host.value
+    el.addEventListener('pointerdown', pump)
+    el.addEventListener('pointermove', onMove)
+    el.addEventListener('pointerup', pump)
+    el.addEventListener('pointercancel', pump)
+    // Wheel zoom needs one frame of its own: the trackball's wheel handler
+    // dispatches `start` and `end` back to back and leaves the actual zoom
+    // for the next `update()`.
+    el.addEventListener('wheel', pump, { passive: true })
+    detachInput = () => {
+      el.removeEventListener('pointerdown', pump)
+      el.removeEventListener('pointermove', onMove)
+      el.removeEventListener('pointerup', pump)
+      el.removeEventListener('pointercancel', pump)
+      el.removeEventListener('wheel', pump)
+    }
   })
 
   onScopeDispose(() => {
@@ -236,6 +292,7 @@ export function useCopperStage(host: Ref<HTMLElement | undefined>): StageApi {
     if (rafId !== null) cancelAnimationFrame(rafId)
     rafId = null
     continuousHolders = 0
+    detachInput?.()
     resizeObserver?.disconnect()
     resizeObserver = undefined
     renderer.value?.stop()

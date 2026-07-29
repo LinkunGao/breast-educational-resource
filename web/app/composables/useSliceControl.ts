@@ -9,9 +9,16 @@ import type { SliceState } from './useModalityScene'
  * slice by exactly ±1 spacing per pointermove regardless of how far the
  * pointer had actually travelled, so the feel had nothing to do with the
  * gesture, and it added/removed its own `pointerdown` listener from inside
- * `pointermove` on every raycast miss. Here the drag distance sets a TARGET
- * slice number and an eased follower chases it, and the listeners are
- * attached exactly once.
+ * `pointermove` on every raycast miss. Here the drag distance drives the
+ * slice DIRECTLY and proportionally -- one pointermove, one repaint, no
+ * easing in between -- and the listeners are attached exactly once.
+ *
+ * An earlier version set a target and let an eased follower chase it. It
+ * looked smoother in isolation and felt wrong in the hand: the image visibly
+ * lagged the pointer, which is unacceptable for an instrument the reader is
+ * using to look for something. The human's words were "为何不是鼠标移动时
+ * 实时更新slice". The follower survives only for the `[`/`]` keys, where a
+ * discrete step genuinely does read better as a short glide than a jump.
  *
  * Three things this file deliberately does not do:
  *
@@ -75,23 +82,76 @@ export function useSliceControl(
 
   let dragging = false
   let lastY = 0
-  /** `controls.enableRotate` as it was before a scrub suppressed it. Not a
+  /** Whether rotation was allowed before a scrub suppressed it -- i.e.
+   * `!controls.noRotate` at pointerdown, stored positively so the flat-view
+   * reasoning below reads the same way it always did. Not a
    * hardcoded `true` on restore: the 2D ultrasound modality ships with
    * rotation already disabled (useModalityScene's `flat` branch), and
    * restoring it to `true` there would silently make the one flat modality
    * orbitable. */
   let rotateWasEnabled: boolean | null = null
 
+  /**
+   * `repaint()` is expensive: copper3d re-extracts the whole plane out of the
+   * volume in JS and redraws its backing canvas
+   * (`Volume.extractPerpendicularPlane`, bundle.esm.js:60796), then the
+   * texture is re-uploaded on the next render. On this catalogue's larger
+   * MRI volumes that is hundreds of thousands of iterations per call, so how
+   * OFTEN it is called is the whole performance story of a scrub.
+   *
+   * Two things keep it down, and both matter:
+   *
+   *  · The index is ROUNDED to a whole slice. Only whole slices exist --
+   *    copper3d floors the value on the way in -- so a fractional index costs
+   *    a full repaint to display the picture that was already on screen. At
+   *    `SENSITIVITY` 0.25 that is three wasted repaints out of every four
+   *    pixels of drag.
+   *  · Nothing is repainted when the slice number has not changed.
+   */
   function applyIndex(next: number) {
     const state = sliceState.value
     if (!state) return
-    const clamped = clamp(next, state.max)
+    const clamped = Math.round(clamp(next, state.max))
+    if (clamped === current && index.value === clamped) return
     current = clamped
     // `raw.index` is a WORLD coordinate, `clamped` a slice number
     // (copper-types.ts's NrrdSlice doc).
     state.raw.index = clamped * state.raw.volume.spacing[2]
     state.raw.repaint.call(state.raw)
-    index.value = Math.round(clamped)
+    index.value = clamped
+  }
+
+  /**
+   * Coalesces a burst of pointermoves into ONE repaint per displayed frame.
+   * A high-polling mouse delivers well over 100 moves a second; without this
+   * every one of them paid the full `repaint` cost above, and only the last
+   * one before each frame was ever seen. The human's report was simply
+   * "渲染的也太慢了吧".
+   *
+   * This is a single-frame coalescer, NOT a second animation loop -- it
+   * schedules at most one callback, holds no lease, and cancels on detach.
+   * The app's one-animation-driver rule is about competing rAF *loops*; this
+   * has no continuation.
+   */
+  let pending: number | null = null
+  let coalesceRaf: number | null = null
+
+  function scheduleIndex(next: number) {
+    pending = next
+    if (coalesceRaf !== null) return
+    coalesceRaf = requestAnimationFrame(() => {
+      coalesceRaf = null
+      if (pending === null) return
+      applyIndex(pending)
+      pending = null
+      settledIndex.value = index.value
+    })
+  }
+
+  function cancelScheduled() {
+    if (coalesceRaf !== null) cancelAnimationFrame(coalesceRaf)
+    coalesceRaf = null
+    pending = null
   }
 
   function follow() {
@@ -145,41 +205,66 @@ export function useSliceControl(
     dragging = true
     lastY = event.clientY
     target = current
-    el.style.cursor = 'ns-resize'
+    // Stays `pointer` for the whole gesture, exactly as the legacy app did
+    // (frontend/plugins/copper.js:78). An earlier version switched to
+    // `ns-resize` on press to advertise the axis; the human read the change
+    // itself as a glitch -- the cursor must not move under the hand
+    // mid-gesture.
+    el.style.cursor = 'pointer'
 
     // This handler runs in the CAPTURE phase specifically so this write
-    // lands before OrbitControls sees the same pointerdown: its listener is
+    // lands before the trackball sees the same pointerdown: its listener is
     // on the canvas (a descendant of `host`) in the bubble phase, and it
-    // latches its rotate state during that handler. Setting `enableRotate`
+    // latches its rotate state during that handler. Setting `noRotate`
     // afterwards would be one gesture too late, and the drag would both
-    // scrub and orbit.
+    // scrub and orbit -- exactly what the legacy app avoided by setting the
+    // same property at the same moment (frontend/plugins/copper.js:80).
     const controls = scene.value?.controls
     if (controls) {
-      rotateWasEnabled = controls.enableRotate
-      controls.enableRotate = false
+      rotateWasEnabled = !controls.noRotate
+      controls.noRotate = true
     }
-    // No `setPointerCapture` here: OrbitControls captures the pointer on the
+    // No `setPointerCapture` here: the controls capture the pointer on the
     // canvas during the same gesture, and whichever element captures last
-    // wins. Its capture keeps delivering moves to the canvas, which bubble
+    // wins. Their capture keeps delivering moves to the canvas, which bubble
     // up to `host` regardless, so competing for the capture would buy
     // nothing and lose to it anyway.
   }
 
   function onPointerMove(event: PointerEvent) {
     const state = sliceState.value
-    if (!dragging || !state) return
+    const el = host.value
+    if (!state || !el) return
+
+    if (!dragging) {
+      // Hover affordance (human requirement #5). Nothing about a flat grey
+      // rectangle says "drag me vertically", and the slice plane is the only
+      // object on an imaging stage that responds to one. Raycast per move,
+      // the same thing the legacy app did (frontend/plugins/copper.js:98) --
+      // and only while a volume is loaded, so anatomy pays nothing.
+      el.style.cursor = hitsSlicePlane(event, el) ? 'pointer' : ''
+      return
+    }
+
     const dy = event.clientY - lastY
     lastY = event.clientY
+    // Not handed to the follower: the plane must track the pointer with no
+    // perceptible lag. Coalesced to one repaint per frame, because repaint
+    // is the expensive part -- see `scheduleIndex`.
     target = clamp(target + dy * SENSITIVITY, state.max)
-    follow()
+    scheduleIndex(target)
   }
 
   function endDrag() {
     if (!dragging) return
     dragging = false
+    cancelScheduled()
+    // Cleared rather than restored to `pointer`: the next pointermove
+    // re-decides from an actual raycast, and the pointer may well have left
+    // the plane during the drag.
     if (host.value) host.value.style.cursor = ''
     const controls = scene.value?.controls
-    if (controls && rotateWasEnabled !== null) controls.enableRotate = rotateWasEnabled
+    if (controls && rotateWasEnabled !== null) controls.noRotate = !rotateWasEnabled
     rotateWasEnabled = null
   }
 
@@ -194,6 +279,23 @@ export function useSliceControl(
     follow()
   }
 
+  /**
+   * Leaving the stage entirely. The pointer stops producing `pointermove`
+   * the moment it crosses out, so nothing else would ever clear the `pointer`
+   * cursor or an in-flight drag's `noRotate` -- the viewer would be left
+   * permanently un-rotatable with a hand cursor, which is what the human
+   * reported. `pointerup` outside the stage has the same shape, and
+   * `endDrag` covers both.
+   */
+  function onPointerLeave() {
+    // `endDrag` restores `noRotate` to whatever it was BEFORE the scrub,
+    // which is the only correct restore: on the flat 2D modalities rotation
+    // was already locked by useModalityScene and must stay locked. Nothing
+    // here may unlock it unconditionally.
+    endDrag()
+    if (host.value) host.value.style.cursor = ''
+  }
+
   function attach() {
     const el = host.value
     if (!el) return
@@ -201,6 +303,7 @@ export function useSliceControl(
     el.addEventListener('pointermove', onPointerMove)
     el.addEventListener('pointerup', endDrag)
     el.addEventListener('pointercancel', endDrag)
+    el.addEventListener('pointerleave', onPointerLeave)
     el.addEventListener('keydown', onKeydown)
   }
 
@@ -211,6 +314,7 @@ export function useSliceControl(
     el.removeEventListener('pointermove', onPointerMove)
     el.removeEventListener('pointerup', endDrag)
     el.removeEventListener('pointercancel', endDrag)
+    el.removeEventListener('pointerleave', onPointerLeave)
     el.removeEventListener('keydown', onKeydown)
     endDrag()
   }
@@ -233,6 +337,34 @@ export function useSliceControl(
     settledIndex.value = index.value
   }
 
+  /**
+   * Jumps straight to `sliceNumber` -- no glide. This is what "Locate lesion"
+   * does now that no camera or slice animation survives on this stage (see
+   * CopperStage's `onLocate`).
+   *
+   * `target` is moved with `current` so a subsequent drag starts from where
+   * the plane actually is; leaving it behind would make the first drag after
+   * a jump snap back to the pre-jump index.
+   */
+  function jumpTo(sliceNumber: number) {
+    if (!sliceState.value) return
+    applyIndex(sliceNumber)
+    target = current
+    settle()
+    /**
+     * LOAD-BEARING under on-demand rendering. `applyIndex` repaints the
+     * slice texture, but a repaint is not a frame: nothing on this branch
+     * draws until something asks it to. Every other writer of the slice
+     * index happens to be riding an existing render source -- a drag has
+     * useCopperStage's input pump, `[`/`]` has the animation driver's lease
+     * -- but a click on "Locate lesion" has neither, so the new slice sat
+     * finished-but-undrawn until the user next rotated the view. That is
+     * exactly what the human saw: "他点了是不会立即有反应，必须要rotate
+     * 一下images，他才会跳到那个slice".
+     */
+    scene.value?.requestRenderIfNotRequested()
+  }
+
   watch(sliceState, (state) => {
     if (!state) {
       index.value = 0
@@ -253,8 +385,22 @@ export function useSliceControl(
     settledIndex.value = index.value
   }, { immediate: true })
 
-  onMounted(attach)
+  /**
+   * `await nextTick()` is LOAD-BEARING, for the same reason it is in
+   * useCopperStage's own mount hook: the template ref this composable is
+   * handed is NOT bound yet when `onMounted` fires, so `attach()` read
+   * `host.value === undefined`, returned early, and silently attached
+   * nothing. Every pointer listener below -- the hover cursor, the scrub,
+   * the rotation lock -- was dead in a real browser from the day this was
+   * written. No unit test could see it: they all pass a real element in
+   * directly, so `attach()` finds one and the tests exercise handlers that
+   * production never wired up.
+   */
+  onMounted(async () => {
+    await nextTick()
+    attach()
+  })
   onScopeDispose(detach)
 
-  return { index, max, settledIndex, syncFromRaw, settle, attach, detach }
+  return { index, max, settledIndex, syncFromRaw, settle, jumpTo, attach, detach }
 }

@@ -54,18 +54,47 @@ function makeModality(overrides: Partial<Modality> = {}): Modality {
  * `getObjectByName` that always returned undefined would let both of those
  * "pass" by doing nothing at all.
  */
+/** What `copperSceneOnDemond`'s constructor leaves on `scene.controls`:
+ * OrbitControls. Deliberately WITHOUT `noRotate`/`noPan`/`staticMoving`, so
+ * production code that writes those onto an un-swapped instance is visible
+ * as a stray property rather than passing silently. */
+function makeOrbitControlsDouble() {
+  return {
+    rotateSpeed: 1,
+    panSpeed: 1,
+    enabled: true,
+    removeEventListener: vi.fn(),
+    dispose: vi.fn(),
+  }
+}
+
+/** What `installTrackballControls` puts there instead. */
+function makeTrackballDouble() {
+  return {
+    rotateSpeed: 1,
+    panSpeed: 0.3,
+    noRotate: false,
+    noPan: false,
+    staticMoving: false,
+    enabled: true,
+    handleResize: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispose: vi.fn(),
+  }
+}
+
 function makeFakeScene(): CopperScene {
   const objects: Array<{ name: string }> = []
   const scene = {
     camera: {} as CopperScene['camera'],
-    controls: {
-      rotateSpeed: 0,
-      panSpeed: 0,
-      enableRotate: true,
-      enablePan: true,
-      enabled: true,
-      removeEventListener: vi.fn(),
-    },
+    // The OrbitControls instance copper3d's constructor builds. Production
+    // code replaces this via `installTrackballControls` before touching it,
+    // so it is shaped the way copper3d leaves it, NOT the way the app then
+    // uses it -- a fake that started out trackball-shaped would hide a
+    // regression where the install stopped happening.
+    controls: makeOrbitControlsDouble(),
+    renderer: { domElement: document.createElement('canvas') },
     sceneName: '',
     requestRenderIfNotRequested: vi.fn(),
     objects,
@@ -136,6 +165,10 @@ function makeFakeCopperModule(): CopperModule {
   return {
     copperRendererOnDemond: vi.fn() as unknown as CopperModule['copperRendererOnDemond'],
     loading: vi.fn(() => makeLoadingBar()),
+    Copper3dTrackballControls: vi.fn(
+      () => makeTrackballDouble(),
+    ) as unknown as CopperModule['Copper3dTrackballControls'],
+    addBoxHelper: vi.fn(),
   }
 }
 
@@ -323,7 +356,7 @@ describe('useModalityScene', () => {
     expect(modalityScene.viewpoint.value).toEqual(viewpointA)
   })
 
-  it('keeps enableRotate/enablePan true for non-ultrasound (3D) modalities', async () => {
+  it('installs a trackball on every scene and leaves 3D modalities rotatable', async () => {
     const scene = makeFakeScene()
     const renderer = makeFakeRenderer(scene)
     const stage = makeFakeStage(renderer)
@@ -333,8 +366,14 @@ describe('useModalityScene', () => {
     resolveNrrd(scene)
     await loadPromise
 
-    expect(scene.controls.enableRotate).toBe(true)
-    expect(scene.controls.enablePan).toBe(true)
+    // The controls object is the REPLACEMENT, not the OrbitControls copper3d
+    // built -- if `installTrackballControls` stopped running, `noRotate`
+    // would be undefined here rather than false.
+    expect(scene.controls.noRotate).toBe(false)
+    expect(scene.controls.noPan).toBe(false)
+    expect(scene.controls.staticMoving).toBe(true)
+    // The legacy app's tuned value, on the class it was tuned for.
+    expect(scene.controls.rotateSpeed).toBe(3.0)
   })
 
   // Review fix #1 (second half): the resize listener is removed the moment
@@ -627,7 +666,7 @@ describe('useModalityScene', () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled()
   })
 
-  it('locks rotation and pan for the 2D ultrasound modality via enableRotate/enablePan, not noRotate/noPan', async () => {
+  it('locks rotation and pan for the 2D ultrasound modality via noRotate/noPan', async () => {
     const scene = makeFakeScene()
     const renderer = makeFakeRenderer(scene)
     const stage = makeFakeStage(renderer)
@@ -639,8 +678,8 @@ describe('useModalityScene', () => {
     resolveNrrd(scene)
     await loadPromise
 
-    expect(scene.controls.enableRotate).toBe(false)
-    expect(scene.controls.enablePan).toBe(false)
+    expect(scene.controls.noRotate).toBe(true)
+    expect(scene.controls.noPan).toBe(true)
     expect(modalityScene.sliceState.value).toBeNull()
   })
 
