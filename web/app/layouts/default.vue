@@ -104,21 +104,11 @@ const sheetExpanded = ref(false)
              that state -- a fullscreened element with no background of its
              own shows the UA's black backdrop through it. -->
         <div data-stage-column class="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
-          <!-- Placeholder: Task 6's CaseHeader (case title + BI-RADS badge)
-               renders here. -->
-          <slot name="heading">
-            <div class="p-4">
-              <p class="text-body-sm text-text-muted">Placeholder: case heading (Task 6)</p>
-            </div>
-          </slot>
+          <!-- Case heading (title + BI-RADS badge). -->
+          <slot name="heading" />
 
-          <!-- Placeholder: Task 6's ModalityStepper (horizontally
-               scrollable) renders here. -->
-          <slot name="stepper">
-            <div class="p-4">
-              <p class="text-body-sm text-text-muted">Placeholder: modality stepper (Task 6)</p>
-            </div>
-          </slot>
+          <!-- Modality stepper, horizontally scrollable. -->
+          <slot name="stepper" />
 
           <!-- md:max-xl:min-h ensures the stage can't be squeezed to 0 at
                tablet: in a column flex layout with a shrink-0 sibling,
@@ -136,13 +126,8 @@ const sheetExpanded = ref(false)
             <slot name="stage" />
           </section>
 
-          <!-- Placeholder: Task 7's control bar (reset/fullscreen/locate
-               lesion/slice scrubber) renders here. -->
-          <slot name="controls">
-            <div class="p-4">
-              <p class="text-body-sm text-text-muted">Placeholder: control bar (Task 7)</p>
-            </div>
-          </slot>
+          <!-- Control bar: reset / fullscreen / locate lesion / slice readout. -->
+          <slot name="controls" />
         </div>
 
         <!-- Content column: collapsible width at xl+ (design doc §10.1's
@@ -192,12 +177,7 @@ const sheetExpanded = ref(false)
 
           <slot name="content" />
 
-          <!-- Placeholder: Task 6's prev/next case navigation renders here. -->
-          <slot name="prevnext">
-            <div class="p-4">
-              <p class="text-body-sm text-text-muted">Placeholder: prev/next case navigation (Task 6)</p>
-            </div>
-          </slot>
+          <slot name="prevnext" />
         </div>
       </main>
     </div>

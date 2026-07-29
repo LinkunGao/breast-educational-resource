@@ -101,7 +101,7 @@ function onKeydown(event: KeyboardEvent) {
       <ul class="flex flex-col gap-0.5">
         <li v-for="c in g.items" :key="c.slug">
           <NuxtLink
-            :to="`/case/${c.slug}`"
+            :to="`/${c.slug}`"
             class="flex min-h-11 items-center gap-2 rounded-ctl px-2 text-body-sm hover:bg-surface-sunken"
             :class="c.slug === store.caseSlug
               ? 'bg-brand-subtle font-bold text-anatomy-ink'

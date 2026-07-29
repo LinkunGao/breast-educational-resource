@@ -11,7 +11,7 @@ import { getCase, isMorphFamilyGroup } from '~~/content/cases'
  * ## Why the modality is not in the key
  *
  * NuxtPage's default key is derived from the full matched route, including
- * the optional `modality` param, so `/case/x/anatomy` -> `/case/x/mri` would
+ * the optional `modality` param, so `/x/anatomy` -> `/x/mri` would
  * tear down and rebuild the renderer on every step of the modality stepper --
  * exactly what design doc §8.2's "switch the scene, not the renderer" exists
  * to eliminate. Under Suspense it would also transiently double the live

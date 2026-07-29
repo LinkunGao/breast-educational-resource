@@ -98,7 +98,6 @@ const lesionSliceIndex = computed(() => lesionSliceIndexFor(current.value!, moda
         :slice-max="stageControls.sliceMax.value"
         :settled-slice-index="stageControls.settledSliceIndex.value"
         :lesion-slice-index="lesionSliceIndex"
-        :film="stageControls.film.value"
         :ready="Boolean(stageControls.actions.value)"
         @reset="stageControls.actions.value?.reset()"
         @locate="stageControls.actions.value?.locateLesion()"
@@ -109,6 +108,10 @@ const lesionSliceIndex = computed(() => lesionSliceIndexFor(current.value!, moda
       <div class="flex flex-col gap-6 p-6">
         <ModalityText :modality="modality" />
       </div>
+    </template>
+
+    <template #prevnext>
+      <CaseNav :slug="slug" />
     </template>
   </NuxtLayout>
 </template>

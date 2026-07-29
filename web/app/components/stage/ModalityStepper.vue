@@ -40,7 +40,7 @@ function onKeydown(event: KeyboardEvent) {
   const next = activeIndex.value + delta
   if (next < 0 || next >= props.modalities.length) return
   event.preventDefault()
-  navigateTo(`/case/${props.slug}/${props.modalities[next]!.id}`)
+  navigateTo(`/${props.slug}/${props.modalities[next]!.id}`)
 }
 </script>
 
@@ -52,7 +52,7 @@ function onKeydown(event: KeyboardEvent) {
   >
     <li v-for="(m, i) in props.modalities" :key="m.id" class="flex items-center">
       <NuxtLink
-        :to="`/case/${props.slug}/${m.id}`"
+        :to="`/${props.slug}/${m.id}`"
         class="flex min-h-11 shrink-0 items-center gap-2 rounded-ctl px-3 text-body-sm
                transition-colors hover:bg-surface-sunken"
         :class="m.id === props.active

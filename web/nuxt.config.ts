@@ -49,7 +49,19 @@ export default defineNuxtConfig({
 
   app: {
     head: {
-      title: 'Te Uma — The Breast Educational Platform',
+      /**
+       * The legacy app's own title, verbatim (frontend/nuxt.config.js:22).
+       *
+       * This replaces "Te Uma — The Breast Educational Platform", which was
+       * invented during the rebuild. `Te Uma` is te reo Māori for the breast
+       * and is right as the mark in the header, next to the logo -- but a
+       * browser tab, a bookmark, a search result and a shared link are all
+       * places where a reader who does not speak te reo gets the title and
+       * nothing else, and there it says nothing about what the site is. The
+       * human's question was exactly that: "你认为把 Te Uma 当做网站的
+       * title 合理吗？"
+       */
+      title: 'Breast Educational Resource',
       htmlAttrs: { lang: 'en' },
       link: [
         { rel: 'preconnect', href: 'https://fonts.googleapis.com' },

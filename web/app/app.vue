@@ -9,7 +9,7 @@ import type { RouteLocationNormalizedLoaded } from 'vue-router'
  * physically happen.
  *
  * Whatever that rule returns is safe specifically because
- * pages/case/[slug]/[[modality]].vue's 404 guard is a `definePageMeta({
+ * pages/[slug]/[[modality]].vue's 404 guard is a `definePageMeta({
  * validate })` route guard, not a setup-time `throw` -- a validate guard
  * re-runs on every navigation regardless of whether the component instance
  * is reused, so navigating to an invalid slug still 404s even though a

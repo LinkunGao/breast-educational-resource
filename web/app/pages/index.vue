@@ -4,7 +4,7 @@
 // who visited before that change would never see it, with no server-side
 // fix available. The ten legacy paths in nuxt.config.ts stay 301 -- those
 // really are permanent.
-await navigateTo('/case/the-breast', { redirectCode: 302 })
+await navigateTo('/the-breast', { redirectCode: 302 })
 </script>
 
 <template>

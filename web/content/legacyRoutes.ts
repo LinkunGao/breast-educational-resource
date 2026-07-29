@@ -16,14 +16,31 @@
  * if a future task actually introduces a client-side router fallback.
  */
 export const LEGACY_ROUTES: Record<string, string> = {
-  '/model-breast': '/case/the-breast',
-  '/density-1': '/case/density-a',
-  '/density-2': '/case/density-b',
-  '/density-3': '/case/density-c',
-  '/density-4': '/case/density-d',
-  '/benign-cyst': '/case/benign-cyst',
-  '/benign-fibroadenoma': '/case/benign-fibroadenoma',
-  '/cancer-dcis': '/case/cancer-dcis',
-  '/cancer-lobular': '/case/cancer-lobular',
-  '/cancer-ductal': '/case/cancer-ductal',
+  '/model-breast': '/the-breast',
+  '/density-1': '/density-a',
+  '/density-2': '/density-b',
+  '/density-3': '/density-c',
+  '/density-4': '/density-d',
 }
+
+/**
+ * The five lesion cases are deliberately absent from the table above.
+ *
+ * Case pages used to live under `/case/<slug>`; they are now served at
+ * `/<slug>` directly (the human's #9: "你这个app的路由为何会有一个case呢？
+ * 很奇怪"). For `benign-cyst`, `benign-fibroadenoma`, `cancer-dcis`,
+ * `cancer-lobular` and `cancer-ductal` the legacy path and the new path are
+ * now the SAME string, so a redirect entry for them would be a rule pointing
+ * at itself -- a loop in the router and a `<meta http-equiv="refresh">`
+ * pointing at its own page in the generated stub.
+ *
+ * They still resolve, because the real route now answers on that path. Only
+ * the five paths whose names actually changed need a redirect.
+ */
+export const LEGACY_ROUTES_SERVED_DIRECTLY = [
+  '/benign-cyst',
+  '/benign-fibroadenoma',
+  '/cancer-dcis',
+  '/cancer-lobular',
+  '/cancer-ductal',
+] as const
