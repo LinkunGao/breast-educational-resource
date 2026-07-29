@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { enabledCases } from '~~/content/cases'
+import { organisations } from '~~/content/team'
 import type { CaseGroup } from '~~/content/types'
 
 const store = useViewerStore()
+const { publicUrl } = useAssetUrl()
 
 const GROUP_LABEL: Record<CaseGroup, string> = {
   overview: '',
@@ -118,5 +120,37 @@ function onKeydown(event: KeyboardEvent) {
         </li>
       </ul>
     </div>
+
+    <!--
+      Partner logos (the human's #14).
+
+      Placed at the foot of the sidebar, and this is a deliberate choice
+      rather than a copy of the legacy layout: there they sat inside the
+      content pane, competing for width with the case text on every single
+      page. Attribution belongs where a reader looks for provenance -- the
+      bottom of the persistent chrome -- not interleaved with the medical
+      copy. `mt-auto` pins them to the bottom on tall viewports and lets them
+      simply follow the list on short ones.
+
+      One link wrapping all three, to About, where the same organisations are
+      named in text: three separate outbound links here would be three tab
+      stops on every page for something nobody navigates by.
+    -->
+    <NuxtLink
+      to="/about"
+      class="mt-auto flex flex-col items-start gap-3 rounded-card border-t border-border
+             px-2 pb-1 pt-5 opacity-70 transition-opacity hover:opacity-100"
+    >
+      <span class="sr-only">About this resource and the team behind it</span>
+      <img
+        v-for="org in organisations.filter(o => o.logo)"
+        :key="org.name"
+        :src="publicUrl(`logos/${org.logo}`)"
+        :alt="org.name"
+        :style="{ width: `${(org.logoWidth ?? 8) * 0.75}rem` }"
+        class="h-auto max-w-full"
+        loading="lazy"
+      >
+    </NuxtLink>
   </nav>
 </template>

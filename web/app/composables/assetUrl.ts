@@ -25,3 +25,20 @@ export function resolveAssetBase(assetBase: string, appBaseURL: string): string 
   if (!prefix) return assetBase
   return `${prefix}/${assetBase.replace(/^\/+/, '')}`
 }
+
+/**
+ * A file served straight out of `public/`, base-path aware.
+ *
+ * Distinct from `assetUrl` because `assetBase` is specifically the IMAGING
+ * base -- `/modelView/` locally, and potentially an external object store.
+ * Team portraits and partner logos are neither: they are small, they always
+ * ship with the app, and routing them through `assetBase` would ask an
+ * object store for `/modelView/team/...` and 404.
+ *
+ * `appBaseURL` still applies, for the same GitHub Pages subpath reason.
+ */
+export function publicUrl(path: string, appBaseURL: string): string {
+  if (!path) throw new Error('publicUrl received an empty path')
+  const prefix = appBaseURL.replace(/\/+$/, '')
+  return `${prefix}/${path.replace(/^\/+/, '')}`
+}
