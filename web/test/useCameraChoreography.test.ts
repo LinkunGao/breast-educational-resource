@@ -292,18 +292,19 @@ describe('useCameraChoreography', () => {
     expect(clock.raf).not.toHaveBeenCalled()
   })
 
-  // Review round 1, M-8: the instant path (reduced motion, or durationMs<=0)
-  // used to have no try/catch at all -- a throwing frame callback there
-  // would leave the returned promise permanently unsettled.
-  it('the instant path also rejects (never hangs) when its frame callback throws', async () => {
-    const scene = shallowRef(makeFakeScene([0, 0, 10]))
-    const stage = makeFakeStage()
-    const { camera } = mountChoreography(stage, scene)
-    camera.prefersReducedMotion.value = true
-    vi.mocked(scene.value!.camera.lookAt).mockImplementationOnce(() => { throw new Error('boom') })
-
-    await expect(camera.flyTo(target, 1000)).rejects.toThrow('boom')
-  })
+  // Review round 2 deleted a test that stood here, "the instant path also
+  // rejects (never hangs) when its frame callback throws" (M-8). It passed
+  // identically with or without the try/catch M-8 added: `onFrame(1)` sits
+  // directly in the `new Promise((resolve, reject) => { ... })` executor's
+  // own synchronous call frame, and a synchronous throw from a Promise
+  // executor auto-rejects per spec, with or without an explicit
+  // `reject()`. The test restated a language guarantee, not this file's own
+  // code, and would pass against a version of `animate()` with the
+  // try/catch stripped back out -- exactly the "would pass whether or not
+  // the code works" case this task's brief asks to delete rather than keep.
+  // The try/catch itself stays: it is a legitimate guard against a future
+  // `await` being introduced above `onFrame(1)`, which WOULD reintroduce a
+  // real hang. Just don't re-add a test for it that can't fail.
 
   // Review round 1, I-4: every entry to `animate()` -- including the
   // instant/reduced-motion path, not only the animated one -- must cancel
@@ -391,6 +392,53 @@ describe('useCameraChoreography', () => {
 
     expect(raw.index).toBeCloseTo(100, 5) // 50 slices * spacing 2
     expect(repaint).toHaveBeenCalled()
+  })
+
+  // Review round 2, item 1: captureOrientation/applyOrientation had zero
+  // tests, so S1 (the finding correction C7 called "load-bearing") and I-2's
+  // pivot consistency were code-read-verified only. `makeFakeScene` already
+  // builds a `controls.target` -- moving it off the origin and asserting
+  // against it is what these two were missing.
+  it('captureOrientation measures direction relative to controls.target, not a hardcoded origin', () => {
+    const scene = shallowRef(makeFakeScene([5, 0, 13]))
+    const stage = makeFakeStage()
+    const { camera } = mountChoreography(stage, scene)
+
+    // Simulates a scene revisited after an earlier flight had already
+    // re-aimed controls.target away from the origin -- the exact scenario
+    // I-2 covers.
+    scene.value!.controls.target!.set(5, 0, 3)
+
+    // Camera at (5,0,13), pivot at (5,0,3) -> offset (0,0,10), unit dir (0,0,1).
+    const captured = camera.captureOrientation()!
+    expect(captured.dir[0]).toBeCloseTo(0, 10)
+    expect(captured.dir[1]).toBeCloseTo(0, 10)
+    expect(captured.dir[2]).toBeCloseTo(1, 10)
+  })
+
+  // The direct regression test for S1: applyOrientation must aim
+  // `cam.lookAt` at wherever `controls.target` actually is, not an
+  // unconditional (0, 0, 0) -- otherwise the camera ends up looking one
+  // place while `controls.target` still holds another, and the user's next
+  // drag (`controls.update()`) silently re-aims the camera back at the
+  // stale target.
+  it('applyOrientation aims cam.lookAt at controls.target, not a hardcoded origin (S1)', () => {
+    const scene = shallowRef(makeFakeScene([0, 0, 10]))
+    const stage = makeFakeStage()
+    const { camera } = mountChoreography(stage, scene)
+
+    scene.value!.controls.target!.set(5, 2, -3)
+
+    camera.applyOrientation({ dir: [0, 0, 1], up: [0, 1, 0] }, 20)
+
+    const cam = scene.value!.camera
+    // Position is pivot + dir*distance, not just dir*distance from the origin.
+    expect(cam.position.x).toBeCloseTo(5, 10)
+    expect(cam.position.y).toBeCloseTo(2, 10)
+    expect(cam.position.z).toBeCloseTo(17, 10) // -3 + 20
+    // The load-bearing check: lookAt must target the SAME point
+    // controls.target already holds, not (0, 0, 0).
+    expect(cam.lookAt).toHaveBeenCalledWith(5, 2, -3)
   })
 
   it('reads the media query on mount and updates prefersReducedMotion when it changes', () => {

@@ -134,10 +134,15 @@ describe('interpolateFlightPose', () => {
   })
 
   // Review round 1, Critical C-1: this app's OWN shipped preset data has
-  // exactly antipodal up vectors on the same view axis --
-  // density-{1..4}/middle/m_view.json (mammogram) ships `eye: [0,0,2000]`,
-  // `up: [0,-1,0]`, `target: [0,0,0]`; density-{1..4}/right/mri_view.json
-  // (MRI) ships `eye: [0,0,650]`, `up: [0,1,0]`, `target: [0,0,0]`. A plain
+  // exactly antipodal up vectors on the same view axis -- verified on disk
+  // (round 2, NEW-3): density-1/middle/m_view.json and
+  // density-2/middle/m_view.json (mammogram) ship `eyePosition: [0,0,2000]`,
+  // `upVector: [0,-1,0]`, `targetPosition: [0,0,0]`; density-1/right/
+  // mri_view.json and density-2/right/mri_view.json (MRI) ship
+  // `eyePosition: [0,0,650]`, `upVector: [0,1,0]` (density-3/density-4's MRI
+  // preset uses `[0,0,550]` instead -- the eye distance varies slightly
+  // across density levels, the antipodal `up` pair does not). The values
+  // below are density-1/density-2's. A plain
   // `normalize(lerp(upFrom, upTo, t))` passes through the exact zero vector
   // at t=0.5 (reachable -- easeInOutCubic(0.5) is exactly 0.5) and falls
   // back to an axis parallel to the view direction there: the model holds

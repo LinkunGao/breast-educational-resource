@@ -52,7 +52,18 @@ const camera = useCameraChoreography(stage, modalityScene.scene)
 // covers the canvas while, behind it, a 3-second continuous-render lease
 // orbits an empty, evicted scene.
 watch(loading, (isLoading, was) => {
-  if (was && !isLoading && !assetLoadError.value && !chunkLoadError.value) camera.orbitIntro()
+  if (was && !isLoading && !assetLoadError.value && !chunkLoadError.value) {
+    // Review round 2, NEW-1: this call is fire-and-forget with no local
+    // `await`. Review round 1's M-9 fix made a throwing frame callback
+    // REJECT the returned promise rather than throw synchronously out of
+    // the rAF dispatch -- an unhandled rejection here would surface as
+    // Nuxt's dev-overlay/Sentry noise on every such failure instead of the
+    // previous window.onerror. There is nothing meaningful to do about a
+    // failed decorative entrance orbit (it's pure animation, not state),
+    // so this deliberately swallows it rather than surfacing a second error
+    // on top of whatever the load-failure path above already shows.
+    camera.orbitIntro().catch(() => {})
+  }
 })
 
 /**

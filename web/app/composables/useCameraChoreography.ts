@@ -290,23 +290,34 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
    * Applies a captured orientation to the current scene's camera, at
    * `distance` from its OWN pivot (`controls.target`, or the origin if
    * unset) -- the counterpart to `captureOrientation`. Review round 1, S1 /
-   * I-2: this used to place the camera relative to the origin, aim
-   * `cam.lookAt(0, 0, 0)`, and never touch `controls.target` at all -- the
-   * exact defect C7 calls load-bearing, left standing in this sibling
-   * function. If `controls.target` was not already the origin (a scene
-   * revisited after an earlier flight had re-aimed it elsewhere), the
-   * camera ends up aimed at the origin while `controls.target` still holds
-   * the old point, and the user's next drag calls `controls.update()`,
-   * which re-aims the camera back at that stale target and silently
-   * undoes this call. Reading and re-writing the same pivot keeps both
-   * consistent regardless of what `controls.target` was already holding.
+   * I-2: this used to place the camera relative to the origin and aim
+   * `cam.lookAt(0, 0, 0)` unconditionally -- the exact defect C7 calls
+   * load-bearing, left standing in this sibling function. If
+   * `controls.target` was not already the origin (a scene revisited after
+   * an earlier flight had re-aimed it elsewhere), the camera ended up aimed
+   * at the origin while `controls.target` still held the old point, and the
+   * user's next drag called `controls.update()`, which re-aimed the camera
+   * back at that stale target and silently undid this call. Reading
+   * `controls.target` via `pivotOf` and aiming `cam.lookAt` at that SAME
+   * point -- rather than always the origin -- is what closes S1: the camera
+   * and `controls.target` necessarily agree, because both come from the one
+   * value `pivotOf` read.
+   *
+   * Review round 2, NEW-2: an earlier version of this function also wrote
+   * `controls?.target?.set(...pivot)` here. That was always a no-op --
+   * `pivot` IS `controls.target`'s own current value, read one line above --
+   * and its doc comment claimed it "keeps both consistent," which described
+   * work that wasn't happening. Removed rather than kept as inert
+   * boilerplate: a future reader trusting that comment could "simplify"
+   * `cam.lookAt(pivot)` back toward a fixed point while leaving the
+   * write-back in place, silently reintroducing S1 with the comment still
+   * implying it's guarded.
    */
   function applyOrientation(
     o: { dir: [number, number, number], up: [number, number, number] } | null,
     distance: number,
   ) {
     const cam = scene.value?.camera
-    const controls = scene.value?.controls
     if (!cam || !o) return
     const pivot = pivotOf(scene.value)
     cam.position.set(
@@ -317,7 +328,6 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
     cam.up.set(o.up[0], o.up[1], o.up[2])
     cam.lookAt(pivot[0], pivot[1], pivot[2])
     cam.updateProjectionMatrix()
-    controls?.target?.set(pivot[0], pivot[1], pivot[2])
   }
 
   return {

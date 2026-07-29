@@ -309,14 +309,20 @@ function rotateByQuaternion(v: Vec3Tuple, q: Quat): Vec3Tuple {
  * poses' full orthonormal bases, not by lerping/slerping `dir` and `up`
  * independently. This is a correctness fix, not a style choice: this app's
  * real shipped presets include exactly antipodal up vectors on the same
- * view axis (`density-{1..4}/middle/m_view.json`'s `up: [0,-1,0]` vs
- * `density-{1..4}/right/mri_view.json`'s `up: [0,1,0]`, both looking down +z).
- * A plain `lerp(upFrom, upTo, t)` passes through the zero vector at t=0.5,
- * where `normalize` has no correct answer and falls back to an arbitrary
- * axis parallel to the view direction -- the camera holds upside-down,
- * then snaps 180 degrees in a single frame. Composing the two poses' full
- * bases into a relative rotation matrix and converting that matrix to a
- * quaternion (see `matrixToQuaternion`) has no such degeneracy: a
+ * view axis. Review round 2, NEW-3: verified on disk for all four density
+ * levels -- `density-1/middle/m_view.json` and `density-2/middle/m_view.json`
+ * (mammogram) ship `eyePosition: [0,0,2000]`, `upVector: [0,-1,0]`;
+ * `density-1/right/mri_view.json` and `density-2/right/mri_view.json` (MRI)
+ * ship `eyePosition: [0,0,650]`, `upVector: [0,1,0]` (density-3/density-4's
+ * MRI preset uses `[0,0,550]` instead -- the eye distance differs slightly
+ * across density levels, but every one of the four ships the same antipodal
+ * `up` pair on the same +z view axis, which is the part that actually
+ * matters here). A plain `lerp(upFrom, upTo, t)` passes through the zero
+ * vector at t=0.5, where `normalize` has no correct answer and falls back to
+ * an arbitrary axis parallel to the view direction -- the camera holds
+ * upside-down, then snaps 180 degrees in a single frame. Composing the two
+ * poses' full bases into a relative rotation matrix and converting that
+ * matrix to a quaternion (see `matrixToQuaternion`) has no such degeneracy: a
  * pure-roll case like the one above becomes a perfectly well-defined
  * 180-degree rotation about the shared view axis, so the fix is a smooth
  * roll through the midpoint rather than a snap. The same construction also
@@ -325,8 +331,23 @@ function rotateByQuaternion(v: Vec3Tuple, q: Quat): Vec3Tuple {
  * derived a rotation axis from a dot product between two vectors that can
  * be exactly opposite, rather than from a full, always-invertible basis).
  *
- * Guaranteed (by construction, not by clamping) to reproduce `from` exactly
- * at t=0 and `to` exactly at t=1.
+ * Guaranteed (by construction, not by clamping) to reproduce `from.position`
+ * exactly at t=0 and `to.position` exactly at t=1, and likewise for `up`
+ * WHEN each pose's own `up` is already perpendicular to its own view
+ * direction. Review round 2, NEW-4: what the function actually returns at
+ * the endpoints is `from.up`/`to.up` Gram-Schmidt-orthogonalised against
+ * `from.dir`/`to.dir` (`buildBasis`'s `up`, not the raw input `up`), which
+ * only equals the raw input verbatim when it was already exactly
+ * perpendicular. Checked every `*_view.json` under `public/modelView`
+ * directly (20 files: all 4 density levels' mammogram/MRI pairs, the 8
+ * remaining benign/cancer cases' mammogram/MRI/ultrasound presets, and
+ * `left_breast_view.json`) -- every one has `up` exactly perpendicular to
+ * `eyePosition - targetPosition` (dot product exactly 0), so there is no
+ * live divergence today. A future preset with a non-perpendicular `up`
+ * would see it silently squared up rather than reproduced verbatim, which
+ * is by design (an `up` that leans toward the view axis is not a
+ * meaningful camera roll to begin with) but worth knowing if a new preset
+ * is ever hand-authored slightly off-perpendicular.
  */
 export function interpolateFlightPose(from: Pose, to: Pose, t: number): Pose {
   const u = clamp01(t)
