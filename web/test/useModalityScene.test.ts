@@ -2,19 +2,33 @@ import { effectScope, shallowRef } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Modality } from '../content/types'
 import type { CopperModule, CopperRenderer, CopperScene, CopperViewPoint, StageApi } from '../app/composables/copper-types'
+import { loadGltfModel } from '../app/composables/loadGltfModel'
 import { useModalityScene } from '../app/composables/useModalityScene'
 
 /**
- * useModalityScene drives copper3d's loaders (loadGltf/loadNrrd), which
- * this test never really invokes -- happy-dom has no WebGL and cannot
- * decode a real GLB/NRRD file. What's under test here is the bookkeeping
- * around those calls: scene naming/reuse, the shared-canvas controls
- * hand-off, the resize-listener leak workaround, stall-based failure
- * detection (copper3d has no onError to lean on), the stale-load
+ * useModalityScene drives copper3d's own NRRD loader (loadNrrd) and this
+ * app's loadGltfModel wrapper around three's GLTFLoader for GLBs (mocked
+ * below, same as loadNrrd) -- happy-dom has no WebGL and cannot decode a
+ * real GLB/NRRD file. What's under test here is the bookkeeping around
+ * those calls: scene naming/reuse, the shared-canvas controls hand-off, the
+ * resize-listener leak workaround, stall-based failure detection (copper3d's
+ * loadNrrd has no onError to lean on; the GLB path gets a flat wall-clock
+ * timeout instead, see GLB_LOAD_TIMEOUT_MS's own comment), the stale-load
  * bookkeeping guard, disposal safety, the view-preset render-after-fetch
  * sequencing, and the ultrasound control flags -- exactly what the task
  * brief and its review call out as testable without a browser.
  */
+
+/**
+ * `loadGltfModel` is a plain module export that useModalityScene's `loadGlb`
+ * calls as a Nuxt-auto-imported bare global (there is no local `import` for
+ * it in the source file -- same convention as `useAssetUrl`/
+ * `useRuntimeConfig`, which test/setup.ts already stubs globally for the
+ * same reason). Mocking the module here and re-exposing the mocked binding
+ * globally (see beforeEach below) lets every test drive it exactly the way
+ * the old `scene.loadGltf` mock it replaces used to be driven.
+ */
+vi.mock('../app/composables/loadGltfModel', () => ({ loadGltfModel: vi.fn() }))
 
 const DEFAULT_VIEWPOINT: CopperViewPoint = {
   farPlane: 1000, nearPlane: 0.01, eyePosition: [0, 0, 1], targetPosition: [0, 0, 0], upVector: [0, 1, 0],
@@ -65,10 +79,13 @@ function makeFakeScene(): CopperScene {
     },
     // copper3d's own addObject is `this.scene.add(obj)` (bundle.esm.js:68800).
     addObject: vi.fn((obj: { name: string }) => { objects.push(obj) }),
-    // ...and loadGltf adds the group itself before invoking the callback
-    // (bundle.esm.js:84314). Tests that need a group resolve this per call.
     loadNrrd: vi.fn(),
-    loadGltf: vi.fn(),
+    // Deliberately no `loadGltf` here: `loadGlb` (useModalityScene.ts) no
+    // longer calls it at all -- it calls the module-level `loadGltfModel`
+    // instead (mocked globally, see this file's header) and adds the result
+    // to `scene.scene` itself. Leaving `loadGltf` off this fake entirely
+    // means a stray production regression back to `scene.loadGltf` fails
+    // loudly (calling an undefined method) instead of silently no-opping.
     loadView: vi.fn(),
     onWindowResize: vi.fn(),
     confirmResize: vi.fn(),
@@ -139,6 +156,12 @@ describe('useModalityScene', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     stubFetchOk()
+    // Mirrors how production resolves this Nuxt-auto-imported composable --
+    // see this file's header. `mockReset` (not `mockClear`) so a previous
+    // test's queued `mockResolvedValueOnce`/`mockImplementationOnce`
+    // behaviour and call history never leak into the next one.
+    vi.stubGlobal('loadGltfModel', loadGltfModel)
+    vi.mocked(loadGltfModel).mockReset()
   })
 
   afterEach(() => {
@@ -466,11 +489,15 @@ describe('useModalityScene', () => {
     const renderer = makeFakeRenderer(scene)
     const stage = makeFakeStage(renderer)
     const modalityScene = useModalityScene(stage)
+    // loadGltfModel's mock never resolves, simulating a genuinely dead
+    // connection -- it has a real onError unlike copper3d's own loadGltf,
+    // but nothing here ever calls it, so the flat wall-clock timeout in
+    // `loadGlb` (GLB_LOAD_TIMEOUT_MS) is the only way out.
+    vi.mocked(loadGltfModel).mockImplementationOnce(() => new Promise(() => {}))
 
     const loadPromise = modalityScene.load('density-a', makeModality({
       id: 'anatomy', label: 'Anatomy', asset: 'density-1/left/density25.glb', viewPreset: 'left_breast_view.json',
     }))
-    // loadGltf's mock never invokes its callback.
     await vi.advanceTimersByTimeAsync(60_000)
     await loadPromise
 
@@ -653,13 +680,15 @@ describe('useModalityScene', () => {
       },
     }
 
-    const loadPromise = modalityScene.load('density-a', makeModality({
+    vi.mocked(loadGltfModel).mockResolvedValueOnce({ group: group as never, size: 10 })
+
+    await modalityScene.load('density-a', makeModality({
       id: 'anatomy', label: 'Anatomy', asset: 'density-1/left/density25.glb', viewPreset: 'left_breast_view.json',
     }))
-    const [, glbCallback] = vi.mocked(scene.loadGltf).mock.calls[0]!
-    glbCallback!(group as never)
-    await loadPromise
 
+    // The new guarantee this app now owns instead of copper3d: without this
+    // call the model would decode perfectly and simply never appear.
+    expect(scene.scene.add).toHaveBeenCalledWith(group)
     expect(fatMaterial.transparent).toBe(true)
     expect(fatMaterial.opacity).toBe(0.4)
     expect(fatMaterial.color.set).toHaveBeenCalledWith('#a3932a')
@@ -682,6 +711,44 @@ describe('useModalityScene', () => {
     await loadPromise
 
     expect(vi.mocked(fetch)).toHaveBeenCalledWith('/modelView/density-1/middle/m_view.json')
+  })
+
+  // The same deployment trap resolveAssetBase already guards against for
+  // model/preset URLs (assetUrl.test.ts): three appends the decoder's file
+  // names to `dracoPath` verbatim, applying no base of its own, so a GitHub
+  // Pages subpath deploy that asked for `/draco/` instead of `/te-uma/draco/`
+  // would 404 every anatomy model's Draco decoder.
+  it('resolves the Draco decoder path against a GitHub Pages subpath deploy, not the site root', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({
+      public: { assetBase: '/modelView/' },
+      app: { baseURL: '/te-uma/' },
+    }))
+    try {
+      const scene = makeFakeScene()
+      const renderer = makeFakeRenderer(scene)
+      const stage = makeFakeStage(renderer)
+      const modalityScene = useModalityScene(stage)
+      vi.mocked(loadGltfModel).mockResolvedValueOnce({ group: { name: '', traverse: () => {} } as never, size: 1 })
+
+      await modalityScene.load('density-a', makeModality({
+        id: 'anatomy', label: 'Anatomy', asset: 'density-1/left/density25.glb', viewPreset: 'left_breast_view.json',
+      }))
+
+      expect(loadGltfModel).toHaveBeenCalledWith(
+        '/te-uma/modelView/density-1/left/density25.glb',
+        '/te-uma/draco/',
+      )
+    }
+    finally {
+      // Restore test/setup.ts's site-root default: this file's other tests
+      // (and this describe block's own beforeEach) don't re-stub
+      // useRuntimeConfig themselves, so a leaked override here would corrupt
+      // every asset-base assertion after this test.
+      vi.stubGlobal('useRuntimeConfig', () => ({
+        public: { assetBase: '/modelView/' },
+        app: { baseURL: '/' },
+      }))
+    }
   })
 
   it('surfaces a failed view-preset fetch as a load failure instead of silently keeping the default camera', async () => {
@@ -744,12 +811,14 @@ describe('useModalityScene', () => {
       const modalityScene = useModalityScene(stage)
 
       const objects = (scene as unknown as { objects: Array<{ name: string }> }).objects
-      /** Resolves the next `loadGltf` call with `group`, as copper3d does. */
-      const resolveGltf = (group: { name: string }) => {
-        vi.mocked(scene.loadGltf).mockImplementationOnce((_url, cb) => {
-          objects.push(group)
-          cb!(group as never)
-        })
+      /** Resolves the next `loadGltfModel` call with `group`. Unlike the old
+       * `scene.loadGltf` mock this replaces, it does NOT push into `objects`
+       * itself: `loadGlb` (useModalityScene.ts) now calls `target.scene.add(group)`
+       * on the resolved value, so `scene.scene.add`'s own mock (above, backed
+       * by the same array) is what populates `objects` -- exercising the
+       * real code path rather than a test double standing in for it. */
+      const resolveGltf = (group: { name: string }, size = 10) => {
+        vi.mocked(loadGltfModel).mockResolvedValueOnce({ group: group as never, size })
       }
 
       const initial = makeAnatomyGroup()
@@ -768,7 +837,11 @@ describe('useModalityScene', () => {
 
       expect(morph).not.toBeNull()
       // §7.1: the SAME scene, so the camera cannot move. Only the model changes.
-      expect(vi.mocked(scene.loadGltf).mock.calls[1]![0]).toBe('/modelView/density-2/left/density50.glb')
+      expect(vi.mocked(loadGltfModel).mock.calls[1]![0]).toBe('/modelView/density-2/left/density50.glb')
+      // The new guarantee this app now owns instead of copper3d: without
+      // this call the incoming model would decode perfectly and simply
+      // never appear.
+      expect(scene.scene.add).toHaveBeenCalledWith(next.group)
       // Both models are in the scene at once, but only one answers to the
       // name -- otherwise a second morph could find the outgoing model.
       expect(next.group.name).toBe('anatomy-model')
@@ -847,12 +920,12 @@ describe('useModalityScene', () => {
     // here -- otherwise the app downloads a second copy of the model already
     // on screen and crossfades it against its own twin for 800ms.
     it('refuses to crossfade a model against an identical copy of itself', async () => {
-      const { scene, modalityScene } = await loadInitialAnatomy('density-1/left/density25.glb')
+      const { modalityScene } = await loadInitialAnatomy('density-1/left/density25.glb')
 
       const morph = await modalityScene.prepareMorph('the-breast', anatomy('density-1/left/density25.glb'))
 
       expect(morph).toBeNull()
-      expect(scene.loadGltf).toHaveBeenCalledTimes(1) // no second download
+      expect(loadGltfModel).toHaveBeenCalledTimes(1) // no second download
     })
 
     it('tracks what each scene actually displays, so morphing back is allowed again', async () => {
@@ -883,9 +956,10 @@ describe('useModalityScene', () => {
      * for the rest of the session.
      */
     it('leaves the on-screen model intact when the incoming one never arrives', async () => {
-      const { scene, modalityScene, initial, objects, resolveGltf } = await loadInitialAnatomy()
-      // loadGltf's default mock never invokes its callback.
-      vi.mocked(scene.loadGltf).mockImplementationOnce(() => {})
+      const { modalityScene, initial, objects, resolveGltf } = await loadInitialAnatomy()
+      // loadGltfModel's mock never resolves, so the 30s wall-clock timeout
+      // in `loadGlb` is what has to end this.
+      vi.mocked(loadGltfModel).mockImplementationOnce(() => new Promise(() => {}))
 
       const attempt = modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb'))
       await expect(advanceAndSettle(attempt, 31_000)).rejects.toThrow(/Timed out/)
@@ -906,18 +980,16 @@ describe('useModalityScene', () => {
      * density-c before the first ~1.28MB GLB lands.
      */
     it('refuses a second morph on a scene whose incoming model is still downloading', async () => {
-      const { scene, modalityScene } = await loadInitialAnatomy()
-      let land!: () => void
-      vi.mocked(scene.loadGltf).mockImplementationOnce((_url, cb) => {
-        land = () => cb!(makeAnatomyGroup().group as never)
-      })
+      const { modalityScene } = await loadInitialAnatomy()
+      let land!: (value: { group: unknown, size: number }) => void
+      vi.mocked(loadGltfModel).mockImplementationOnce(() => new Promise((resolve) => { land = resolve }))
 
       const first = modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb'))
       // Second navigation arrives while the first model is still in flight.
       expect(await modalityScene.prepareMorph('density-c', anatomy('density-3/left/density75.glb'))).toBeNull()
-      expect(scene.loadGltf).toHaveBeenCalledTimes(2) // no third download started
+      expect(loadGltfModel).toHaveBeenCalledTimes(2) // no third download started
 
-      land()
+      land({ group: makeAnatomyGroup().group, size: 10 })
       expect(await first).not.toBeNull()
     })
 

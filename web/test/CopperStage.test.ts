@@ -2,12 +2,21 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CopperViewPoint } from '../app/composables/copper-types'
 import type { Modality, ModalityId } from '../content/types'
+import { loadGltfModel } from '../app/composables/loadGltfModel'
 import { useCameraChoreography } from '../app/composables/useCameraChoreography'
 import { useCopperStage } from '../app/composables/useCopperStage'
 import { useModalityScene } from '../app/composables/useModalityScene'
 import { useSliceControl } from '../app/composables/useSliceControl'
 import { useStageControls } from '../app/composables/useStageControls'
 import CopperStage from '../app/components/stage/CopperStage.client.vue'
+
+// `loadGltfModel` is a plain module export that useModalityScene's `loadGlb`
+// calls as a Nuxt-auto-imported bare global (no local `import` for it in the
+// source file -- same convention `useModalityScene.test.ts` already stubs
+// via `vi.stubGlobal`, mirrored here). Mocking the module and re-exposing
+// the mock globally (see beforeEach below) lets every test drive it exactly
+// the way the old `scene.loadGltf` mock it replaces used to be driven.
+vi.mock('../app/composables/loadGltfModel', () => ({ loadGltfModel: vi.fn() }))
 
 /**
  * The navigation choreography (controller corrections C5 and C6) is the one
@@ -84,20 +93,20 @@ function makeScene() {
       target: makeVec3(0, 0, 0),
     },
     scene: {
-      add: vi.fn(),
+      // `loadGlb` (useModalityScene.ts) now does `target.scene.add(group)`
+      // itself -- this is what actually populates `objects`, where
+      // `loadGltf` used to before this app took that job over from copper3d.
+      add: vi.fn((obj: { name: string }) => { objects.push(obj) }),
       remove: vi.fn((obj: { name: string }) => { objects.splice(objects.indexOf(obj), 1) }),
       getObjectByName: vi.fn((name: string) => objects.find(o => o.name === name)),
     },
     objects,
     addObject: vi.fn(),
     loadNrrd: vi.fn(),
-    // Mirrors copper3d: `loadGltf` adds the group to the scene itself
-    // (dist/bundle.esm.js:84314) before invoking the callback.
-    loadGltf: vi.fn((_url: string, cb?: (g: unknown) => void) => {
-      const group = makeGroup()
-      objects.push(group)
-      cb?.(group)
-    }),
+    // Deliberately no `loadGltf` here: `loadGlb` (useModalityScene.ts) no
+    // longer calls it -- it calls the module-level `loadGltfModel` instead
+    // (mocked globally, see this file's header) and adds the result to
+    // `scene.scene` itself, which is what actually pushes into `objects`.
     loadView: vi.fn(),
     onWindowResize: vi.fn(),
     confirmResize: vi.fn(),
@@ -179,6 +188,15 @@ describe('CopperStage navigation choreography', () => {
     vi.clearAllMocks()
 
     vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+    // Mirrors how production resolves this Nuxt-auto-imported composable --
+    // see this file's header. Every test here mounts an anatomy modality by
+    // default (DENSITY_A), so a default implementation resolving with a
+    // fresh group keeps every test that doesn't care about GLB timing
+    // working without its own setup; tests that DO care override a specific
+    // call with `mockImplementationOnce`/`mockResolvedValueOnce`.
+    vi.stubGlobal('loadGltfModel', loadGltfModel)
+    vi.mocked(loadGltfModel).mockReset()
+    vi.mocked(loadGltfModel).mockImplementation(() => Promise.resolve({ group: makeGroup(), size: 10 }))
     vi.stubGlobal('useCopperStage', useCopperStage)
     vi.stubGlobal('useModalityScene', useModalityScene)
     vi.stubGlobal('useCameraChoreography', useCameraChoreography)
@@ -201,7 +219,11 @@ describe('CopperStage navigation choreography', () => {
     await settle()
 
     expect(renderer.createScene).toHaveBeenCalledWith('density-a:anatomy')
-    expect(scenes.get('density-a:anatomy')!.loadGltf).toHaveBeenCalledTimes(1)
+    expect(loadGltfModel).toHaveBeenCalledTimes(1)
+    expect(loadGltfModel).toHaveBeenCalledWith('/modelView/density-1/left/density25.glb', '/draco/')
+    // The new guarantee this app now owns instead of copper3d: without this
+    // call the model would decode perfectly and simply never appear.
+    expect(scenes.get('density-a:anatomy')!.scene.add).toHaveBeenCalledTimes(1)
   })
 
   /**
@@ -227,8 +249,11 @@ describe('CopperStage navigation choreography', () => {
     expect(scenes.size).toBe(1)
     // The incoming model was loaded into the SAME scene and the outgoing one
     // removed once the crossfade committed.
-    expect(scene.loadGltf).toHaveBeenCalledTimes(2)
-    expect(scene.loadGltf.mock.calls[1]![0]).toBe('/modelView/density-2/left/density50.glb')
+    expect(loadGltfModel).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(loadGltfModel).mock.calls[1]![0]).toBe('/modelView/density-2/left/density50.glb')
+    // Adding the incoming model to the scene is this app's own job now, not
+    // copper3d's -- once for the initial load, once for the morph.
+    expect(scene.scene.add).toHaveBeenCalledTimes(2)
     expect(scene.scene.remove).toHaveBeenCalledTimes(1)
     expect(scene.objects).toHaveLength(1)
     expect(scene.objects[0]!.name).toBe('anatomy-model')
@@ -334,12 +359,8 @@ describe('CopperStage navigation choreography', () => {
     const first = scenes.get('density-a:anatomy')!
 
     // Hold density-b's GLB open, as a slow network would.
-    let landB!: () => void
-    first.loadGltf.mockImplementationOnce((_url: string, cb?: (g: unknown) => void) => {
-      const group = makeGroup()
-      first.objects.push(group)
-      landB = () => cb?.(group)
-    })
+    let landB!: (value: { group: ReturnType<typeof makeGroup>, size: number }) => void
+    vi.mocked(loadGltfModel).mockImplementationOnce(() => new Promise((resolve) => { landB = resolve }))
     await wrapper.setProps({ slug: 'density-b', modality: DENSITY_B })
     await settle()
     animate.mockClear()
@@ -349,7 +370,7 @@ describe('CopperStage navigation choreography', () => {
     await settle()
     const animateCallsForNavTwo = animate.mock.calls.length
 
-    landB()
+    landB({ group: makeGroup(), size: 10 })
     await settle()
 
     // The superseded morph settled its own scene without ever reaching the
