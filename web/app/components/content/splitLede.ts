@@ -12,18 +12,23 @@
  *
  * The source copy (web/content/copy.generated.ts) contains literal U+200B
  * zero-width spaces immediately next to sentence-ending punctuation, e.g.
- * "grades, A - D.​ Low density...". U+200B is not matched by \s in
+ * "grades, A - D.\u200B Low density...". U+200B is not matched by \s in
  * JavaScript regexes (it is a formatting character, not whitespace), so a
  * naive `[.!?]\s+` immediately after the punctuation fails to match right
  * there and silently swallows one or two extra sentences into the lede
- * before it finds the next real break. The `​?` after the punctuation
+ * before it finds the next real break. The `\u200B?` after the punctuation
  * class absorbs that character (keeping it in the lede, never dropping it)
  * so the split still lands on the first sentence.
  */
 export function splitLede(html: string): { lede: string, rest: string[] } {
   if (!html) return { lede: '', rest: [] }
 
-  const match = html.match(/^(.*?[.!?]​?)\s+(?=[A-Z<])/s)
+  // Written as the \u200B escape, not the literal invisible character, on
+  // purpose: a literal ZWSP here is visually indistinguishable from
+  // `[.!?]?` in most editors and diff views. A formatter or lint rule that
+  // strips zero-width characters would silently reintroduce the bug this
+  // fixes, and the diff would look like a no-op.
+  const match = html.match(/^(.*?[.!?]\u200B?)\s+(?=[A-Z<])/s)
   if (!match) return { lede: html, rest: [] }
 
   const lede = match[1]!

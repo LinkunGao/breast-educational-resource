@@ -79,13 +79,25 @@ describe('splitLede against real copy.generated.ts paragraphs', () => {
     return readFileSync(copyPath, 'utf8')
   }
 
-  function extractLiteral(source: string, key: string): string {
-    const re = new RegExp(`"${key}": "((?:[^"\\\\]|\\\\.)*)"`)
-    const match = source.match(re)
-    if (!match) throw new Error(`Could not find "${key}" in copy.generated.ts`)
+  /**
+   * `key` (e.g. "density_1") appears once per exported table (anatomyText,
+   * mammogramText, mriText all have their own "density_1" entry with
+   * different copy), so the lookup has to be scoped to one table's block or
+   * it silently binds to whichever table happens to be declared first in
+   * the file -- true today only because anatomyText is first, and false the
+   * moment someone reorders copy.generated.ts.
+   */
+  function extractLiteral(source: string, table: string, key: string): string {
+    const tableRe = new RegExp(`export const ${table} = \\{([\\s\\S]*?)\\n\\} as const`)
+    const tableMatch = source.match(tableRe)
+    if (!tableMatch) throw new Error(`Could not find table "${table}" in copy.generated.ts`)
+
+    const keyRe = new RegExp(`"${key}": "((?:[^"\\\\]|\\\\.)*)"`)
+    const keyMatch = tableMatch[1]!.match(keyRe)
+    if (!keyMatch) throw new Error(`Could not find "${key}" in ${table}`)
     // These string literals contain no backslash escapes in the source
     // file, so no unescaping is needed beyond lifting the captured text.
-    return match[1]!
+    return keyMatch[1]!
   }
 
   const source = readCopySource()
@@ -103,27 +115,31 @@ describe('splitLede against real copy.generated.ts paragraphs', () => {
 
   for (const [key, expectedLede] of cases) {
     it(`splits anatomyText.${key} on the first sentence only, not the whole density blurb`, () => {
-      const text = extractLiteral(source, key)
+      const text = extractLiteral(source, 'anatomyText', key)
       const { lede, rest } = splitLede(text)
       expect(lede).toBe(expectedLede)
       expect(rest.length).toBe(1)
-      // No character lost: match[0]'s consumed separator is only ever
-      // horizontal whitespace, so lede + rest always reconstructs the
-      // original modulo that single run of whitespace.
-      expect(lede + rest[0]!).toBe(text.slice(0, lede.length) + text.slice(-rest[0]!.length))
-      expect(text.endsWith(rest[0]!)).toBe(true)
+      // No character lost: lede is a genuine prefix and rest[0] a genuine
+      // suffix of the source, and whatever sits between them (the bit the
+      // regex consumed as a separator) is a non-empty run of plain
+      // whitespace only -- never the ZWSP (which \s doesn't match, so it's
+      // never eligible to be consumed this way) and never a letter/word.
       expect(text.startsWith(lede)).toBe(true)
+      expect(text.endsWith(rest[0]!)).toBe(true)
+      const gap = text.slice(lede.length, text.length - rest[0]!.length)
+      expect(gap.length).toBeGreaterThan(0)
+      expect(gap).toMatch(/^[ \t]+$/)
     })
   }
 
   it('round-trips the untruncated benign_fibroadenoma anatomy paragraph, doubled space and all', () => {
-    const text = extractLiteral(source, 'benign_fibroadenoma')
+    const text = extractLiteral(source, 'anatomyText', 'benign_fibroadenoma')
     const { lede, rest } = splitLede(text)
     expect([lede, ...rest].join(' ').replace(/\s+/g, ' ')).toBe(text.replace(/\s+/g, ' '))
     // The doubled space the brief's truncated sample also exercises: assert
     // no non-whitespace character (including the ZWSP class of characters,
     // which \s does not touch) was dropped by comparing character-by-
-    // character after stripping ASCII spaces only (never touching ​).
+    // character after stripping ASCII spaces only (never touching the actual \u200B character).
     expect([lede, ...rest].join('').replace(/ /g, '')).toBe(text.replace(/ /g, ''))
   })
 })

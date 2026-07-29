@@ -7,22 +7,24 @@ const props = defineProps<{
   slug: string
 }>()
 
-/** Ink/fill token names and icon path per modality. */
-const STYLE: Record<ModalityId, { ink: string, fill: string, icon: string }> = {
+/** Ink/fill/chip-background token names and icon path per modality.
+ * `chipBg` is a separate, explicit background utility (not `bg-current`)
+ * for the active step's number chip -- see the template comment on why. */
+const STYLE: Record<ModalityId, { ink: string, fill: string, chipBg: string, icon: string }> = {
   anatomy: {
-    ink: 'text-anatomy-ink', fill: 'bg-anatomy-fill',
+    ink: 'text-anatomy-ink', fill: 'bg-anatomy-fill', chipBg: 'bg-anatomy-ink',
     icon: 'M12 2a7 7 0 0 0-7 7c0 3 2 5 2 8h10c0-3 2-5 2-8a7 7 0 0 0-7-7',
   },
   mammogram: {
-    ink: 'text-mammogram-ink', fill: 'bg-mammogram-fill',
+    ink: 'text-mammogram-ink', fill: 'bg-mammogram-fill', chipBg: 'bg-mammogram-ink',
     icon: 'M4 4h16v16H4zm2 2v12h12V6z',
   },
   ultrasound: {
-    ink: 'text-ultrasound-ink', fill: 'bg-ultrasound-fill',
+    ink: 'text-ultrasound-ink', fill: 'bg-ultrasound-fill', chipBg: 'bg-ultrasound-ink',
     icon: 'M12 3a9 9 0 0 1 9 9h-2a7 7 0 0 0-7-7zm0 4a5 5 0 0 1 5 5h-2a3 3 0 0 0-3-3z',
   },
   mri: {
-    ink: 'text-mri-ink', fill: 'bg-mri-fill',
+    ink: 'text-mri-ink', fill: 'bg-mri-fill', chipBg: 'bg-mri-ink',
     icon: 'M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20m0 4a6 6 0 1 1 0 12a6 6 0 0 1 0-12',
   },
 }
@@ -58,15 +60,20 @@ function onKeydown(event: KeyboardEvent) {
           : 'text-text-muted'"
         :aria-current="m.id === props.active ? 'step' : undefined"
       >
+        <!-- `bg-current` here would resolve against this same element's
+             own `color`, which `text-surface` also sets -- white background,
+             white text, 1.00:1. Using an explicit `chipBg` utility instead
+             of `bg-current` breaks that self-reference; the ink/white
+             pairing it produces measures 5.36-8.92:1 (tokens.test.ts). -->
         <span
           class="flex size-5 shrink-0 items-center justify-center rounded-full
                  text-caption font-bold"
           :class="m.id === props.active
-            ? 'bg-current text-surface'
-            : 'border border-border-strong'"
+            ? [STYLE[m.id].chipBg, 'text-surface']
+            : 'border border-text-muted'"
           aria-hidden="true"
         >
-          <span :class="m.id === props.active ? 'text-surface' : ''">{{ i + 1 }}</span>
+          {{ i + 1 }}
         </span>
 
         <svg viewBox="0 0 24 24" class="size-4 shrink-0" aria-hidden="true">
@@ -76,9 +83,12 @@ function onKeydown(event: KeyboardEvent) {
         <span class="whitespace-nowrap">{{ m.label }}</span>
       </NuxtLink>
 
+      <!-- text-muted, not border-strong: border-strong measures 1.73:1 on
+           white, under the 3:1 non-text floor (default.vue's bottom-sheet
+           handle documents the same failure and the same fix). -->
       <span
         v-if="i < props.modalities.length - 1"
-        class="mx-1 h-px w-4 shrink-0 bg-border-strong"
+        class="mx-1 h-px w-4 shrink-0 bg-text-muted"
         aria-hidden="true"
       />
     </li>

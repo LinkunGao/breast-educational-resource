@@ -29,6 +29,7 @@ function readColorTokens(): Record<string, string> {
 
 const t = readColorTokens()
 const AA_BODY = 4.5
+const AA_LARGE = 3
 
 describe('CaseSidebar: active link ink on its highlight background (14px body text)', () => {
   it('text-anatomy-ink on bg-brand-subtle meets AA body (text-brand does not)', () => {
@@ -69,5 +70,32 @@ describe('CaseHeader: BI-RADS badge ink on its own highlight background (12px ca
     const rejected = contrastRatio(t.brand!, t['brand-subtle']!)
     expect(used).toBeGreaterThanOrEqual(AA_BODY)
     expect(rejected).toBeLessThan(AA_BODY)
+  })
+})
+
+describe('ModalityStepper: active step number, white text on a solid ink chip (12px bold)', () => {
+  // tokens.test.ts already checks each ink against white as *foreground*
+  // (ink text on a white page); contrastRatio is symmetric, so the same
+  // numbers apply here with white as the *chip's* colour and the ink as its
+  // background. Pinned again here, next to the pairing it belongs to, so a
+  // reviewer of ModalityStepper.vue doesn't have to go find tokens.test.ts
+  // to see why `bg-current` (which resolved to white-on-white, 1.00:1) was
+  // wrong and an explicit `bg-*-ink` utility is required instead.
+  const inks = ['anatomy-ink', 'mammogram-ink', 'ultrasound-ink', 'mri-ink'] as const
+  for (const ink of inks) {
+    it(`text-surface on bg-${ink} meets AA body`, () => {
+      expect(contrastRatio(t.surface!, t[ink]!)).toBeGreaterThanOrEqual(AA_BODY)
+    })
+  }
+})
+
+describe('ModalityStepper: inactive step ring and connector on white (non-text, 3:1 floor)', () => {
+  it('text-muted meets the 3:1 non-text floor (border-strong does not)', () => {
+    const used = contrastRatio(t['text-muted']!, t.surface!)
+    // default.vue's bottom-sheet handle documents this exact failure
+    // (border-strong measures 1.73:1 on white) and the same fix.
+    const rejected = contrastRatio(t['border-strong']!, t.surface!)
+    expect(used).toBeGreaterThanOrEqual(AA_LARGE)
+    expect(rejected).toBeLessThan(AA_LARGE)
   })
 })
