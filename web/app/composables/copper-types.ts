@@ -55,6 +55,26 @@ export interface CopperControls {
   minDistance?: number
   maxDistance?: number
   target?: Vec3
+  /**
+   * Review fix #1: `copperSceneOnDemond`'s constructor does
+   * `new OrbitControls(this.camera, renderer.domElement)` against the
+   * *shared* canvas (Scene/copperSceneOnDemond.js:28) and wires
+   * `controls.addEventListener("change", requestRenderIfNotRequested)`,
+   * which renders that specific scene. `setCurrentScene`
+   * (Renderer/copperRendererOnDemond.js:16-24) never disables the
+   * controls of whatever scene it's switching away from, so with more
+   * than one cached scene, a single mouse drag reaches every one of
+   * their controls and the last-created scene paints last, regardless of
+   * which is actually on screen. `enabled` (three's own `Controls` base
+   * class, node_modules/three/src/extras/Controls.js:43, inherited by
+   * OrbitControls) is the real, documented off switch: every early-return
+   * guard in OrbitControls.js checks `this.enabled === false` before
+   * touching any pointer/wheel state, so setting it `false` genuinely
+   * stops that scene's controls from ever dispatching `change`.
+   * useModalityScene sets this `false` on the outgoing scene and `true`
+   * on the incoming one at every switch.
+   */
+  enabled: boolean
 }
 
 /** copper3d's nrrd slice object. `index` is a world coordinate; divide by
@@ -83,6 +103,20 @@ export interface NrrdVolume {
 export interface LoadingBar {
   loadingContainer: HTMLDivElement
   progress: HTMLDivElement
+}
+
+/**
+ * The shape `loadView` expects and every `*_view.json` asset actually has on
+ * disk (checked `public/modelView/left_breast_view.json` and
+ * `density-1/middle/m_view.json` directly). Matches the destructuring in
+ * `baseScene.loadView` (Scene/baseScene.js:88-98).
+ */
+export interface CopperViewPoint {
+  farPlane: number
+  nearPlane: number
+  eyePosition: number[]
+  targetPosition: number[]
+  upVector: number[]
 }
 
 /** A visible object in the scene (GLB group or nrrd mesh). */
@@ -163,6 +197,22 @@ export interface CopperScene extends CopperBaseScene {
   loadGltf: (url: string, callback?: (content: SceneObject) => void) => void
   loadViewUrl: (url: string) => void
   /**
+   * Review fix #5: `loadViewUrl` (Scene/baseScene.js:77-87) is a raw
+   * `XMLHttpRequest` with no callback, event, or promise of any kind --
+   * there is no way to know from outside when (or whether) it actually
+   * lands. Under on-demand rendering, the `render()` call any caller makes
+   * right after `loadViewUrl` necessarily draws before that XHR resolves,
+   * so the preset camera framing it was supposed to produce never gets a
+   * frame of its own once it does land -- design doc §5.3's camera preset
+   * silently never appears until some unrelated interaction happens to
+   * request one. `loadView` (Scene/baseScene.js:88-98, same JSON shape as
+   * `CopperViewPoint` above) is the synchronous part `loadViewUrl` calls
+   * internally after its XHR resolves; useModalityScene fetches the same
+   * JSON itself and calls this directly so it has an awaitable completion
+   * signal to render after.
+   */
+  loadView: (data: CopperViewPoint) => void
+  /**
    * `copperSceneOnDemond`'s constructor does
    * `window.addEventListener("resize", this.confirmResize, false)`
    * (Scene/copperSceneOnDemond.js:9-12,27) and nothing in copper3d ever
@@ -174,8 +224,13 @@ export interface CopperScene extends CopperBaseScene {
    * the exact same function reference that got registered --
    * `window.removeEventListener('resize', scene.confirmResize, false)`
    * (capture flag matching the original `false`) genuinely unsubscribes
-   * it. useModalityScene does this for every scene it creates, in its own
-   * `onScopeDispose`.
+   * it. useModalityScene does this immediately after every `createScene`
+   * call, not deferred to its own scope disposal: useCopperStage's
+   * ResizeObserver already calls `getCurrentScene().onWindowResize()` on
+   * every container resize (review fix #1), so `confirmResize`'s
+   * window-resize wiring is redundant the instant a scene exists, and
+   * removing it up front rather than at teardown makes the fix
+   * unconditional.
    */
   confirmResize: () => void
   // No `resetView` here: it exists only on `copperScene`

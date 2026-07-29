@@ -1,18 +1,33 @@
 import type { Modality } from '~~/content/types'
-import type { CopperModule, CopperScene, NrrdSlice, SceneObject, StageApi } from './copper-types'
+import type { CopperModule, CopperRenderer, CopperScene, CopperViewPoint, NrrdSlice, SceneObject, StageApi } from './copper-types'
 
 /**
- * Neither of copper3d's asset-load paths actually surfaces a failure to the
- * caller. `copperSceneOnDemond.loadGltf` (Scene/copperSceneOnDemond.js:27-31)
- * calls `loader.load(url, onLoad, onProgress)` with no third `onError`
- * argument at all -- three's `GLTFLoader.load` signature is
- * `(url, onLoad, onProgress, onError)`, so a failed fetch/parse never
- * invokes anything here. `commonScene.loadNrrd` -> `copperNrrdLoader`
- * (dist/bundle.esm.js:64949-65052) has the identical gap. This timeout is
- * the only way to stop the stage sitting on a stuck spinner forever on a
- * 404 or corrupt asset; it is generous because volumes run 10-50MB.
+ * GLBs are all <=1.28MB (this app's four `density*.glb` anatomy assets --
+ * checked their sizes directly), so a flat wall-clock timeout is fine for
+ * them. `loadGltf` also has no progress signal to stall-detect against
+ * even if it mattered: its three-arg `loader.load(url, onLoad, onProgress)`
+ * call passes a function that does nothing with the `xhr` it receives
+ * (Scene/copperSceneOnDemond.js:27-31) into what three's `GLTFLoader.load`
+ * treats as the *onProgress* slot -- there is no fourth `onError` argument
+ * at all, so a failed fetch/parse never invokes anything here either.
  */
-const LOAD_TIMEOUT_MS = 30_000
+const GLB_LOAD_TIMEOUT_MS = 30_000
+
+/**
+ * NRRD volumes run up to ~53MB (`cancer-lobular/right/mri.nrrd`, checked
+ * directly) -- a flat wall-clock timeout on those misreports a slow-but-
+ * healthy download as a failure (14.2 Mbps sustained for 30s to finish
+ * that file; ~6 Mbps, a realistic shared-network speed, takes 71s). "No
+ * progress for 15s" is a genuine stall signal a large-but-healthy transfer
+ * won't trip, whereas a fixed deadline eventually will regardless of file
+ * size. `copperNrrdLoader` writes a fresh percentage string into
+ * `bar.progress`'s text on every xhr progress event
+ * (Loader/copperNrrdLoader.js:150-155); observing that DOM node for
+ * mutations is the only liveness signal copper3d exposes, since `loadNrrd`
+ * never receives an `onError` from the underlying three.js loader either
+ * (same file, same gap as `loadGltf` above).
+ */
+const NRRD_STALL_TIMEOUT_MS = 15_000
 
 export interface SliceState {
   /** Current slice number (already converted from copper3d's world
@@ -29,9 +44,12 @@ export function useModalityScene(stage: StageApi) {
 
   const scene = shallowRef<CopperScene>()
   const loading = ref(false)
+  /** Real fractional progress for NRRD loads (parsed from copper3d's own
+   * progress text -- see NRRD_STALL_TIMEOUT_MS's doc); GLB loads only ever
+   * report 0 then 1, since `loadGltf` has no progress signal at all. */
   const progress = ref(0)
   const sliceState = ref<SliceState | null>(null)
-  /** Set only when an asset genuinely fails to load (the timeout above, or
+  /** Set only when an asset genuinely fails to load (a stall/timeout, or
    * copper3d refusing to create a scene at all). Distinct from
    * `stage.loadError` (Task 7), which covers copper3d's own chunk failing
    * to import -- CopperStage renders both through the same pattern. */
@@ -42,19 +60,40 @@ export function useModalityScene(stage: StageApi) {
    * whichever scene last finished loading. */
   const sliceStateByScene = new Map<string, SliceState | null>()
 
-  /** Every scene created here leaks a `window` resize listener (see
-   * copper-types.ts's `CopperScene.confirmResize` doc) that nothing in
-   * copper3d ever removes. Tracked so onScopeDispose below can remove
-   * them -- the one part of the leak actually fixable from outside the
-   * library. */
-  const pendingResizeCleanup: Array<() => void> = []
-
   /** Bumped on every `load()` call. Guards against a stale async result
-   * (a slow network response, or the timeout above) landing after the
-   * user has already switched to a different modality and overwriting
+   * (a slow network response, or a timeout/stall) landing after the user
+   * has already switched to a different modality and overwriting
    * `loading`/`sliceState`/`loadError` with data for a scene that is no
    * longer current. */
   let loadToken = 0
+
+  /** Set once this composable's owning scope (CopperStage's component
+   * instance) is disposed -- e.g. case navigation. Mirrors useCopperStage's
+   * own `disposed` flag: there is no way to cancel the in-flight XHR
+   * inside loadGltf/loadNrrd, so a response can still arrive after
+   * teardown. Checked before touching `next`/`renderer` again, since by
+   * then `renderer` may be a disposed WebGLRenderer (`onWindowResize` ->
+   * `setSize` on a dead context) and there is nothing left to update
+   * anyway. */
+  let disposed = false
+
+  /**
+   * Switches the renderer to `next` and hands control input over to it.
+   * Review fix #1: every scene's OrbitControls listens on the *shared*
+   * canvas regardless of which scene is "current", so leaving a previous
+   * scene's controls enabled means its `change` handler still fires (and
+   * still requests a render of *that* scene) on every drag/resize -- the
+   * last-created scene wins the race and paints over whatever is actually
+   * meant to be visible. Disabling the outgoing scene's controls and
+   * enabling the incoming one is the only thing that actually stops that.
+   */
+  function activateScene(renderer: CopperRenderer, next: CopperScene) {
+    const previous = scene.value
+    if (previous && previous !== next) previous.controls.enabled = false
+    next.controls.enabled = true
+    renderer.setCurrentScene(next)
+    scene.value = next
+  }
 
   /** Scenes are namespaced `${slug}:${modalityId}` so two cases can never
    * collide, and switching modalities within one case can find its own
@@ -66,24 +105,29 @@ export function useModalityScene(stage: StageApi) {
   async function load(slug: string, modality: Modality) {
     const renderer = stage.renderer.value
     const Copper = stage.Copper.value
-    if (!stage.ready.value || !renderer || !Copper) return
+    if (disposed || !stage.ready.value || !renderer || !Copper) return
 
     const name = sceneName(slug, modality)
     const token = ++loadToken
     loadError.value = undefined
 
     // Already built: switch to it rather than re-downloading a 10-50MB
-    // volume. Scenes only accumulate within one case visit (at most 4,
-    // one per modality) -- CopperStage's host component is keyed by case
-    // slug (app.vue's pageKey), so navigating to a different case remounts
-    // it and useCopperStage's dispose() tears the whole renderer, and
-    // every scene it holds, down. The bandwidth this saves on the
-    // modality stepper's back-and-forth navigation outweighs holding a
-    // few extra scenes' GPU memory for the life of one case visit.
+    // volume. Scenes only accumulate within one case visit (at most 3 --
+    // no case in the catalogue combines all four modalities, see
+    // content/cases.ts) before CopperStage's host component (keyed by
+    // case slug, app.vue's pageKey) unmounts and useCopperStage's dispose()
+    // tears the whole renderer down, freeing the actual GPU context
+    // (`renderer.dispose()` + `forceContextLoss()` -- not a GPU leak). What
+    // it does not free until then is decoded volume memory: the worst case
+    // in the catalogue (cancer-lobular's mammogram + MRI) holds ~75MB of
+    // NRRD files resident at once on disk, and NRRD volumes decode to raw
+    // typed arrays that run larger still in memory than that compressed
+    // size. The bandwidth this saves on the modality stepper's
+    // back-and-forth navigation outweighs that for a single case visit,
+    // but it is a real tradeoff, not a free one.
     const existing = renderer.getSceneByName(name)
     if (existing) {
-      scene.value = existing
-      renderer.setCurrentScene(existing)
+      activateScene(renderer, existing)
       sliceState.value = sliceStateByScene.get(name) ?? null
       loading.value = false
       progress.value = 1
@@ -97,10 +141,19 @@ export function useModalityScene(stage: StageApi) {
     try {
       const next = renderer.createScene(name)
       if (!next) throw new Error(`copper3d refused to create scene "${name}"`)
-      pendingResizeCleanup.push(() => window.removeEventListener('resize', next.confirmResize, false))
+      // Review fix #1 (second half): remove the leaked resize listener
+      // immediately at creation, not deferred to this scope's disposal.
+      // useCopperStage's own ResizeObserver already calls
+      // `getCurrentScene().onWindowResize()` on every container resize (a
+      // strict superset of window-resize-triggered changes -- it also
+      // catches panel-collapse layout changes with no window resize event
+      // at all), so `confirmResize`'s window-resize wiring
+      // (Scene/copperSceneOnDemond.js:9-12,27) is entirely redundant here.
+      // Removing it up front makes the leak fix unconditional instead of
+      // depending on this scope ever actually disposing.
+      window.removeEventListener('resize', next.confirmResize, false)
 
-      renderer.setCurrentScene(next)
-      scene.value = next
+      activateScene(renderer, next)
       next.controls.rotateSpeed = 3.0
       // Legacy control feel (frontend/components/model/LeftModel.vue:157 vs
       // Model.vue:237): the anatomy viewer pans slower than the imaging
@@ -111,18 +164,31 @@ export function useModalityScene(stage: StageApi) {
         ? await loadAnatomy(next, url(modality.asset))
         : await loadImaging(next, Copper, modality, url(modality.asset))
 
+      if (disposed) return // torn down mid-load; nothing left to update
+
+      // Content was already added into `next` synchronously inside the
+      // load callback above, and is now sitting in copper3d's own scene
+      // map under `name` for good (there is no API to evict it). Finish
+      // its bookkeeping unconditionally, even if a newer load has since
+      // superseded this one (review fix #3) -- otherwise a later switch
+      // back to this modality finds it cached but half-built: no slice
+      // state, no camera preset, `getSceneByName` short-circuiting on it
+      // forever.
+      sliceStateByScene.set(name, slice)
+      const viewpoint = await fetchViewPoint(url(modality.viewPreset))
+      if (disposed) return
+      next.loadView(viewpoint)
+
       if (token !== loadToken) return // superseded by a later load() call
 
-      sliceStateByScene.set(name, slice)
       sliceState.value = slice
-      next.loadViewUrl(url(modality.viewPreset))
       next.onWindowResize()
       loading.value = false
       progress.value = 1
       renderer.render()
     }
     catch (err) {
-      if (token !== loadToken) return
+      if (disposed || token !== loadToken) return
       loadError.value = err instanceof Error ? err : new Error(String(err))
       loading.value = false
     }
@@ -132,7 +198,7 @@ export function useModalityScene(stage: StageApi) {
     return new Promise<null>((resolve, reject) => {
       const timer = setTimeout(
         () => reject(new Error(`Timed out loading anatomy model: ${assetUrl}`)),
-        LOAD_TIMEOUT_MS,
+        GLB_LOAD_TIMEOUT_MS,
       )
       target.loadGltf(assetUrl, (group) => {
         clearTimeout(timer)
@@ -155,10 +221,33 @@ export function useModalityScene(stage: StageApi) {
       // audit: the u2d.nrrd asset only exists for benign-cyst) -- a single
       // flat slice has nothing to orbit.
       const flat = modality.id === 'ultrasound'
-      const timer = setTimeout(
-        () => reject(new Error(`Timed out loading ${modality.id} volume: ${assetUrl}`)),
-        LOAD_TIMEOUT_MS,
-      )
+
+      let stallTimer: ReturnType<typeof setTimeout>
+      function armStallTimer() {
+        clearTimeout(stallTimer)
+        stallTimer = setTimeout(() => {
+          settle()
+          reject(new Error(
+            `Stalled loading ${modality.id} volume (no progress for ${NRRD_STALL_TIMEOUT_MS}ms): ${assetUrl}`,
+          ))
+        }, NRRD_STALL_TIMEOUT_MS)
+      }
+      // Watches copper3d's own progress node for the mutations
+      // `copperNrrdLoader`'s xhr progress handler writes into it (see this
+      // file's header comment) -- the only liveness/progress signal
+      // available, since there is no onProgress/onError callback exposed
+      // to us directly.
+      const observer = new MutationObserver(() => {
+        const match = /(\d+)\s*%/.exec(bar.progress.textContent ?? '')
+        if (match) progress.value = Number(match[1]) / 100
+        armStallTimer()
+      })
+      observer.observe(bar.progress, { childList: true, characterData: true, subtree: true })
+      function settle() {
+        clearTimeout(stallTimer)
+        observer.disconnect()
+      }
+      armStallTimer() // starts the clock even before the first progress event
 
       try {
         target.loadNrrd(
@@ -166,7 +255,7 @@ export function useModalityScene(stage: StageApi) {
           bar,
           true,
           (_volume, meshes, slices) => {
-            clearTimeout(timer)
+            settle()
             target.addObject(meshes.z)
             meshes.z.name = 'z'
 
@@ -194,15 +283,29 @@ export function useModalityScene(stage: StageApi) {
         )
       }
       catch (err) {
-        clearTimeout(timer)
+        settle()
         reject(err)
       }
     })
   }
 
+  /** `loadViewUrl` (kept on CopperScene for whatever else needs it) is a
+   * raw XHR with no completion signal at all (see CopperScene.loadView's
+   * doc) -- fetching the same JSON directly is the only way to know when
+   * the preset has actually landed, so a render can be requested after. A
+   * missing/malformed preset propagates to `load()`'s own catch (surfaced
+   * as the modality's load failure) rather than silently leaving the
+   * default camera in place -- content/cases.ts pairs every modality with
+   * a real viewPreset path, so a 404 here means the asset catalogue
+   * itself is wrong and should say so, not hide it. */
+  async function fetchViewPoint(viewPresetUrl: string): Promise<CopperViewPoint> {
+    const response = await fetch(viewPresetUrl)
+    if (!response.ok) throw new Error(`Failed to fetch view preset (${response.status}): ${viewPresetUrl}`)
+    return response.json() as Promise<CopperViewPoint>
+  }
+
   onScopeDispose(() => {
-    for (const cleanup of pendingResizeCleanup) cleanup()
-    pendingResizeCleanup.length = 0
+    disposed = true
   })
 
   return { scene, loading, progress, sliceState, loadError, load }
