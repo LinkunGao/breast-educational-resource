@@ -3,19 +3,29 @@
 /* Tailwind 4 CSS-first config: variables in @theme also generate utilities.
    For example --color-brand yields bg-brand / text-brand / border-brand. */
 @theme {
-  /* ── Neutral layer (70%) ─────────────────────── */
-  --color-bg:             #FBF7F8;
-  --color-surface-sunken: #F4EEF0;
-  --color-border:         #E8DCE0;
-  --color-border-strong:  #D4C0C7;
+  /* ── Neutral layer (70%) ─────────────────────────────────────────────
+     Neutral, not pink.
+
+     Every one of these used to be tinted toward the brand: a #FBF7F8 page,
+     #E8DCE0 rules, #6E5A62 secondary text. Individually each is a couple of
+     percent off grey; together they washed the entire interface pink, which
+     is what reads as unserious on a clinical reference. The brand still owns
+     the 10% accent layer below -- it just no longer leaks into the paper.
+
+     Very slightly cool, so a warm-toned anatomy render sits ON the page
+     rather than dissolving into it. */
+  --color-bg:             #F8F9FA;
+  --color-surface-sunken: #F1F3F5;
+  --color-border:         #E5E8EB;
+  --color-border-strong:  #C4CACF;
 
   /* ── Card layer (20%) ────────────────────────── */
   --color-surface:        #FFFFFF;
 
   /* ── Text ────────────────────────────────────── */
-  --color-text:           #241319;
-  --color-text-muted:     #6E5A62;
-  --color-text-subtle:    #93818A;  /* only ≥18.66px, or graphics */
+  --color-text:           #16191D;
+  --color-text-muted:     #565D66;
+  --color-text-subtle:    #868E96;  /* only ≥18.66px, or graphics */
 
   /* ── Brand layer (10%) ───────────────────────── */
   --color-brand:          #D81B60;
@@ -24,10 +34,9 @@
   --color-accent-plum:    #7D1E7D;
   --color-accent-hot:     #EB3175;  /* 4.02:1 — graphics only, never body text */
 
-  /* ── Film lightbox ───────────────────────────── */
-  --color-film-bg:        #0E0A0C;
-  --color-film-bg-2:      #171012;
-  --color-film-border:    #2A1F24;
+  /* The dark "reading lightbox" tokens that used to live here are gone with
+     the treatment they served: every modality now sits on one background.
+     See CopperStage.client.vue. */
 
   /* ── Modality semantic colours ───────────────── */
   /* anatomy-ink is one step darker than --color-brand: the stepper's active
@@ -39,11 +48,14 @@
   --color-mammogram-fill:   #F3E5F5;
   --color-ultrasound-ink:   #0E7490;
   --color-ultrasound-fill:  #E0F2F1;
-  --color-mri-ink:          #1D4ED8;
+  --color-mri-ink:          #1E40AF;
   --color-mri-fill:         #E8EEFC;
 
   /* ── Typography ──────────────────────────────── */
-  --font-sans: "Inria Sans", ui-sans-serif, system-ui, sans-serif;
+  /* See nuxt.config.ts's font link for why Inter replaced Inria Sans. The
+     stack below is what renders before the webfont lands, so it names the
+     platform UI faces rather than falling straight to a generic. */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
   --text-display:      2.5rem;    /* 40 */
   --text-display--line-height: 2.75rem;  /* 44 */
@@ -84,6 +96,17 @@
     color: var(--color-text);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+    /* `cv11` gives Inter's single-storey `l` a tail, which is what stops
+       `Il1` collapsing in slice readouts and BI-RADS grades; `ss01` is its
+       open-digit alternates. Both are no-ops on the fallback stack. */
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  /* Headings track tighter than body at these sizes -- Inter is drawn on an
+     optical size axis and its default tracking is tuned for text, not for
+     28-40px display. */
+  h1, h2 {
+    letter-spacing: -0.015em;
   }
 
   /* One focus style everywhere (design doc §11) */
