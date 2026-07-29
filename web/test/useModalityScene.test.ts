@@ -76,6 +76,11 @@ function makeFakeScene(): CopperScene {
         if (at !== -1) objects.splice(at, 1)
       }),
       getObjectByName: vi.fn((name: string) => objects.find(o => o.name === name)),
+      // Same live array `add`/`remove` mutate, mirroring three's
+      // `Object3D.children` -- finding 2's fix sweeps whatever is actually
+      // IN the scene graph rather than a hardcoded list of names, so
+      // `evictScene` needs this to find anything at all.
+      children: objects,
     },
     // copper3d's own addObject is `this.scene.add(obj)` (bundle.esm.js:68800).
     addObject: vi.fn((obj: { name: string }) => { objects.push(obj) }),
@@ -664,6 +669,41 @@ describe('useModalityScene', () => {
     expect(modalityScene.sliceState.value!.mesh.name).toBe('z')
   })
 
+  // Finding 2 (code review, Important). copper3d's `loadNrrd` builds a full
+  // VolumeSlice -- its own PlaneGeometry, its own MeshBasicMaterial, its own
+  // canvas-backed Texture -- for x, y AND z (verified directly against
+  // node_modules/copper3d/dist/bundle.esm.js's `VolumeSlice` constructor and
+  // `Volume.extractSlice`), but this app only ever displays `meshes.z`. x
+  // and y are never added to any scene, so `evictScene`'s traversal can
+  // never reach them either way -- they were simply leaking forever, kept
+  // alive by `volume.sliceList` off the very `slices.z.volume` this
+  // composable caches long-term. Chosen fix: dispose them immediately at
+  // load time, since nothing in this app is ever going to need them.
+  it('disposes the x and y slice planes at load time, since nothing ever displays them', async () => {
+    const scene = makeFakeScene()
+    const renderer = makeFakeRenderer(scene)
+    const stage = makeFakeStage(renderer)
+    const modalityScene = useModalityScene(stage)
+
+    const loadPromise = modalityScene.load('the-breast', makeModality({ id: 'mri' }))
+    const meshes = fakeMeshes()
+    const [, , , callback] = vi.mocked(scene.loadNrrd).mock.calls[0]!
+    callback(fakeVolume(), meshes, { z: fakeSlice() })
+    await loadPromise
+
+    expect(meshes.x.geometry.dispose).toHaveBeenCalledTimes(1)
+    expect(meshes.x.material.dispose).toHaveBeenCalledTimes(1)
+    expect(meshes.x.material.map.dispose).toHaveBeenCalledTimes(1)
+    expect(meshes.y.geometry.dispose).toHaveBeenCalledTimes(1)
+    expect(meshes.y.material.dispose).toHaveBeenCalledTimes(1)
+    expect(meshes.y.material.map.dispose).toHaveBeenCalledTimes(1)
+    // z is the plane actually shown on the stage -- must survive load time
+    // untouched; it is only ever disposed later, on eviction.
+    expect(meshes.z.geometry.dispose).not.toHaveBeenCalled()
+    expect(meshes.z.material.dispose).not.toHaveBeenCalled()
+    expect(meshes.z.material.map.dispose).not.toHaveBeenCalled()
+  })
+
   it('tints only the anatomy model\'s fat-layer mesh, leaving other meshes untouched', async () => {
     const scene = makeFakeScene()
     const renderer = makeFakeRenderer(scene)
@@ -1148,6 +1188,51 @@ describe('useModalityScene', () => {
       expect(modalityScene.scene.value).toBe(only)
     })
 
+    // Finding 1 (code review, Important). `touchScene` is the only path
+    // that pushes a name into the LRU (`recentScenes`), and it is correctly
+    // gated behind the load token so a superseded load can never bump the
+    // scene the user is actually looking at. But the unconditional
+    // bookkeeping right below it in `load()` (review fix #3: a superseded
+    // load that genuinely finished building still gets registered, so
+    // switching back to it later isn't half-built) runs regardless of that
+    // token -- so a scene built by a superseded-but-successful load used to
+    // become permanently invisible to the cap, sitting in copper3d's
+    // sceneMap forever. Rapid modality-stepping during slow NRRD downloads
+    // is exactly the shape of traffic that hits this.
+    it('evicts a superseded-but-completed load once it becomes resident, even though it was never actually viewed', async () => {
+      const renderer = makeMultiSceneRenderer()
+      const modalityScene = useModalityScene(makeFakeStage(renderer))
+
+      // A starts loading but its NRRD response is slow.
+      const loadA = modalityScene.load('density-a', makeModality({ id: 'mammogram', asset: 'density-a/mammogram.nrrd' }))
+      const sceneA = renderer.sceneMap['density-a:mammogram']!
+
+      // The user steps to B before A's response lands. B is not superseded
+      // by anything after it, so it completes normally.
+      const loadB = modalityScene.load('density-b', makeModality({ id: 'mammogram', asset: 'density-b/mammogram.nrrd' }))
+      resolveNrrd(renderer.sceneMap['density-b:mammogram']!)
+      await loadB
+
+      // A's own response finally arrives, late -- superseded, but it still
+      // built real content and must be fully registered.
+      resolveNrrd(sceneA)
+      await loadA
+      // Never promoted to on-screen: the deliberate property this fix must
+      // not disturb.
+      expect(sceneA.controls.enabled).toBe(false)
+
+      await visit(modalityScene, renderer, 'density-c', 'mammogram')
+      await visit(modalityScene, renderer, 'density-d', 'mammogram')
+
+      // Cap is 3. Without treating A as a resident, this sits at 4 (A plus
+      // whichever 3 of B/C/D are most recent) forever -- MAX_CACHED_SCENES
+      // silently stops bounding anything.
+      expect(Object.keys(renderer.sceneMap)).toHaveLength(3)
+      // And specifically: A -- never actually looked at -- is the one
+      // dropped, not a scene the user genuinely viewed.
+      expect(renderer.sceneMap['density-a:mammogram']).toBeUndefined()
+    })
+
     // Shared with Task 8's failed-load eviction: one way out of the map,
     // one place that checks it took.
     it('fails loudly if a copper3d upgrade makes deleting from sceneMap a silent no-op', async () => {
@@ -1189,9 +1274,13 @@ function fakeVolume() {
 /** The three slice-plane meshes copper3d hands back. `z` is a real
  * traversable object because it is the one this app adds to the scene, and
  * eviction disposes it by traversal -- a bare `{ name }` would make that
- * throw here while working against a genuine THREE.Mesh. */
+ * throw here while working against a genuine THREE.Mesh. `material.map`
+ * stands in for the plane's canvas-backed Texture (finding 2): a real
+ * `Material.dispose()` does not cascade into it, so it needs its own spy to
+ * prove something actually calls it. */
 function fakeMesh(name = '') {
-  const material = { dispose: vi.fn(), transparent: false, opacity: 1, depthWrite: true }
+  const map = { dispose: vi.fn() }
+  const material = { dispose: vi.fn(), transparent: false, opacity: 1, depthWrite: true, map }
   const geometry = { dispose: vi.fn() }
   const mesh = {
     name,

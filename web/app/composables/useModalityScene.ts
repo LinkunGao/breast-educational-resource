@@ -151,8 +151,37 @@ export function useModalityScene(stage: StageApi) {
    * copper3d's `sceneMap` this composable created, so the LRU below has an
    * order to evict in -- `sceneMap` is a plain object with no ordering
    * guarantee worth relying on.
+   *
+   * Deliberately NOT the source of truth for which scenes are resident (see
+   * `residentScenes`): a name only lands here via `touchScene`, which is
+   * (correctly) gated behind the load token so a superseded load can never
+   * jump the queue ahead of the scene the user is actually looking at, or
+   * evict it out from under them. Every name here is also in
+   * `residentScenes`, but not the reverse.
    */
   const recentScenes: string[] = []
+
+  /**
+   * Scene names that genuinely hold built content and are registered in
+   * copper3d's `sceneMap` -- i.e. everything the residency cap must count,
+   * whether or not the user ever actually looked at it.
+   *
+   * Finding 1 (code review, Important): `load()`'s unconditional bookkeeping
+   * (`sliceStateByScene.set`/`nameOfScene.set`, right below) runs even for a
+   * superseded-but-successful load, on purpose -- review fix #3 already
+   * established that leaving it half-built would poison the cache when the
+   * user steps back to it. But `touchScene` is the only thing that used to
+   * add a name to `recentScenes`, and it is (correctly) skipped for a
+   * superseded load. That left such a scene fully built, holding a decoded
+   * volume, yet invisible to `evictOverflow`'s `recentScenes.length` check --
+   * permanently unevictable. Rapid modality-stepping during slow NRRD
+   * downloads (up to 53MB) hits this on every step that loses its race.
+   *
+   * Added to unconditionally, in lockstep with the bookkeeping above; removed
+   * by `evictScene` and renamed by `adoptSceneName`, exactly like
+   * `sliceStateByScene`.
+   */
+  const residentScenes = new Set<string>()
 
   /**
    * How many built scenes may stay resident.
@@ -260,6 +289,7 @@ export function useModalityScene(stage: StageApi) {
     evictFromSceneMap(renderer, name)
     sliceStateByScene.delete(name)
     viewpointByScene.delete(name)
+    residentScenes.delete(name)
     const position = recentScenes.indexOf(name)
     if (position !== -1) recentScenes.splice(position, 1)
     if (!victim) return
@@ -271,23 +301,51 @@ export function useModalityScene(stage: StageApi) {
     // `scene.remove` only unlinks; three keeps the geometry's buffers and
     // the material's textures (an NRRD slice plane's texture is the decoded
     // volume slice) alive on the GPU until they are disposed explicitly.
-    // These two names are every object this app ever adds to a scene --
-    // `loadAnatomy`'s group and `loadImaging`'s z plane.
-    for (const objectName of ['anatomy-model', 'anatomy-model-outgoing', 'z']) {
-      const object = victim.scene.getObjectByName(objectName)
-      if (!object) continue
+    //
+    // Sweeps every child actually IN the scene graph, rather than a
+    // hardcoded list of names (finding 2, code review, Important): that
+    // list -- previously `['anatomy-model', 'anatomy-model-outgoing', 'z']`
+    // -- is exactly what let the x/y NRRD slice planes go unswept, because
+    // nobody had added their names to it (they in fact are never added to
+    // the scene at all -- see `disposeUnusedSlicePlane`, which frees them
+    // at load time instead). A hardcoded list can silently miss anything
+    // future code adds under a name nobody thought to list here; iterating
+    // `victim.scene.children` directly cannot.
+    for (const object of [...victim.scene.children]) {
       victim.scene.remove(object)
       disposeSceneObject(object)
     }
   }
 
   /**
+   * Picks the next eviction victim out of `residentScenes`, never
+   * `currentName`.
+   *
+   * A resident that was never actually activated -- a superseded load's
+   * leftover (finding 1) -- is preferred first: the user never saw it, so
+   * there is nothing to protect by keeping it over a scene that has
+   * genuinely been on screen. `recentScenes` gives true LRU order for
+   * everything else.
+   */
+  function pickEvictionVictim(currentName: string): string | undefined {
+    for (const name of residentScenes) {
+      if (name !== currentName && !recentScenes.includes(name)) return name
+    }
+    return recentScenes.find(name => name !== currentName)
+  }
+
+  /**
    * Caps residency at `MAX_CACHED_SCENES`, evicting least-recently-activated
    * first and never the scene on screen.
+   *
+   * Counts `residentScenes`, not `recentScenes.length` (finding 1): a scene
+   * a superseded load finished building is resident -- it holds a decoded
+   * volume and must count against the cap -- even though it was never
+   * touched.
    */
   function evictOverflow(renderer: CopperRenderer, currentName: string) {
-    while (recentScenes.length > MAX_CACHED_SCENES) {
-      const victim = recentScenes.find(name => name !== currentName)
+    while (residentScenes.size > MAX_CACHED_SCENES) {
+      const victim = pickEvictionVictim(currentName)
       // Only the current scene is left. Nothing evictable, and evicting it
       // would blank the stage.
       if (victim === undefined) return
@@ -296,8 +354,11 @@ export function useModalityScene(stage: StageApi) {
   }
 
   /** Records `name` as the most recently activated scene and applies the
-   * cap. Called only once a scene genuinely holds content -- a failed load
-   * is evicted by `load()`'s own catch instead. */
+   * cap. Called only once a scene genuinely holds content AND is the one
+   * the user is actually looking at -- a failed load is evicted by
+   * `load()`'s own catch instead, and a superseded load's own success is
+   * registered as a resident directly in `load()`, never through here (see
+   * `residentScenes`). */
   function touchScene(renderer: CopperRenderer, scene: CopperScene, name: string) {
     nameOfScene.set(scene, name)
     const position = recentScenes.indexOf(name)
@@ -340,6 +401,7 @@ export function useModalityScene(stage: StageApi) {
         viewpointByScene.set(nextName, preset)
         viewpointByScene.delete(currentName)
       }
+      residentScenes.delete(currentName)
       const position = recentScenes.indexOf(currentName)
       if (position !== -1) recentScenes.splice(position, 1)
     }
@@ -350,6 +412,10 @@ export function useModalityScene(stage: StageApi) {
     // reader of `scene.sceneName` disagree with the map it is keyed in.
     target.sceneName = nextName
     nameOfScene.set(target, nextName)
+    // The morphed scene is unconditionally resident under its new name --
+    // it held content under `currentName` a moment ago, so it holds content
+    // now too (finding 1's `residentScenes`).
+    residentScenes.add(nextName)
     recentScenes.push(nextName)
   }
 
@@ -440,6 +506,13 @@ export function useModalityScene(stage: StageApi) {
       // forever.
       sliceStateByScene.set(name, slice)
       nameOfScene.set(next, name)
+      // Unconditional for the same reason, and just as load-bearing
+      // (finding 1): this scene now holds real content and must count
+      // against `MAX_CACHED_SCENES` even though a superseded load never
+      // reaches `touchScene` below to register it there itself. Without
+      // this, a scene a superseded load finished building sat in
+      // copper3d's `sceneMap` forever, invisible to `evictOverflow`.
+      residentScenes.add(name)
       // Named `preset`, not `viewpoint`, to avoid shadowing the outer
       // `viewpoint` ref this composable exposes.
       const preset = await fetchViewPoint(url(modality.viewPreset))
@@ -684,6 +757,26 @@ export function useModalityScene(stage: StageApi) {
             target.addObject(meshes.z)
             meshes.z.name = 'z'
 
+            // Finding 2 (code review, Important). copper3d's `loadNrrd`
+            // builds a full VolumeSlice -- its own PlaneGeometry, its own
+            // MeshBasicMaterial, its own canvas-backed Texture -- for x, y
+            // AND z (`Volume.extractSlice`/`VolumeSlice`'s constructor,
+            // dist/bundle.esm.js ~61278/~60571), not just the z plane this
+            // app displays. Only `meshes.z` is ever added to a scene: the
+            // stage shows a single axial slice and `useSliceControl`
+            // raycasts only against it (confirmed no reference to
+            // meshes.x/y or slices.x/y anywhere else in app/). Every
+            // extracted slice is also retained forever in
+            // `volume.sliceList`, and `slices.z.volume` -- that same
+            // volume -- lives on in `sliceStateByScene` for this scene's
+            // whole cached lifetime, so x/y were never eligible for GC
+            // either. Disposed here, immediately, rather than tracked
+            // through to `evictScene`: nothing in this app is ever going to
+            // need them, so there is nothing to gain by keeping them alive
+            // even until eviction.
+            disposeUnusedSlicePlane(meshes.x)
+            disposeUnusedSlicePlane(meshes.y)
+
             // copper3d's `loadNrrd` builds the slice objects and their
             // canvas-backed textures but never PAINTS them, so the plane
             // renders as solid black until something moves the slice.
@@ -812,6 +905,22 @@ function disposeSceneObject(root: SceneObject) {
     child.geometry?.dispose()
     child.material?.dispose()
   })
+}
+
+/**
+ * Frees an NRRD slice-plane mesh this app never displays -- `loadImaging`'s
+ * x/y handling (finding 2, code review, Important). Never added to any
+ * scene, so `disposeSceneObject`'s traversal (which walks a scene graph)
+ * cannot reach it; disposed directly here instead. Its geometry and
+ * material are its own (not shared with the z plane that IS shown), and
+ * `Material.dispose()` does not cascade into `material.map` -- the plane's
+ * canvas-backed Texture needs its own call or the decoded pixel data it
+ * references stays uploaded to the GPU.
+ */
+function disposeUnusedSlicePlane(mesh: NrrdMesh) {
+  mesh.geometry?.dispose()
+  mesh.material?.map?.dispose()
+  mesh.material?.dispose()
 }
 
 /**

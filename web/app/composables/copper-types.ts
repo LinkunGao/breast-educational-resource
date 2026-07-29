@@ -102,14 +102,23 @@ export interface NrrdSlice {
 }
 
 /**
- * One of copper3d's three nrrd slice planes. Only `name` is ever read or
- * written here; the object itself is otherwise opaque and is only ever
- * handed straight back to copper3d (`addObject`, `pickSpecifiedModel`), so
- * it deliberately does not model three's `Mesh` -- see this file's header on
- * why no `three` type may cross this boundary.
+ * One of copper3d's three nrrd slice planes. `name` and (for the x/y planes
+ * only -- see useModalityScene's `disposeUnusedSlicePlane`) `geometry`/
+ * `material` are the only fields read or written here; the object is
+ * otherwise opaque and is only ever handed straight back to copper3d
+ * (`addObject`, `pickSpecifiedModel`), so this deliberately does not model
+ * three's `Mesh` in full -- see this file's header on why no `three` type
+ * may cross this boundary. `geometry`/`material` are duck-typed the exact
+ * same way `SceneObjectChild`'s already are below, not imported.
  */
 export interface NrrdMesh {
   name: string
+  geometry?: { dispose: () => void }
+  /** `Material.dispose()` does not cascade into `map`: a slice plane's
+   * material wraps a canvas-backed `Texture` (its `map`) that needs its own
+   * dispose call, or the decoded pixel data it references stays uploaded to
+   * the GPU. */
+  material?: { dispose: () => void, map?: { dispose: () => void } }
 }
 
 export interface NrrdMeshes {
@@ -214,6 +223,13 @@ export interface CopperScene extends CopperBaseScene {
     add: (obj: SceneObject) => void
     remove: (obj: SceneObject) => void
     getObjectByName: (name: string) => SceneObject | undefined
+    /**
+     * three's `Object3D.children` -- the live array, not a snapshot.
+     * `evictScene` sweeps this directly (finding 2) rather than a hardcoded
+     * list of names, so it cannot silently miss whatever a future loader
+     * adds to the scene under a name nobody thought to list.
+     */
+    children: SceneObject[]
   }
   addObject: (obj: unknown) => void
   loadNrrd: (
