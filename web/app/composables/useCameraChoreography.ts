@@ -40,7 +40,19 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
     syncMotion()
     mql.addEventListener('change', syncMotion)
   })
-  onScopeDispose(() => mql?.removeEventListener('change', syncMotion))
+  // Review round 1, I-3: interrupting on dispose is this composable's own
+  // responsibility, not something it should rely on useCopperStage's own
+  // teardown to paper over. Without this, a component unmounting mid-orbit
+  // (e.g. the user navigates to another case while the 3s entrance orbit is
+  // still running) leaves the rAF chain rescheduling against a scene/camera
+  // this composable no longer owns for as long as the animation had left to
+  // run -- it happens to self-terminate today only because
+  // useCopperStage.dispose() separately zeroes continuousHolders, which
+  // this file neither knows about nor should depend on.
+  onScopeDispose(() => {
+    mql?.removeEventListener('change', syncMotion)
+    interrupt()
+  })
 
   let cancelCurrent: (() => void) | null = null
 
@@ -62,17 +74,40 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
 
   /** Generic per-frame interpolation driver. Leases continuous rendering
    * for its own duration and always releases it -- on normal completion, on
-   * interruption, and (via the `finally`-shaped `finish()`) never twice. */
+   * interruption, and on a throwing frame callback.
+   *
+   * Review round 1, I-4: `interrupt()` runs unconditionally, BEFORE the
+   * reduced-motion/instant-jump branch, not only on the animated path. A
+   * running animation (e.g. `orbitIntro`) has its own rAF chain already
+   * scheduled; without cancelling it here first, an instant `flyTo(pose, 0)`
+   * (a §7.1 "cut", or reduced-motion toggled mid-orbit) would write its
+   * destination pose and return, but the orbit's still-queued next frame
+   * would fire right after and overwrite it -- the cut silently undone and
+   * the orbit's lease outliving it. Every entry to `animate()` now takes
+   * ownership of whatever was running, not just the animated one. */
   function animate(durationMs: number, onFrame: (easedT: number) => void): Promise<void> {
-    return new Promise<void>((resolve) => {
+    return new Promise<void>((resolve, reject) => {
+      interrupt()
+
       if (prefersReducedMotion.value || durationMs <= 0) {
-        onFrame(1)
+        // Review round 1, M-8/M-9: this branch used to have no try/catch at
+        // all, so a throwing `onFrame` would leave the promise permanently
+        // unsettled (an `await camera.flyTo(...)` caller would hang
+        // forever). Reject rather than resolve so a caller genuinely learns
+        // the jump didn't land, matching the animated path's own failure
+        // behaviour below.
+        try {
+          onFrame(1)
+        }
+        catch (err) {
+          reject(err instanceof Error ? err : new Error(String(err)))
+          return
+        }
         stage.renderer.value?.render()
         resolve()
         return
       }
 
-      interrupt()
       stage.requestContinuous()
       const start = performance.now()
       let raf = 0
@@ -87,6 +122,20 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
         resolve()
       }
 
+      // Review round 1, M-9: a throwing frame callback releases the lease
+      // and REJECTS -- not `finish()` (which resolves) followed by a
+      // rethrow that nothing downstream of a `requestAnimationFrame`
+      // dispatch can catch. Without this, `await camera.flyTo(pose);
+      // showHighlight()` would proceed as though the flight had landed.
+      const fail = (err: unknown) => {
+        if (done) return
+        done = true
+        cancelAnimationFrame(raf)
+        stage.releaseContinuous()
+        cancelCurrent = null
+        reject(err instanceof Error ? err : new Error(String(err)))
+      }
+
       // C3: interrupting cancels in place. No `onFrame(1)` call here.
       cancelCurrent = finish
 
@@ -97,11 +146,8 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
           onFrame(easeInOutCubic(t))
         }
         catch (err) {
-          // A frame callback throwing (e.g. a scene torn down mid-flight)
-          // must not leak the continuous-render lease this took out --
-          // release it before letting the error propagate.
-          finish()
-          throw err
+          fail(err)
+          return
         }
         if (t >= 1) finish()
         else raf = requestAnimationFrame(step)
@@ -110,16 +156,29 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
     })
   }
 
+  /** The look-at point every function in this file measures from --
+   * `currentPose`, `interpolateFlightPose` (via `flyTo`), `orbitIntro`, and
+   * `captureOrientation`/`applyOrientation` all pivot on `controls.target`,
+   * falling back to the origin only when OrbitControls hasn't set one yet.
+   * `captureOrientation`/`applyOrientation` used to hardcode the origin
+   * instead (review round 1, I-2) -- harmless the first time a scene is
+   * visited (a fresh scene's `controls.target` really is the origin), but
+   * wrong on a repeat visit to a scene an earlier flight had already
+   * re-aimed elsewhere. */
+  function pivotOf(s: CopperScene | undefined): [number, number, number] {
+    const t = s?.controls?.target
+    return t ? tuple(t) : [0, 0, 0]
+  }
+
   /** Reads the current scene's camera pose (and OrbitControls target, if
    * any) as a plain `Pose` -- used as a flight's starting point. */
   function currentPose(): Pose | null {
     const cam = scene.value?.camera
     if (!cam) return null
-    const target = scene.value?.controls?.target
     return {
       position: tuple(cam.position),
       up: tuple(cam.up),
-      target: target ? tuple(target) : [0, 0, 0],
+      target: pivotOf(scene.value),
     }
   }
 
@@ -163,8 +222,7 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
     const cam = scene.value?.camera
     if (!cam || prefersReducedMotion.value) return
 
-    const pivotVec = scene.value?.controls?.target
-    const pivot = pivotVec ? tuple(pivotVec) : [0, 0, 0] as [number, number, number]
+    const pivot = pivotOf(scene.value)
     const startOffset: [number, number, number] = [
       cam.position.x - pivot[0],
       cam.position.y - pivot[1],
@@ -205,7 +263,7 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
    * cache), so a cross-modality flight cannot interpolate between two
    * camera instances directly -- there is only ever one "current" camera to
    * read or write. Instead this captures the OUTGOING camera's orientation
-   * (unit direction from its target, plus its up vector) so the incoming
+   * (unit direction from its pivot, plus its up vector) so the incoming
    * scene's camera can be snapped to the same apparent orientation, at that
    * new scene's own composition distance, as the flight's starting pose --
    * then `flyTo` carries it on to the incoming scene's real preset. The
@@ -215,25 +273,51 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
   function captureOrientation(): { dir: [number, number, number], up: [number, number, number] } | null {
     const cam = scene.value?.camera
     if (!cam) return null
-    const len = Math.hypot(cam.position.x, cam.position.y, cam.position.z) || 1
+    const pivot = pivotOf(scene.value)
+    const offset: [number, number, number] = [
+      cam.position.x - pivot[0],
+      cam.position.y - pivot[1],
+      cam.position.z - pivot[2],
+    ]
+    const len = Math.hypot(offset[0], offset[1], offset[2]) || 1
     return {
-      dir: [cam.position.x / len, cam.position.y / len, cam.position.z / len],
+      dir: [offset[0] / len, offset[1] / len, offset[2] / len],
       up: tuple(cam.up),
     }
   }
 
-  /** Applies a captured orientation to the current scene's camera, at
-   * `distance` from the origin -- the counterpart to `captureOrientation`. */
+  /**
+   * Applies a captured orientation to the current scene's camera, at
+   * `distance` from its OWN pivot (`controls.target`, or the origin if
+   * unset) -- the counterpart to `captureOrientation`. Review round 1, S1 /
+   * I-2: this used to place the camera relative to the origin, aim
+   * `cam.lookAt(0, 0, 0)`, and never touch `controls.target` at all -- the
+   * exact defect C7 calls load-bearing, left standing in this sibling
+   * function. If `controls.target` was not already the origin (a scene
+   * revisited after an earlier flight had re-aimed it elsewhere), the
+   * camera ends up aimed at the origin while `controls.target` still holds
+   * the old point, and the user's next drag calls `controls.update()`,
+   * which re-aims the camera back at that stale target and silently
+   * undoes this call. Reading and re-writing the same pivot keeps both
+   * consistent regardless of what `controls.target` was already holding.
+   */
   function applyOrientation(
     o: { dir: [number, number, number], up: [number, number, number] } | null,
     distance: number,
   ) {
     const cam = scene.value?.camera
+    const controls = scene.value?.controls
     if (!cam || !o) return
-    cam.position.set(o.dir[0] * distance, o.dir[1] * distance, o.dir[2] * distance)
+    const pivot = pivotOf(scene.value)
+    cam.position.set(
+      pivot[0] + o.dir[0] * distance,
+      pivot[1] + o.dir[1] * distance,
+      pivot[2] + o.dir[2] * distance,
+    )
     cam.up.set(o.up[0], o.up[1], o.up[2])
-    cam.lookAt(0, 0, 0)
+    cam.lookAt(pivot[0], pivot[1], pivot[2])
     cam.updateProjectionMatrix()
+    controls?.target?.set(pivot[0], pivot[1], pivot[2])
   }
 
   return {

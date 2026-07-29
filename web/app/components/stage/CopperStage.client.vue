@@ -41,11 +41,18 @@ watch(
  */
 const camera = useCameraChoreography(stage, modalityScene.scene)
 
-// Runs the entrance orbit once a load finishes (design doc §7.4). Watches
-// the loading->not-loading transition specifically (not just "loading is
-// false"), so it never fires on initial mount before any load has started.
+// Runs the entrance orbit once a load finishes successfully (design doc
+// §7.4). Watches the loading->not-loading transition specifically (not
+// just "loading is false"), so it never fires on initial mount before any
+// load has started. Review round 1, I-5: `useModalityScene`'s catch also
+// sets `loading.value = false` on a FAILED load, and at that point
+// `scene.value` still points at the scene that just failed (activateScene
+// ran before the load threw) and has already been evicted from copper3d's
+// own scene map -- without this guard, the `role="alert"` overlay below
+// covers the canvas while, behind it, a 3-second continuous-render lease
+// orbits an empty, evicted scene.
 watch(loading, (isLoading, was) => {
-  if (was && !isLoading) camera.orbitIntro()
+  if (was && !isLoading && !assetLoadError.value && !chunkLoadError.value) camera.orbitIntro()
 })
 
 /**

@@ -226,15 +226,52 @@ describe('useCameraChoreography', () => {
     await second
   })
 
-  it('a frame callback that throws still releases the continuous-render lease', () => {
+  // Review round 1, I-3: onScopeDispose only removed the matchMedia
+  // listener before this fix -- a component unmounting mid-animation (e.g.
+  // the user navigates to another case while the 3s entrance orbit is still
+  // running) left the rAF chain rescheduling against a torn-down scope for
+  // as long as the animation had left to run.
+  it('unmounting mid-animation interrupts in place and releases the continuous-render lease immediately', async () => {
+    const scene = shallowRef(makeFakeScene([0, 0, 10]))
+    const stage = makeFakeStage()
+    const { wrapper, camera } = mountChoreography(stage, scene)
+
+    void camera.flyTo(target, 1000)
+    clock.advance(300)
+    const cam = scene.value!.camera
+    const midX = cam.position.x
+    const midZ = cam.position.z
+
+    wrapper.unmount()
+
+    expect(stage.releaseContinuous).toHaveBeenCalledTimes(1)
+
+    // The cancelled rAF must not still be queued -- advancing the clock
+    // further must not move the camera (or throw against a torn-down scope).
+    expect(() => clock.advance(700)).not.toThrow()
+    expect(cam.position.x).toBeCloseTo(midX, 10)
+    expect(cam.position.z).toBeCloseTo(midZ, 10)
+  })
+
+  // Review round 1, M-9: a throwing frame callback used to call `finish()`
+  // (which resolves) and then rethrow into the rAF dispatch, where nothing
+  // downstream could catch it -- an `await camera.flyTo(pose);
+  // showHighlight()` caller would proceed as though the flight had landed.
+  // It must REJECT instead, so a caller genuinely learns the flight failed.
+  it('a frame callback that throws rejects the flight and still releases the continuous-render lease', async () => {
     const scene = shallowRef(makeFakeScene([0, 0, 10]))
     const stage = makeFakeStage()
     const { camera } = mountChoreography(stage, scene)
     vi.mocked(scene.value!.camera.lookAt).mockImplementationOnce(() => { throw new Error('boom') })
 
-    void camera.flyTo(target, 1000)
-    expect(() => clock.advance(500)).toThrow('boom')
+    const flight = camera.flyTo(target, 1000)
+    // Suppress the unhandled-rejection warning race: the assertion below
+    // attaches its own rejection handler, but do it eagerly too so nothing
+    // depends on ordering.
+    flight.catch(() => {})
+    clock.advance(500)
 
+    await expect(flight).rejects.toThrow('boom')
     expect(stage.releaseContinuous).toHaveBeenCalledTimes(1)
   })
 
@@ -253,6 +290,50 @@ describe('useCameraChoreography', () => {
     expect(stage.releaseContinuous).not.toHaveBeenCalled()
     expect(stage.renderer.value?.render).toHaveBeenCalledTimes(1)
     expect(clock.raf).not.toHaveBeenCalled()
+  })
+
+  // Review round 1, M-8: the instant path (reduced motion, or durationMs<=0)
+  // used to have no try/catch at all -- a throwing frame callback there
+  // would leave the returned promise permanently unsettled.
+  it('the instant path also rejects (never hangs) when its frame callback throws', async () => {
+    const scene = shallowRef(makeFakeScene([0, 0, 10]))
+    const stage = makeFakeStage()
+    const { camera } = mountChoreography(stage, scene)
+    camera.prefersReducedMotion.value = true
+    vi.mocked(scene.value!.camera.lookAt).mockImplementationOnce(() => { throw new Error('boom') })
+
+    await expect(camera.flyTo(target, 1000)).rejects.toThrow('boom')
+  })
+
+  // Review round 1, I-4: every entry to `animate()` -- including the
+  // instant/reduced-motion path, not only the animated one -- must cancel
+  // whatever animation was already running, or the running one's own
+  // still-queued next frame fires right after and undoes the instant jump.
+  it('the instant path takes ownership of a running animation instead of letting it keep going', async () => {
+    const scene = shallowRef(makeFakeScene([0, 0, 10]))
+    const stage = makeFakeStage()
+    const { camera } = mountChoreography(stage, scene)
+
+    const orbit = camera.orbitIntro(1000, 0.6) // long-running animated path, lease held
+    clock.advance(500) // orbit mid-swing
+
+    await camera.flyTo(target, 0) // instant path: durationMs<=0
+
+    const cam = scene.value!.camera
+    expect(cam.position.x).toBeCloseTo(10, 5) // snapped straight to the flight's destination
+    expect(cam.position.z).toBeCloseTo(0, 5)
+
+    // The orbit's own rAF must no longer be queued -- advancing the clock
+    // further (to the orbit's own original t=1) must NOT move the camera
+    // back toward the orbit's start pose.
+    clock.advance(500)
+    expect(cam.position.x).toBeCloseTo(10, 5)
+    expect(cam.position.z).toBeCloseTo(0, 5)
+
+    expect(stage.requestContinuous).toHaveBeenCalledTimes(1) // only the orbit ever leased
+    expect(stage.releaseContinuous).toHaveBeenCalledTimes(1) // released when interrupted, not leaked
+
+    await orbit // the superseded orbit's own promise still resolves
   })
 
   // Controller correction C6: orbitIntro is pure decoration with no

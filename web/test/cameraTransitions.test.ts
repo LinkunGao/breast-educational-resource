@@ -132,6 +132,91 @@ describe('interpolateFlightPose', () => {
       expect(len).toBeCloseTo(1, 5)
     }
   })
+
+  // Review round 1, Critical C-1: this app's OWN shipped preset data has
+  // exactly antipodal up vectors on the same view axis --
+  // density-{1..4}/middle/m_view.json (mammogram) ships `eye: [0,0,2000]`,
+  // `up: [0,-1,0]`, `target: [0,0,0]`; density-{1..4}/right/mri_view.json
+  // (MRI) ships `eye: [0,0,650]`, `up: [0,1,0]`, `target: [0,0,0]`. A plain
+  // `normalize(lerp(upFrom, upTo, t))` passes through the exact zero vector
+  // at t=0.5 (reachable -- easeInOutCubic(0.5) is exactly 0.5) and falls
+  // back to an axis parallel to the view direction there: the model holds
+  // upside-down for the first half of the flight, then snaps 180 degrees
+  // in a single frame at the midpoint. The fix (composing the two poses'
+  // full orthonormal bases into a relative rotation, converted to a
+  // quaternion) must instead roll smoothly through the midpoint.
+  it('rolls smoothly through a 180-degree up-vector flip on the real mammogram-to-MRI preset pair, never degenerating at the midpoint', () => {
+    const mammogram: Pose = { position: [0, 0, 2000], up: [0, -1, 0], target: [0, 0, 0] }
+    const mri: Pose = { position: [0, 0, 650], up: [0, 1, 0], target: [0, 0, 0] }
+
+    const samples = [0, 0.25, 0.5, 0.75, 1].map(t => interpolateFlightPose(mammogram, mri, t))
+
+    // Endpoints reproduce the real preset ups exactly.
+    expect(samples[0]!.up).toEqual([0, -1, 0])
+    expect(samples[4]!.up).toEqual([0, 1, 0])
+
+    // At every sampled t, `up` is a genuine unit vector -- specifically NOT
+    // the [0,0,1] degenerate fallback (parallel to the shared view axis,
+    // the exact failure mode a collapsing lerp hits at t=0.5).
+    for (const pose of samples) {
+      expect(Math.hypot(...pose.up)).toBeCloseTo(1, 6)
+      expect(pose.up[2]).toBeCloseTo(0, 6) // never tips toward the view axis
+    }
+
+    // The roll is monotonic and smooth: y climbs steadily from -1 to +1
+    // (verified analytically -- see task-9-report.md's C-1 section -- this
+    // pose pair rolls 180 degrees about the shared +z view axis, so `up.y`
+    // is exactly cos of the roll angle at each step: -1, ~0, 1, ~0, 1... in
+    // fact -1, -0.7071, 0, 0.7071, 1). No back-and-forth, no jump.
+    expect(samples[0]!.up[1]).toBeCloseTo(-1, 5)
+    expect(samples[1]!.up[1]).toBeCloseTo(-0.70710678, 5)
+    expect(samples[2]!.up[1]).toBeCloseTo(0, 5)
+    expect(samples[3]!.up[1]).toBeCloseTo(0.70710678, 5)
+    expect(samples[4]!.up[1]).toBeCloseTo(1, 5)
+    for (let i = 1; i < samples.length; i++) {
+      expect(samples[i]!.up[1]).toBeGreaterThan(samples[i - 1]!.up[1])
+    }
+
+    // The view direction itself doesn't change for this pair (both look
+    // straight down +z, only distance and roll differ) -- it must not be
+    // disturbed by the up-vector roll.
+    for (const pose of samples) {
+      const dx = pose.position[0] - pose.target[0]
+      const dy = pose.position[1] - pose.target[1]
+      expect(dx).toBeCloseTo(0, 5)
+      expect(dy).toBeCloseTo(0, 5)
+    }
+  })
+
+  // Review round 1, Critical C-1 fold-in (reviewer's Minor 7): the same
+  // vector-pair degeneracy the up-vector fix addresses also broke the
+  // POSITION side when two camera directions about one target are
+  // antipodal (`from=[0,0,10] -> to=[0,0,-10]`) -- the old `slerpUnit`
+  // flipped back and forth (`t=0.5 -> +z, t=0.75 -> -z, t=0.999 -> +z,
+  // t=1 -> -z`) instead of moving smoothly. The up vectors here disambiguate
+  // the rotation axis (both poses share up=[0,1,0]), so the fix produces a
+  // clean half-turn about that axis instead.
+  it('moves smoothly between antipodal camera positions instead of flipping back and forth', () => {
+    const from: Pose = { position: [0, 0, 10], up: [0, 1, 0], target: [0, 0, 0] }
+    const to: Pose = { position: [0, 0, -10], up: [0, 1, 0], target: [0, 0, 0] }
+
+    const samples = [0, 0.25, 0.5, 0.75, 0.9, 0.999, 1].map(t => interpolateFlightPose(from, to, t))
+
+    // z must move monotonically from +10 to -10 -- no reversal anywhere,
+    // and specifically not the old code's back-and-forth pattern near t=1.
+    for (let i = 1; i < samples.length; i++) {
+      expect(samples[i]!.position[2]).toBeLessThan(samples[i - 1]!.position[2])
+    }
+    expect(samples[0]!.position[2]).toBeCloseTo(10, 5)
+    expect(samples[samples.length - 1]!.position[2]).toBeCloseTo(-10, 5)
+
+    // The radius from the target stays ~10 throughout (a rotation, not a
+    // path through the origin).
+    for (const pose of samples) {
+      const radius = Math.hypot(...pose.position.map((v, i) => v - pose.target[i]!) as [number, number, number])
+      expect(radius).toBeCloseTo(10, 4)
+    }
+  })
 })
 
 describe('orbitSwingAngle (design doc §7.4, controller correction C4)', () => {
