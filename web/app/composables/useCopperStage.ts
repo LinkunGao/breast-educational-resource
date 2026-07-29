@@ -79,57 +79,73 @@ export function useCopperStage(host: Ref<HTMLElement | undefined>): StageApi {
     // makes that explicit rather than relying solely on onMounted's
     // semantics, per this task's SSR ruling.
     //
-    // `typeof window` rather than Nuxt's `import.meta.client`: the latter
-    // is a compile-time macro Nuxt's own Vite plugin substitutes, which
-    // this project's plain `vitest.config.ts` (no Nuxt) does not do --
-    // confirmed empirically (a `define` entry matching Nuxt's own,
-    // `{'import.meta.client': true}`, still read back as `undefined` in a
-    // Vitest run, while a plain identifier `define` in the same config
-    // substituted correctly, isolating this to `import.meta`-specific
-    // member-expression handling Nuxt's own plugin does that bare Vite
-    // `define` doesn't replicate). `typeof window === 'undefined'` is the
-    // portable, framework-agnostic version of the same check: false in a
-    // real Node SSR render (no `window`), true in real browsers AND in
-    // Vitest+happy-dom (which does provide a `window`), so the guard's
-    // protective intent is identical but it no longer depends on tooling
-    // this test setup doesn't have.
-    if (typeof window === 'undefined') return
+    // `import.meta.server` first, `typeof window` second (round-2 review
+    // fix #2). In the real Nuxt server build, Nuxt's own Vite plugin
+    // substitutes `import.meta.server` -> `true` at compile time, so
+    // Rollup dead-code-eliminates this whole branch -- and, transitively,
+    // copper3d -- out of the server bundle entirely. `typeof window`
+    // alone can't do that: it's opaque to the bundler, so it would leave
+    // copper3d reachable in the server module graph even though this
+    // branch never runs there -- a server-bundle-size cost, not a
+    // correctness one. Under plain Vitest (no Nuxt plugin), `import.meta`
+    // simply has no `server` property, so the expression is `undefined`
+    // (falsy, no ReferenceError) and falls through to `typeof window`,
+    // which is the actual runtime predicate doing the work in every
+    // environment this executes in: true under real Node SSR (no
+    // `window`), false in real browsers, and false in Vitest+happy-dom
+    // (which does provide a `window`) -- confirmed empirically that both
+    // checks together still pass the same tests the `typeof window`-only
+    // guard did.
+    if (import.meta.server || typeof window === 'undefined') return
     if (!host.value) return
 
     let mod: CopperModule
+    let built: CopperRenderer
     try {
       // copper3d touches window/document, so it must be dynamically
-      // imported on the client only.
+      // imported on the client only. Construction is inside the same
+      // try/catch (round-2 review fix #1): `new WebGLRenderer` throws
+      // whenever WebGL is unavailable (GPU blocklist, WebGL disabled, the
+      // ~16-context browser budget already exhausted), and
+      // `baseRenderer`'s constructor also calls
+      // `PMREMGenerator.compileEquirectangularShader()`, another throw
+      // site -- both would otherwise leave `ready` false and `loadError`
+      // unset forever, the exact permanently-blank-stage-plus-unhandled-
+      // rejection state fix #7 existed to eliminate. There is nothing
+      // partially-constructed to dispose on this path: if `new` throws,
+      // no renderer object exists to hold a reference to.
       mod = (await import('copper3d')) as unknown as CopperModule
+      // The component may have unmounted while that chunk was still
+      // downloading -- see `cancelled`'s comment above. Checking before
+      // ever calling `new` means no renderer, and therefore no GPU
+      // context, is built at all in that case; there is nothing to
+      // dispose because nothing was constructed.
+      if (cancelled || !host.value) return
+      built = new mod.copperRendererOnDemond(host.value as HTMLDivElement, {
+        guiOpen: false,
+        alpha: true, // background is CSS-driven (design doc §5.3)
+        logarithmicDepthBuffer: true,
+        // Deliberately NOT passing `light` or `controls` here: verified
+        // (dist/bundle.esm.js:69852-69907, baseRenderer's constructor) that
+        // `ICopperRenderOpt` has no `light` field baseRenderer reads, and
+        // `controls` is only consulted by the sibling `copperScene` class's
+        // constructor (dist/bundle.esm.js:83629-83637) -- `copperSceneOnDemond`
+        // (what this renderer actually builds) always instantiates
+        // OrbitControls regardless. Passing either here would be silently
+        // inert, not a real toggle -- see copper-types.ts's CopperControls.
+      })
     }
     catch (err) {
-      // Review fix #7: surface a chunk-load failure instead of leaving
-      // `ready` false forever with only an unhandled rejection.
+      // Covers both the dynamic import rejecting (fix #7, original round)
+      // and the constructor throwing (fix #1, this round).
       if (!cancelled) loadError.value = err instanceof Error ? err : new Error(String(err))
       return
     }
-
-    // The component may have unmounted while that chunk was still
-    // downloading -- see `cancelled`'s comment above. Checking before ever
-    // calling `new` means no renderer, and therefore no GPU context, is
-    // built at all in that case; there is nothing to dispose because
-    // nothing was constructed.
-    if (cancelled || !host.value) return
+    // No repeat `cancelled`/`host.value` check here: nothing in this
+    // function awaits between the check just before `new` above and this
+    // line, so neither can have changed since.
 
     Copper.value = mod
-    const built = new mod.copperRendererOnDemond(host.value as HTMLDivElement, {
-      guiOpen: false,
-      alpha: true, // background is CSS-driven (design doc §5.3)
-      logarithmicDepthBuffer: true,
-      // Deliberately NOT passing `light` or `controls` here: verified
-      // (dist/bundle.esm.js:69852-69907, baseRenderer's constructor) that
-      // `ICopperRenderOpt` has no `light` field baseRenderer reads, and
-      // `controls` is only consulted by the sibling `copperScene` class's
-      // constructor (dist/bundle.esm.js:83629-83637) -- `copperSceneOnDemond`
-      // (what this renderer actually builds) always instantiates
-      // OrbitControls regardless. Passing either here would be silently
-      // inert, not a real toggle -- see copper-types.ts's CopperControls.
-    })
     renderer.value = built
     ready.value = true
 
@@ -141,6 +157,14 @@ export function useCopperStage(host: Ref<HTMLElement | undefined>): StageApi {
     // already sized, not a layout decision, so it doesn't conflict with
     // this project's CSS-only-breakpoints rule.
     resizeObserver = new ResizeObserver(() => {
+      // Round-2 review fix #4: a hidden (display:none) or momentarily
+      // zero-width/height container -- e.g. a collapsing panel mid-
+      // transition -- makes onRenderCameraChange's aspect = width/height
+      // compute 0/0 = NaN, corrupting the camera's projection matrix.
+      // Bail before touching the scene at all in that case.
+      if (!host.value) return
+      const { width, height } = host.value.getBoundingClientRect()
+      if (width === 0 || height === 0) return
       renderer.value?.getCurrentScene().onWindowResize()
       renderer.value?.render()
     })

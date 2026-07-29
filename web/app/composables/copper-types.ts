@@ -102,7 +102,24 @@ export interface SceneObjectChild {
   }
 }
 
-export interface CopperScene {
+/**
+ * What's actually guaranteed on whatever `CopperRenderer.getCurrentScene()`
+ * returns. Before `setCurrentScene()` is ever called, that's the
+ * renderer's own placeholder `baseScene` (Renderer/baseRenderer.d.ts's
+ * constructor builds one directly), not a `copperSceneOnDemond` --
+ * `baseScene` has no `loadGltf`/`loadNrrd` and no OrbitControls-shaped
+ * `controls` (those are `copperSceneOnDemond`/`copperScene`-only). Typing
+ * `getCurrentScene()` as the full `CopperScene` let
+ * `getCurrentScene().loadGltf(...)` compile and then throw at runtime on
+ * exactly the placeholder-scene window this comment describes. Only
+ * `onWindowResize` (Scene/baseScene.d.ts's own method, inherited by every
+ * scene class) is guaranteed here.
+ */
+export interface CopperBaseScene {
+  onWindowResize: () => void
+}
+
+export interface CopperScene extends CopperBaseScene {
   camera: CopperCamera
   controls: CopperControls
   scene: {
@@ -133,7 +150,6 @@ export interface CopperScene {
    */
   loadGltf: (url: string, callback?: (content: SceneObject) => void) => void
   loadViewUrl: (url: string) => void
-  onWindowResize: () => void
   // No `resetView` here: it exists only on `copperScene`
   // (Scene/copperScene.d.ts:57, dist/bundle.esm.js:84635), not on
   // `baseScene`/`copperSceneOnDemond`'s prototype chain (confirmed absent
@@ -157,14 +173,17 @@ export interface CopperRenderer {
   createScene: (name: string) => CopperScene | undefined
   setCurrentScene: (scene: CopperScene) => void
   /**
-   * Inherited from `baseRenderer` (Renderer/baseRenderer.d.ts:24). Before
-   * `setCurrentScene` is first called this returns the renderer's own
-   * placeholder `baseScene`, not a `copperSceneOnDemond` -- fine for the
-   * `onWindowResize` use this exists for (review fix #5), since that's a
-   * `baseScene` method too, but don't assume the full `CopperScene`
-   * surface (e.g. `loadGltf`) is present on whatever this returns.
+   * Inherited from `baseRenderer` (Renderer/baseRenderer.d.ts:24). Typed
+   * as `CopperBaseScene`, not `CopperScene` (round-2 review fix #3): the
+   * placeholder scene this returns before `setCurrentScene` is ever
+   * called is a real `baseScene`, which has no `loadGltf`/`loadNrrd`/
+   * `controls` -- the wider `CopperScene` type let those compile here and
+   * then throw at runtime. Widen the call site with a cast only where the
+   * caller has independently established the current scene really is a
+   * `copperSceneOnDemond` (e.g. right after this renderer's own
+   * `createScene`/`setCurrentScene`).
    */
-  getCurrentScene: () => CopperScene
+  getCurrentScene: () => CopperBaseScene
   render: () => void
   /**
    * Non-optional: `baseRenderer.d.ts` declares both `stop()` and

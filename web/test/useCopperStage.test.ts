@@ -151,6 +151,47 @@ describe('useCopperStage', () => {
     expect(getStage(wrapper).loadError.value).toBeUndefined()
   })
 
+  // Round-2 review fix #1: the renderer constructor is a throw site of its
+  // own, separate from the dynamic import. `new THREE.WebGLRenderer` throws
+  // whenever WebGL is unavailable -- GPU blocklist, WebGL disabled in the
+  // browser, or the context budget already exhausted -- and baseRenderer's
+  // constructor also runs PMREMGenerator.compileEquirectangularShader().
+  // Before the fix the try/catch covered only `await import(...)`, so this
+  // path left `ready` false AND `loadError` undefined: a permanently blank
+  // stage with nothing rendering the error message, which is exactly the
+  // state the loadError channel exists to prevent.
+  it('surfaces a constructor failure through loadError instead of a silent blank stage', async () => {
+    const boom = new Error('WebGL unavailable')
+    // Regular function, not an arrow: this is invoked with `new`, and an
+    // arrow would fail as "not a constructor" -- a different error than the
+    // one under test.
+    copperRendererOnDemond.mockImplementationOnce(function () {
+      throw boom
+    })
+
+    const wrapper = mount(HostWrapper)
+    await flushPromises()
+
+    const stage = getStage(wrapper)
+    expect(stage.loadError.value).toBe(boom)
+    expect(stage.ready.value).toBe(false)
+  })
+
+  it('does not set loadError when the constructor fails after unmount', async () => {
+    copperRendererOnDemond.mockImplementationOnce(function () {
+      throw new Error('WebGL unavailable')
+    })
+
+    const wrapper = mount(HostWrapper)
+    const stage = getStage(wrapper)
+    wrapper.unmount()
+    await flushPromises()
+
+    // Nothing is left to display it, and the component is gone -- reporting
+    // an error against a disposed stage would be noise.
+    expect(stage.loadError.value).toBeUndefined()
+  })
+
   // NOT tested here, deliberately: making the dynamic `import('copper3d')`
   // itself reject (not just the constructor throw, which is a different
   // code path) requires overriding the file's static `vi.mock('copper3d')`

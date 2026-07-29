@@ -25,12 +25,14 @@ import type { RouteLocationNormalizedLoaded } from 'vue-router'
  * only ever fire once per persisted instance instead of on every
  * navigation.
  *
- * Every other route (there is no other dynamic, multi-param page today)
- * falls back to the route's own full path, matching NuxtPage's default
- * behaviour there.
+ * Every other route falls back to `route.path`, which is what NuxtPage
+ * derives its default key from -- the matched path with params
+ * interpolated. `fullPath` would include the query string, so `/about` and
+ * `/about?x=1` would be different keys and remount where the default does
+ * not.
  */
 function pageKey(route: RouteLocationNormalizedLoaded) {
-  return typeof route.params.slug === 'string' ? `case-${route.params.slug}` : route.fullPath
+  return typeof route.params.slug === 'string' ? `case-${route.params.slug}` : route.path
 }
 </script>
 

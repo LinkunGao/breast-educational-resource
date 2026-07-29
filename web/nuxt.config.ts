@@ -23,6 +23,15 @@ export default defineNuxtConfig({
     public: {
       // Design doc §9.2: local and GitHub Pages serve same-origin; Vercel can
       // point this at object storage instead.
+      //
+      // DEPLOYERS: a root-relative value here is resolved against
+      // `app.baseURL`, so do NOT include the deployment subpath yourself.
+      // On GitHub Pages, `NUXT_APP_BASE_URL=/te-uma/` alone is enough and
+      // assets resolve to `/te-uma/modelView/...`. Setting
+      // `NUXT_PUBLIC_ASSET_BASE=/te-uma/modelView/` as well would double it
+      // to `/te-uma/te-uma/modelView/`. Only override this when the assets
+      // live somewhere else entirely, in which case give an absolute URL
+      // (e.g. `https://cdn.example/modelView/`), which is used verbatim.
       assetBase: '/modelView/',
     },
   },
