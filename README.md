@@ -1,4 +1,4 @@
-# Te Uma — The Breast Educational Platform
+# Breast Educational Resource (Te Uma)
 
 [![Read the Docs][readthedocs]][readthedocs-url]
 
@@ -13,22 +13,39 @@ cd web
 yarn install
 yarn dev          # http://localhost:3158
 yarn test         # Vitest
-yarn generate     # 静态产物 -> web/.output/public
+yarn generate     # static build -> web/.output/public
 ```
 
 ## Assets
 
-影像资产由压缩流水线生成。先把源文件放到 `assets-src/modelView/`,然后:
+Imaging assets are produced by a compression pipeline. Put the uncompressed
+sources under `assets-src/modelView/`, then:
 
 ```bash
 node scripts/optimize-assets.mjs   # -> web/public/modelView/
 ```
 
-流水线会把 NRRD 重编码为 gzip、用 Draco 压缩 GLB,并跳过 md5 审计认定
-为占位副本的 12 个文件(见 `docs/superpowers/specs/2026-07-28-foundation-rebuild-design.md` §3.1)。
+The pipeline re-encodes NRRD volumes as gzip, compresses GLB geometry with
+Draco, and skips the 12 files an md5 audit identified as placeholder copies
+(see `docs/superpowers/specs/2026-07-28-foundation-rebuild-design.md` section
+3.1).
 
-生成后的 `web/public/modelView/` 是入库的——GitHub Pages 从仓库直接构建,
-没有它部署出来的站点就没有模型可加载。
+The generated `web/public/modelView/` **is** committed. GitHub Pages builds
+straight from the repository, so leaving it out would deploy a site with no
+models to load.
+
+The four `density*.glb` anatomy models are not authored by hand. They are
+derived from `density-3` by adding and removing whole mammary lobes:
+
+```bash
+node scripts/build-density-models.mjs [--dry-run]
+```
+
+Team portraits for the About page are cut out of the legacy composite sheet:
+
+```bash
+node scripts/extract-team-photos.mjs [--dry-run]
+```
 
 ## Deployment
 
