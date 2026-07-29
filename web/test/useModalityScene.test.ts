@@ -537,7 +537,7 @@ describe('useModalityScene', () => {
     vi.mocked(renderer.getSceneByName).mockReturnValueOnce(staleScene)
     await modalityScene.load('the-breast', makeModality({ id: 'mammogram' }))
 
-    expect(modalityScene.sliceState.value).toEqual({ index: 4, max: 30, raw: staleSlice })
+    expect(modalityScene.sliceState.value).toEqual({ index: 4, max: 30, raw: staleSlice, mesh: { name: 'z' } })
     expect(staleScene.loadView).toHaveBeenCalledWith(DEFAULT_VIEWPOINT)
   })
 
@@ -591,7 +591,10 @@ describe('useModalityScene', () => {
     resolveNrrd(scene, slice)
     await loadPromise
 
-    expect(modalityScene.sliceState.value).toEqual({ index: 3, max: 40, raw: slice })
+    // Task 10 added `mesh`: useSliceControl raycasts against the z plane to
+    // tell a slice scrub from a camera orbit, so the mesh has to travel with
+    // the slice it paints.
+    expect(modalityScene.sliceState.value).toEqual({ index: 3, max: 40, raw: slice, mesh: { name: 'z' } })
   })
 
   it('tints only the anatomy model\'s fat-layer mesh, leaving other meshes untouched', async () => {
@@ -655,6 +658,201 @@ describe('useModalityScene', () => {
     expect(modalityScene.loadError.value).toBeInstanceOf(Error)
     expect(scene.loadView).not.toHaveBeenCalled()
     expect(modalityScene.viewpoint.value).toBeUndefined()
+  })
+
+  // ── §7.1 density morph ─────────────────────────────────────────────────
+  //
+  // The crossfade itself is not driven here: `prepareMorph` returns it as an
+  // `apply`/`commit` pair precisely so useCameraChoreography's single driver
+  // can run it (controller correction C8), which makes the whole thing
+  // testable as plain function calls with no clock and no rAF.
+
+  describe('prepareMorph (§7.1)', () => {
+    /** A GLB group shaped like the real one: a fat-layer mesh that
+     * `tintFatLayer` makes translucent amber, and an opaque gland mesh. */
+    function makeAnatomyGroup() {
+      const fat = {
+        isMesh: true,
+        name: 'VH_F_fat_L',
+        geometry: { dispose: vi.fn() },
+        material: { dispose: vi.fn(), transparent: false, opacity: 1, depthWrite: true, color: { set: vi.fn() } },
+      }
+      const gland = {
+        isMesh: true,
+        name: 'VH_F_gland_L',
+        geometry: { dispose: vi.fn() },
+        material: { dispose: vi.fn(), transparent: false, opacity: 1, depthWrite: true, color: { set: vi.fn() } },
+      }
+      const group = {
+        name: '',
+        traverse: (fn: (child: typeof fat) => void) => { fn(fat); fn(gland) },
+      }
+      return { group, fat, gland }
+    }
+
+    const anatomy = (asset: string) => makeModality({
+      id: 'anatomy', label: 'Anatomy', asset, viewPreset: 'left_breast_view.json',
+    })
+
+    /** Loads an initial anatomy model into a fresh scene, the way a real
+     * visit to `/case/density-a/anatomy` does, and hands back everything a
+     * morph test needs. */
+    async function loadInitialAnatomy(asset = 'density-1/left/density25.glb') {
+      const scene = makeFakeScene()
+      const renderer = makeFakeRenderer(scene)
+      const stage = makeFakeStage(renderer)
+      const modalityScene = useModalityScene(stage)
+
+      // Stands in for three's own Scene: `loadGltf` adds the group itself
+      // (dist/bundle.esm.js:84314), `getObjectByName` searches what is
+      // actually in the scene, and `remove` takes it back out.
+      const objects: Array<{ name: string }> = []
+      vi.mocked(scene.scene.getObjectByName).mockImplementation(
+        name => objects.find(o => o.name === name) as never,
+      )
+      vi.mocked(scene.scene.remove).mockImplementation((obj) => {
+        objects.splice(objects.indexOf(obj as never), 1)
+      })
+      /** Resolves the next `loadGltf` call with `group`, as copper3d does. */
+      const resolveGltf = (group: { name: string }) => {
+        vi.mocked(scene.loadGltf).mockImplementationOnce((_url, cb) => {
+          objects.push(group)
+          cb!(group as never)
+        })
+      }
+
+      const initial = makeAnatomyGroup()
+      resolveGltf(initial.group)
+      await modalityScene.load('density-a', anatomy(asset))
+
+      return { scene, modalityScene, initial, objects, resolveGltf }
+    }
+
+    it('crossfades in a different density\'s model without creating or switching scenes', async () => {
+      const { scene, modalityScene, initial, resolveGltf } = await loadInitialAnatomy()
+      const next = makeAnatomyGroup()
+      resolveGltf(next.group)
+
+      const morph = await modalityScene.prepareMorph(anatomy('density-2/left/density50.glb'))!
+
+      expect(morph).not.toBeNull()
+      // §7.1: the SAME scene, so the camera cannot move. Only the model changes.
+      expect(vi.mocked(scene.loadGltf).mock.calls[1]![0]).toBe('/modelView/density-2/left/density50.glb')
+      // Both models are in the scene at once, but only one answers to the
+      // name -- otherwise a second morph could find the outgoing model.
+      expect(next.group.name).toBe('anatomy-model')
+      expect(initial.group.name).not.toBe('anatomy-model')
+      // The incoming model starts invisible so the fade has somewhere to go.
+      expect(next.fat.material.opacity).toBe(0)
+      expect(next.gland.material.opacity).toBe(0)
+    })
+
+    // Controller correction C2. `tintFatLayer` makes the fat layer 40%
+    // opaque so the fibroglandular tissue reads through it -- the whole
+    // point of the density series. A crossfade that ASSIGNS opacity rather
+    // than scaling it would end every morph with an opaque shell over the
+    // tissue, and the incoming model would look nothing like the one it
+    // replaced.
+    it('ends the crossfade on the same appearance the initial load produces, tint included', async () => {
+      const { scene, modalityScene, resolveGltf } = await loadInitialAnatomy()
+      const next = makeAnatomyGroup()
+      resolveGltf(next.group)
+
+      const morph = (await modalityScene.prepareMorph(anatomy('density-2/left/density50.glb')))!
+
+      // The fully-faded-in state is the tinted one, not a blanket 1.0: a
+      // crossfade that ASSIGNS opacity rather than scaling it lands here at
+      // 1 and only looks right again because `commit` happens to restore it.
+      morph.apply(1)
+      expect(next.fat.material.opacity).toBeCloseTo(0.4, 10)
+
+      morph.commit()
+
+      expect(next.fat.material.opacity).toBe(0.4)
+      expect(next.fat.material.transparent).toBe(true)
+      expect(next.fat.material.color.set).toHaveBeenCalledWith('#a3932a')
+      expect(next.gland.material.opacity).toBe(1)
+      expect(next.gland.material.transparent).toBe(false)
+      expect(next.gland.material.depthWrite).toBe(true)
+    })
+
+    it('fades both models proportionally to their own base opacity', async () => {
+      const { scene, modalityScene, initial, resolveGltf } = await loadInitialAnatomy()
+      const next = makeAnatomyGroup()
+      resolveGltf(next.group)
+
+      const morph = (await modalityScene.prepareMorph(anatomy('density-2/left/density50.glb')))!
+      morph.apply(0.25)
+
+      expect(next.gland.material.opacity).toBeCloseTo(0.25, 10)
+      expect(initial.gland.material.opacity).toBeCloseTo(0.75, 10)
+      // 0.4 base, not 1.
+      expect(next.fat.material.opacity).toBeCloseTo(0.1, 10)
+      expect(initial.fat.material.opacity).toBeCloseTo(0.3, 10)
+      // A partly transparent mesh that still writes depth punches holes in
+      // whatever is drawn behind it -- here, the other half of the fade.
+      expect(next.gland.material.depthWrite).toBe(false)
+      expect(initial.gland.material.depthWrite).toBe(false)
+    })
+
+    it('commit removes and disposes the outgoing model exactly once', async () => {
+      const { scene, modalityScene, initial, objects, resolveGltf } = await loadInitialAnatomy()
+      const next = makeAnatomyGroup()
+      resolveGltf(next.group)
+
+      const morph = (await modalityScene.prepareMorph(anatomy('density-2/left/density50.glb')))!
+      morph.commit()
+      morph.commit()
+
+      expect(scene.scene.remove).toHaveBeenCalledTimes(1)
+      expect(initial.fat.geometry.dispose).toHaveBeenCalledTimes(1)
+      expect(initial.fat.material.dispose).toHaveBeenCalledTimes(1)
+      expect(objects).toEqual([next.group])
+    })
+
+    // Controller correction C12: content/cases.ts:83 and :89 give
+    // `the-breast` and `density-a` the same density25.glb. chooseTransition
+    // correctly calls that pair one morph family, so the guard has to live
+    // here -- otherwise the app downloads a second copy of the model already
+    // on screen and crossfades it against its own twin for 800ms.
+    it('refuses to crossfade a model against an identical copy of itself', async () => {
+      const { scene, modalityScene } = await loadInitialAnatomy('density-1/left/density25.glb')
+
+      const morph = await modalityScene.prepareMorph(anatomy('density-1/left/density25.glb'))
+
+      expect(morph).toBeNull()
+      expect(scene.loadGltf).toHaveBeenCalledTimes(1) // no second download
+    })
+
+    it('tracks what each scene actually displays, so morphing back is allowed again', async () => {
+      const { scene, modalityScene, resolveGltf } = await loadInitialAnatomy('density-1/left/density25.glb')
+      const next = makeAnatomyGroup()
+      resolveGltf(next.group)
+
+      const forward = (await modalityScene.prepareMorph(anatomy('density-2/left/density50.glb')))!
+      forward.commit()
+
+      // Back to the original asset: the scene is still named
+      // `density-a:anatomy`, but what it DISPLAYS is density50 now, so this
+      // is a real morph rather than a no-op.
+      resolveGltf(makeAnatomyGroup().group)
+      expect(await modalityScene.prepareMorph(anatomy('density-1/left/density25.glb'))).not.toBeNull()
+
+      // ...and the one it now displays is refused.
+      expect(await modalityScene.prepareMorph(anatomy('density-2/left/density50.glb'))).toBeNull()
+    })
+
+    it('has nothing to morph before any model has loaded, or for an imaging modality', async () => {
+      const scene = makeFakeScene()
+      const renderer = makeFakeRenderer(scene)
+      const stage = makeFakeStage(renderer)
+      const modalityScene = useModalityScene(stage)
+
+      expect(await modalityScene.prepareMorph(anatomy('density-1/left/density25.glb'))).toBeNull()
+
+      const loaded = await loadInitialAnatomy()
+      expect(await loaded.modalityScene.prepareMorph(makeModality({ id: 'mri' }))).toBeNull()
+    })
   })
 
   it('surfaces createScene() returning undefined through loadError rather than throwing unhandled', async () => {

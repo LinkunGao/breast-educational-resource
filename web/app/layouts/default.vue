@@ -97,7 +97,13 @@ const sheetExpanded = ref(false)
         tabindex="-1"
         class="flex min-w-0 flex-1 flex-col overflow-y-auto md:max-xl:pb-20 xl:flex-row xl:overflow-hidden"
       >
-        <div class="flex min-h-0 min-w-0 flex-1 flex-col">
+        <!-- `data-stage-column` marks the fullscreen target for the control
+             bar's ⛶ button (design doc §10.1): heading, stepper, stage and
+             the bar itself, so the control that entered fullscreen is still
+             on screen to leave it again. `bg-bg` is load-bearing only in
+             that state -- a fullscreened element with no background of its
+             own shows the UA's black backdrop through it. -->
+        <div data-stage-column class="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
           <!-- Placeholder: Task 6's CaseHeader (case title + BI-RADS badge)
                renders here. -->
           <slot name="heading">

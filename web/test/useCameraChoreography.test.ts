@@ -386,12 +386,129 @@ describe('useCameraChoreography', () => {
     const repaint = vi.fn()
     const raw = { index: 0, MaxIndex: 100, volume: { spacing: [1, 1, 2] }, repaint }
 
-    const glide = camera.locateLesion(raw, 50, 1000)
+    const glide = camera.locateLesion(raw, 50, { durationMs: 1000 })
     clock.advance(1000)
     await glide
 
     expect(raw.index).toBeCloseTo(100, 5) // 50 slices * spacing 2
     expect(repaint).toHaveBeenCalled()
+  })
+
+  /**
+   * Task 10 controller correction C9 -- explicitly called out as a
+   * collision: this composable has ONE `cancelCurrent` slot, so a camera
+   * dolly started as its own `animate()` call alongside the slice glide
+   * would cancel it (or be cancelled by it). Exactly one lease is proof
+   * that exactly one animation ran.
+   */
+  it('locateLesion drives the camera dolly and the slice glide from a single animation, not two', async () => {
+    const scene = shallowRef(makeFakeScene([0, 0, 20]))
+    const stage = makeFakeStage()
+    const { camera } = mountChoreography(stage, scene)
+    const raw = { index: 0, MaxIndex: 100, volume: { spacing: [1, 1, 2] }, repaint: vi.fn() }
+
+    const locate = camera.locateLesion(raw, 40, { durationMs: 1000, dollyTo: 8 })
+    clock.advance(500)
+    // Both halves have moved together at the halfway point -- neither is
+    // sitting at its start value waiting for the other to finish.
+    const cam = scene.value!.camera
+    expect(raw.index).toBeGreaterThan(0)
+    expect(raw.index).toBeLessThan(80)
+    expect(cam.position.z).toBeLessThan(20)
+    expect(cam.position.z).toBeGreaterThan(8)
+
+    clock.advance(500)
+    await locate
+
+    expect(raw.index).toBeCloseTo(80, 5) // 40 slices * spacing 2
+    expect(cam.position.z).toBeCloseTo(8, 5)
+    expect(stage.requestContinuous).toHaveBeenCalledTimes(1)
+    expect(stage.releaseContinuous).toHaveBeenCalledTimes(1)
+  })
+
+  // "Push in" must never push out. A user who has already zoomed past the
+  // dolly distance would otherwise see the locator pull the camera back.
+  it('locateLesion leaves the camera alone when it is already closer than the dolly distance', async () => {
+    const scene = shallowRef(makeFakeScene([0, 0, 3]))
+    const stage = makeFakeStage()
+    const { camera } = mountChoreography(stage, scene)
+    const raw = { index: 0, MaxIndex: 100, volume: { spacing: [1, 1, 1] }, repaint: vi.fn() }
+
+    const locate = camera.locateLesion(raw, 10, { durationMs: 1000, dollyTo: 8 })
+    clock.advance(1000)
+    await locate
+
+    expect(scene.value!.camera.position.z).toBeCloseTo(3, 10)
+    expect(raw.index).toBeCloseTo(10, 5)
+  })
+
+  it('locateLesion reports the fractional slice number every frame, so a readout can follow it', async () => {
+    const scene = shallowRef(makeFakeScene([0, 0, 10]))
+    const stage = makeFakeStage()
+    const { camera } = mountChoreography(stage, scene)
+    const raw = { index: 0, MaxIndex: 100, volume: { spacing: [1, 1, 2] }, repaint: vi.fn() }
+    const seen: number[] = []
+
+    const locate = camera.locateLesion(raw, 60, { durationMs: 1000, onIndex: n => seen.push(n) })
+    clock.advance(400)
+    clock.advance(600)
+    await locate
+
+    expect(seen.length).toBeGreaterThan(1)
+    expect(seen[seen.length - 1]).toBeCloseTo(60, 5)
+    // Intermediate values, not just the endpoint -- a readout that only
+    // learns the answer at the end sits still and then jumps.
+    expect(seen[0]).toBeGreaterThan(0)
+    expect(seen[0]).toBeLessThan(60)
+  })
+
+  describe('keyboard camera steps (design doc §11)', () => {
+    it('nudgeOrbit rotates around the pivot without changing the orbit radius, and renders once', () => {
+      const scene = shallowRef(makeFakeScene([0, 0, 10]))
+      const stage = makeFakeStage()
+      const { camera } = mountChoreography(stage, scene)
+      scene.value!.controls.target!.set(0, 0, 0)
+
+      camera.nudgeOrbit(Math.PI / 2, 0)
+
+      const cam = scene.value!.camera
+      expect(Math.hypot(cam.position.x, cam.position.y, cam.position.z)).toBeCloseTo(10, 6)
+      expect(cam.position.z).toBeCloseTo(0, 6)
+      expect(stage.renderer.value?.render).toHaveBeenCalledTimes(1)
+      // Instant, so no continuous-render lease is taken at all.
+      expect(stage.requestContinuous).not.toHaveBeenCalled()
+    })
+
+    it('zoomBy scales the distance from the pivot and keeps controls.target in sync', () => {
+      const scene = shallowRef(makeFakeScene([0, 0, 10]))
+      const stage = makeFakeStage()
+      const { camera } = mountChoreography(stage, scene)
+      scene.value!.controls.target!.set(0, 0, 2)
+
+      camera.zoomBy(0.5)
+
+      const cam = scene.value!.camera
+      expect(cam.position.z).toBeCloseTo(6, 6) // pivot 2 + (10-2)*0.5
+      expect(scene.value!.controls.target!.z).toBeCloseTo(2, 6)
+    })
+
+    // §7.4: any user input hands control back. A key press that left a
+    // running orbit going would fight the user for the camera.
+    it('a keyboard step takes ownership of a running animation instead of racing it', () => {
+      const scene = shallowRef(makeFakeScene([0, 0, 10]))
+      const stage = makeFakeStage()
+      const { camera } = mountChoreography(stage, scene)
+
+      void camera.orbitIntro(1000, 0.6)
+      clock.advance(300)
+      camera.nudgeOrbit(0.2, 0)
+      const cam = scene.value!.camera
+      const afterStepX = cam.position.x
+
+      clock.advance(700) // the orbit's own remaining frames, if any survived
+      expect(cam.position.x).toBeCloseTo(afterStepX, 10)
+      expect(stage.releaseContinuous).toHaveBeenCalledTimes(1) // no leaked lease
+    })
   })
 
   // Review round 2, item 1: captureOrientation/applyOrientation had zero

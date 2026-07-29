@@ -1,5 +1,5 @@
 import type { Ref } from 'vue'
-import { easeInOutCubic, interpolateFlightPose, orbitSwingAngle, rotateAroundAxis } from './cameraTransitions'
+import { easeInOutCubic, interpolateFlightPose, orbitStepPose, orbitSwingAngle, poseDistance, rotateAroundAxis, zoomPose } from './cameraTransitions'
 import type { Pose } from './cameraTransitions'
 import type { CopperScene, NrrdSlice, StageApi, Vec3 } from './copper-types'
 
@@ -22,6 +22,17 @@ import type { CopperScene, NrrdSlice, StageApi, Vec3 } from './copper-types'
  * this file's pure helpers and back out through `.set()`. */
 function tuple(v: Vec3): [number, number, number] {
   return [v.x, v.y, v.z]
+}
+
+export interface LocateLesionOptions {
+  durationMs?: number
+  /** §7.2's camera push-in, as an ABSOLUTE orbit radius (not a factor).
+   * Ignored when the camera is already closer than this -- see
+   * `locateLesion`. Omit it to glide the slice with no camera motion. */
+  dollyTo?: number
+  /** Receives the (fractional) slice number every frame, so a UI readout
+   * follows the glide instead of jumping only once it lands. */
+  onIndex?: (index: number) => void
 }
 
 export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | undefined>) {
@@ -170,6 +181,26 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
     return t ? tuple(t) : [0, 0, 0]
   }
 
+  /**
+   * Writes a `Pose` back through copper3d's own setters. The
+   * `controls.target` write is the load-bearing half (Task 9 controller
+   * correction C7): copper3d never syncs OrbitControls' `target` with
+   * `camera.lookAt()`, so without it the user's next drag calls
+   * `controls.update()`, which re-aims the camera at whatever `target` still
+   * held (usually the origin) and silently unwinds whatever just moved the
+   * camera. Every camera write in this file goes through here so that sync
+   * can never be forgotten in one place and remembered in another.
+   */
+  function writePose(pose: Pose) {
+    const cam = scene.value?.camera
+    if (!cam) return
+    cam.position.set(pose.position[0], pose.position[1], pose.position[2])
+    cam.up.set(pose.up[0], pose.up[1], pose.up[2])
+    cam.lookAt(pose.target[0], pose.target[1], pose.target[2])
+    cam.updateProjectionMatrix()
+    scene.value?.controls?.target?.set(pose.target[0], pose.target[1], pose.target[2])
+  }
+
   /** Reads the current scene's camera pose (and OrbitControls target, if
    * any) as a plain `Pose` -- used as a flight's starting point. */
   function currentPose(): Pose | null {
@@ -190,24 +221,9 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
    * copper3d's own setters.
    */
   async function flyTo(target: Pose, durationMs = 1200) {
-    const cam = scene.value?.camera
-    const controls = scene.value?.controls
     const from = currentPose()
-    if (!cam || !from) return
-
-    await animate(durationMs, (t) => {
-      const pose = interpolateFlightPose(from, target, t)
-      cam.position.set(pose.position[0], pose.position[1], pose.position[2])
-      cam.up.set(pose.up[0], pose.up[1], pose.up[2])
-      cam.lookAt(pose.target[0], pose.target[1], pose.target[2])
-      cam.updateProjectionMatrix()
-      // Controller correction C7 -- LOAD-BEARING: copper3d never syncs
-      // OrbitControls' `target` with `camera.lookAt()`. Without this, the
-      // user's next drag calls `controls.update()`, which re-aims the
-      // camera at whatever `controls.target` still is (stale, usually
-      // (0,0,0)) and silently unwinds the flight the instant they touch it.
-      controls?.target?.set(pose.target[0], pose.target[1], pose.target[2])
-    })
+    if (!from) return
+    await animate(durationMs, t => writePose(interpolateFlightPose(from, target, t)))
   }
 
   /**
@@ -239,22 +255,78 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
   }
 
   /**
-   * §7.2 slice-glide PRIMITIVE ONLY (controller correction C5 -- the camera
-   * dolly-in, 600ms outline highlight, and the "Locate lesion" button
-   * gating are Task 10's). Glides `sliceRaw`'s slice number from wherever it
-   * currently is to `targetIndex`. `sliceRaw.index` is a world coordinate
-   * (copper-types.ts's `NrrdSlice` doc), so it's converted to/from a slice
-   * number via `volume.spacing[2]`.
+   * §11 keyboard camera control. Both of these are deliberately INSTANT
+   * rather than eased: a key press is a discrete step, and easing each one
+   * over even 150ms makes a held arrow key visibly lag its own repeats. They
+   * still take ownership of whatever animation was running (`interrupt`),
+   * because a key press is user input and §7.4 hands control back on any
+   * input, and they still write through `writePose` so `controls.target`
+   * stays in sync.
    */
-  async function locateLesion(sliceRaw: NrrdSlice | undefined, targetIndex: number, durationMs = 900) {
+  function nudgeOrbit(yawRad: number, pitchRad: number) {
+    const from = currentPose()
+    if (!from) return
+    interrupt()
+    writePose(orbitStepPose(from, yawRad, pitchRad))
+    stage.renderer.value?.render()
+  }
+
+  function zoomBy(factor: number) {
+    const from = currentPose()
+    if (!from) return
+    interrupt()
+    writePose(zoomPose(from, factor))
+    stage.renderer.value?.render()
+  }
+
+  /**
+   * §7.2 "Locate lesion": pushes the camera in toward the lesion region
+   * WHILE gliding the slice index to `targetIndex`.
+   *
+   * Controller correction C9 -- LOAD-BEARING: this composable has a single
+   * `cancelCurrent` slot, so starting the dolly as its own `animate()` call
+   * alongside the glide would cancel the glide (whichever started second
+   * wins), shipping a locator whose two halves fight each other. Both are
+   * therefore driven from ONE `animate()` call, one frame callback. Do not
+   * split them back apart, and do not add a second cancel slot to make
+   * splitting them work.
+   *
+   * `sliceRaw.index` is a world coordinate (copper-types.ts's `NrrdSlice`
+   * doc), so it is converted to/from a slice number via `volume.spacing[2]`.
+   */
+  async function locateLesion(
+    sliceRaw: NrrdSlice | undefined,
+    targetIndex: number,
+    opts: LocateLesionOptions = {},
+  ) {
     if (!sliceRaw) return
+    const { durationMs = 900, dollyTo, onIndex } = opts
     const spacing = sliceRaw.volume.spacing[2]
     const fromIndex = sliceRaw.index / spacing
+
+    // Resolved before the animation starts so the frame callback stays pure
+    // arithmetic. `dollyTo` is an absolute orbit radius, not a factor, and
+    // is only honoured when it would bring the camera CLOSER -- "push in"
+    // must never pull the camera back out from a view the user zoomed into
+    // themselves, and an absolute target makes repeated clicks idempotent.
+    let dollyFrom: Pose | null = null
+    let dollyEnd: Pose | null = null
+    if (dollyTo !== undefined) {
+      dollyFrom = currentPose()
+      if (dollyFrom) {
+        const distance = poseDistance(dollyFrom)
+        if (distance > dollyTo && distance > 0) {
+          dollyEnd = zoomPose(dollyFrom, dollyTo / distance)
+        }
+      }
+    }
 
     await animate(durationMs, (t) => {
       const index = fromIndex + (targetIndex - fromIndex) * t
       sliceRaw.index = index * spacing
       sliceRaw.repaint.call(sliceRaw)
+      onIndex?.(index)
+      if (dollyFrom && dollyEnd) writePose(interpolateFlightPose(dollyFrom, dollyEnd, t))
     })
   }
 
@@ -332,9 +404,24 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
 
   return {
     prefersReducedMotion,
+    /**
+     * Task 10 controller correction C8: the density crossfade (§7.1) is an
+     * opacity animation, not a camera one, but it needs exactly the four
+     * things this driver already owns -- reduced-motion collapse to a direct
+     * switch, interruptibility, a guaranteed continuous-render lease release
+     * on a throwing frame, and cancellation on scope disposal. Exposing the
+     * driver itself is the smallest change that lets the crossfade reuse
+     * them; forking a second rAF loop for it would have cost all four at
+     * once. This does NOT weaken the single-driver property -- there is
+     * still exactly one `cancelCurrent` slot and one lease owner, and every
+     * animation in `web/app` still passes through here.
+     */
+    animate,
     flyTo,
     orbitIntro,
     locateLesion,
+    nudgeOrbit,
+    zoomBy,
     interrupt,
     captureOrientation,
     applyOrientation,

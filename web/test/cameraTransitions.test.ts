@@ -4,9 +4,12 @@ import {
   chooseTransition,
   easeInOutCubic,
   interpolateFlightPose,
+  orbitStepPose,
   orbitSwingAngle,
+  poseDistance,
   rotateAroundAxis,
   viewPointToPose,
+  zoomPose,
 } from '../app/composables/cameraTransitions'
 import type { Pose } from '../app/composables/cameraTransitions'
 
@@ -286,5 +289,93 @@ describe('viewPointToPose', () => {
       up: [0, 1, 0],
       target: [4, 5, 6],
     })
+  })
+})
+
+describe('poseDistance', () => {
+  it('measures the orbit radius from the pivot, not from the world origin', () => {
+    // A camera 5 units out from a pivot that is itself nowhere near the
+    // origin: measuring from (0,0,0) would report 13, not 5.
+    const pose: Pose = { position: [12, 0, 5], up: [0, 1, 0], target: [12, 0, 0] }
+    expect(poseDistance(pose)).toBeCloseTo(5, 10)
+  })
+})
+
+describe('zoomPose', () => {
+  const pose: Pose = { position: [0, 0, 10], up: [0, 1, 0], target: [0, 0, 0] }
+
+  it('scales the distance from the pivot and leaves the view direction alone', () => {
+    const closer = zoomPose(pose, 0.5)
+    expect(poseDistance(closer)).toBeCloseTo(5, 10)
+    expect(closer.position[0]).toBeCloseTo(0, 10)
+    expect(closer.position[2]).toBeCloseTo(5, 10)
+    expect(closer.target).toEqual([0, 0, 0])
+  })
+
+  it('keeps the pivot fixed when the pivot is not the origin', () => {
+    const offCentre: Pose = { position: [4, 0, 0], up: [0, 1, 0], target: [2, 0, 0] }
+    const closer = zoomPose(offCentre, 0.5)
+    expect(closer.position[0]).toBeCloseTo(3, 10) // 2 + 2*0.5, not 4*0.5
+    expect(closer.target).toEqual([2, 0, 0])
+  })
+
+  // A held `-` key applies this dozens of times. Without the floor the
+  // radius reaches 0, `normalize` has no direction left to return, and the
+  // next frame writes a pose built from an arbitrary fallback axis.
+  it('never collapses the orbit radius to zero, however many times it is applied', () => {
+    let p = pose
+    for (let i = 0; i < 500; i++) p = zoomPose(p, 0.5)
+    expect(poseDistance(p)).toBeGreaterThan(0)
+    expect(Number.isFinite(p.position[2])).toBe(true)
+  })
+})
+
+describe('orbitStepPose', () => {
+  const pose: Pose = { position: [0, 0, 10], up: [0, 1, 0], target: [0, 0, 0] }
+
+  it('yaws around the up axis without changing the orbit radius', () => {
+    const stepped = orbitStepPose(pose, Math.PI / 2, 0)
+    expect(poseDistance(stepped)).toBeCloseTo(10, 8)
+    expect(stepped.position[1]).toBeCloseTo(0, 8)
+    expect(Math.abs(stepped.position[0])).toBeCloseTo(10, 8)
+    expect(stepped.position[2]).toBeCloseTo(0, 8)
+  })
+
+  it('pitches out of the horizontal plane without changing the orbit radius', () => {
+    const stepped = orbitStepPose(pose, 0, Math.PI / 6)
+    expect(poseDistance(stepped)).toBeCloseTo(10, 8)
+    expect(Math.abs(stepped.position[1])).toBeCloseTo(10 * Math.sin(Math.PI / 6), 8)
+  })
+
+  it('leaves the pivot alone, so a run of key presses cannot walk the camera off its subject', () => {
+    const offCentre: Pose = { position: [7, 1, 3], up: [0, 1, 0], target: [7, 1, -4] }
+    let p = offCentre
+    for (let i = 0; i < 24; i++) p = orbitStepPose(p, Math.PI / 12, Math.PI / 48)
+    expect(p.target).toEqual([7, 1, -4])
+    expect(poseDistance(p)).toBeCloseTo(poseDistance(offCentre), 6)
+  })
+
+  // The pitch axis has to be the YAWED right vector. Pitching about the
+  // original one lets a diagonal step leave the sphere: the radius drifts.
+  it('pitches about the yawed right vector, so a diagonal step stays on the sphere', () => {
+    const stepped = orbitStepPose(pose, Math.PI / 3, Math.PI / 3)
+    expect(poseDistance(stepped)).toBeCloseTo(10, 8)
+  })
+
+  it('keeps up perpendicular to the view direction', () => {
+    const stepped = orbitStepPose(pose, 0.7, -0.4)
+    const dir = [
+      stepped.position[0] - stepped.target[0],
+      stepped.position[1] - stepped.target[1],
+      stepped.position[2] - stepped.target[2],
+    ]
+    const dot = dir[0]! * stepped.up[0] + dir[1]! * stepped.up[1] + dir[2]! * stepped.up[2]
+    expect(dot).toBeCloseTo(0, 8)
+  })
+
+  it('is a no-op for a zero step', () => {
+    const stepped = orbitStepPose(pose, 0, 0)
+    expect(stepped.position[0]).toBeCloseTo(0, 10)
+    expect(stepped.position[2]).toBeCloseTo(10, 10)
   })
 })

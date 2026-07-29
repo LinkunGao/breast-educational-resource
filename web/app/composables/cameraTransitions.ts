@@ -377,6 +377,57 @@ export function interpolateFlightPose(from: Pose, to: Pose, t: number): Pose {
   return { position, up: normalize(up), target: pivot }
 }
 
+/** The camera's orbit radius: how far `pose.position` sits from the pivot it
+ * looks at. Used to express §7.2's push-in as an absolute target distance
+ * (idempotent -- clicking "Locate lesion" twice lands in the same place)
+ * rather than a repeated fractional step. */
+export function poseDistance(pose: Pose): number {
+  return length(sub(pose.position, pose.target))
+}
+
+/**
+ * §11 keyboard camera control: rotates the camera around its own pivot by
+ * `yawRad` about its up vector, then by `pitchRad` about the resulting right
+ * vector. The pivot and the orbit radius are both untouched, so a run of key
+ * presses can never walk the camera away from what it is looking at.
+ *
+ * Pitch is applied about the YAWED right vector, not the original one --
+ * rotating about a stale axis makes a diagonal (left+up) key combination
+ * drift off the sphere instead of tracing it.
+ */
+export function orbitStepPose(pose: Pose, yawRad: number, pitchRad: number): Pose {
+  const offset = sub(pose.position, pose.target)
+  const { right, up } = buildBasis(offset, pose.up)
+
+  // Rotating a vector about itself is the identity, so `up` survives the yaw
+  // unchanged and only the pitch has to be applied to it.
+  const yawedOffset = rotateAroundAxis(offset, up, yawRad)
+  const yawedRight = rotateAroundAxis(right, up, yawRad)
+
+  return {
+    position: add(pose.target, rotateAroundAxis(yawedOffset, yawedRight, pitchRad)),
+    up: normalize(rotateAroundAxis(up, yawedRight, pitchRad)),
+    target: pose.target,
+  }
+}
+
+/**
+ * §11 keyboard zoom, and §7.2's camera push-in: scales the camera's distance
+ * from its pivot by `factor` along the unchanged view direction. Clamped at
+ * `minDistance` because a zero radius has no direction to normalize -- a
+ * held `-` key would otherwise collapse the pose into a NaN one frame after
+ * reaching the pivot.
+ */
+export function zoomPose(pose: Pose, factor: number, minDistance = 1e-3): Pose {
+  const offset = sub(pose.position, pose.target)
+  const next = Math.max(minDistance, length(offset) * factor)
+  return {
+    position: add(pose.target, scale(normalize(offset), next)),
+    up: pose.up,
+    target: pose.target,
+  }
+}
+
 /**
  * §7.4 entrance-orbit swing angle. Controller correction C4: `turns` is a
  * SWING AMPLITUDE, not a net rotation -- `sin(t*pi)` goes out and comes

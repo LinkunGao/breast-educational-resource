@@ -45,6 +45,15 @@ watchEffect(() => {
 useHead(() => ({
   title: `${current.value!.heading} — ${modality.value.label} — Te Uma`,
 }))
+
+/**
+ * The control bar (design doc §10.1) lives in the layout's `#controls`
+ * slot, which is a SIBLING of the stage slot -- so this page, the nearest
+ * common ancestor of both, owns the state they share. See
+ * useStageControls.ts for why the slot rather than an overlay on the
+ * canvas, and why provide/inject rather than a bus.
+ */
+const stageControls = provideStageControls()
 </script>
 
 <template>
@@ -67,7 +76,25 @@ useHead(() => ({
     </template>
 
     <template #stage>
-      <CopperStage :slug="slug" :modality="modality" />
+      <CopperStage
+        :slug="slug"
+        :group="current!.group"
+        :lesion-slice-index="current!.lesionSliceIndex ?? 0"
+        :modality="modality"
+      />
+    </template>
+
+    <template #controls>
+      <StageControls
+        :slice-index="stageControls.sliceIndex.value"
+        :slice-max="stageControls.sliceMax.value"
+        :settled-slice-index="stageControls.settledSliceIndex.value"
+        :lesion-slice-index="current!.lesionSliceIndex ?? 0"
+        :film="stageControls.film.value"
+        :ready="Boolean(stageControls.actions.value)"
+        @reset="stageControls.actions.value?.reset()"
+        @locate="stageControls.actions.value?.locateLesion()"
+      />
     </template>
 
     <template #content>

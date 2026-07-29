@@ -1,5 +1,5 @@
 import type { Modality } from '~~/content/types'
-import type { CopperModule, CopperRenderer, CopperScene, CopperViewPoint, NrrdSlice, SceneObject, StageApi } from './copper-types'
+import type { CopperModule, CopperRenderer, CopperScene, CopperViewPoint, NrrdMesh, NrrdSlice, SceneObject, SceneObjectChild, StageApi } from './copper-types'
 
 /**
  * GLBs are all <=1.28MB (this app's four `density*.glb` anatomy assets --
@@ -37,6 +37,32 @@ export interface SliceState {
   /** copper3d's own slice object, for useSliceControl (Task 10) to drive
    * directly. */
   raw: NrrdSlice
+  /** The z-plane mesh the slice is painted on. useSliceControl raycasts
+   * against it (§7.5) so a drag that starts on the slice scrubs and a drag
+   * that starts on empty space orbits -- the same gate the legacy app used
+   * (frontend/plugins/copper.js:90), which is the only thing that stops the
+   * two gestures from firing at once on a shared canvas. */
+  mesh: NrrdMesh
+}
+
+/**
+ * §7.1's density crossfade, prepared but not yet run. Split into a
+ * per-frame `apply` and a terminal `commit` so the actual animation can be
+ * driven by useCameraChoreography's single driver (controller correction
+ * C8) rather than by a second rAF loop in here.
+ */
+export interface AnatomyMorph {
+  /** `t` runs 0 (only the outgoing model visible) -> 1 (only the incoming
+   * one). Safe to call repeatedly and out of order. */
+  apply: (t: number) => void
+  /**
+   * Settles on the incoming model and disposes the outgoing one. Snaps to
+   * the end state rather than trusting the last `apply` to have reached
+   * t=1, so an INTERRUPTED crossfade still ends on a fully-opaque model
+   * instead of freezing two half-transparent ones on screen -- the driver
+   * resolves its promise on interrupt as well as on completion.
+   */
+  commit: () => void
 }
 
 export function useModalityScene(stage: StageApi) {
@@ -75,6 +101,18 @@ export function useModalityScene(stage: StageApi) {
    * cached scene must restore ITS OWN preset, not whatever scene loaded
    * last. */
   const viewpointByScene = new Map<string, CopperViewPoint>()
+
+  /**
+   * Which anatomy GLB each scene currently DISPLAYS -- not which one its
+   * name says it should. §7.1's density morph deliberately swaps the model
+   * inside an existing scene without creating a new one, so the scene name
+   * stops being a reliable answer the moment a morph has run. Controller
+   * correction C12 needs this: `the-breast` and `density-a` ship the same
+   * `density25.glb` (content/cases.ts:83 and :89), and crossfading a model
+   * against a freshly downloaded copy of its own twin is 800ms of nothing.
+   * Keyed by the scene object rather than by name for the same reason.
+   */
+  const anatomyAssetByScene = new Map<CopperScene, string>()
 
   /** Bumped on every `load()` call. Guards against a stale async result
    * (a slow network response, or a timeout/stall) landing after the user
@@ -248,19 +286,92 @@ export function useModalityScene(stage: StageApi) {
     }
   }
 
-  function loadAnatomy(target: CopperScene, assetUrl: string): Promise<null> {
-    return new Promise<null>((resolve, reject) => {
+  /**
+   * Downloads a GLB into `target` and gives it this app's appearance.
+   * `loadGltf` adds the group to the scene itself
+   * (dist/bundle.esm.js:84314) and never invokes an error callback at all
+   * (see this file's header), so a wall-clock timeout is the only failure
+   * signal available. Shared by the initial load and by §7.1's morph so the
+   * incoming morph model goes through the SAME `tintFatLayer` (controller
+   * correction C2) -- otherwise every crossfade would end on a model that
+   * looks different from the one it replaced, a visible pop at t=1.
+   */
+  function loadGlb(target: CopperScene, assetUrl: string): Promise<SceneObject> {
+    return new Promise<SceneObject>((resolve, reject) => {
       const timer = setTimeout(
         () => reject(new Error(`Timed out loading anatomy model: ${assetUrl}`)),
         GLB_LOAD_TIMEOUT_MS,
       )
       target.loadGltf(assetUrl, (group) => {
         clearTimeout(timer)
-        group.name = 'anatomy-model'
         tintFatLayer(group)
-        resolve(null)
+        resolve(group)
       })
     })
+  }
+
+  async function loadAnatomy(target: CopperScene, assetUrl: string): Promise<null> {
+    const group = await loadGlb(target, assetUrl)
+    group.name = 'anatomy-model'
+    anatomyAssetByScene.set(target, assetUrl)
+    return null
+  }
+
+  /**
+   * §7.1 density morph. Loads `modality`'s GLB into the CURRENT scene
+   * alongside the one already there and returns the crossfade, ready to be
+   * driven. Returns null when there is nothing to morph -- no scene, not an
+   * anatomy modality, no model on screen yet, or (controller correction
+   * C12) the incoming asset is the one already displayed.
+   *
+   * Deliberately does NOT touch `loading`: the outgoing model stays on
+   * screen for the whole download, so there is no blank stage to explain,
+   * and raising the loading overlay would flash a spinner over the very
+   * transition it is meant to be seamless. The camera is untouched too --
+   * `loadView` has already run for this scene, which sets copper3d's
+   * `cameraPositionFlag` (dist/bundle.esm.js:84054), and that flag is what
+   * suppresses `loadGltf`'s own "frame the new model" camera write
+   * (dist/bundle.esm.js:84305). Without a previous `loadView` this method
+   * would silently move the camera, which is exactly what §7.1 forbids.
+   */
+  async function prepareMorph(modality: Modality): Promise<AnatomyMorph | null> {
+    const target = scene.value
+    if (disposed || !target || modality.id !== 'anatomy') return null
+
+    const previous = target.scene.getObjectByName('anatomy-model')
+    if (!previous) return null
+
+    const assetUrl = url(modality.asset)
+    if (anatomyAssetByScene.get(target) === assetUrl) return null
+
+    // Renamed BEFORE the incoming model takes the name, so `getObjectByName`
+    // can never return the outgoing model to a morph that starts while this
+    // one is still fading. Both objects are in the scene at once for the
+    // whole crossfade; only one of them may answer to 'anatomy-model'.
+    previous.name = 'anatomy-model-outgoing'
+    const incoming = await loadGlb(target, assetUrl)
+    incoming.name = 'anatomy-model'
+
+    const outgoingFade = collectFadeTargets(previous)
+    const incomingFade = collectFadeTargets(incoming)
+    setFade(incomingFade, 0)
+
+    let committed = false
+    return {
+      apply(t: number) {
+        const clamped = Math.min(1, Math.max(0, t))
+        setFade(incomingFade, clamped)
+        setFade(outgoingFade, 1 - clamped)
+      },
+      commit() {
+        if (committed) return
+        committed = true
+        restoreFade(incomingFade)
+        target.scene.remove(previous)
+        disposeSceneObject(previous)
+        anatomyAssetByScene.set(target, assetUrl)
+      },
+    }
   }
 
   function loadImaging(
@@ -354,6 +465,7 @@ export function useModalityScene(stage: StageApi) {
                 index: Math.round(z.index / z.volume.spacing[2]),
                 max: z.MaxIndex,
                 raw: z,
+                mesh: meshes.z,
               })
             }
           },
@@ -385,7 +497,72 @@ export function useModalityScene(stage: StageApi) {
     disposed = true
   })
 
-  return { scene, loading, progress, sliceState, loadError, viewpoint, load }
+  return { scene, loading, progress, sliceState, loadError, viewpoint, load, prepareMorph }
+}
+
+/** One mesh material enrolled in a crossfade, together with the appearance
+ * it had before the fade started. */
+interface FadeTarget {
+  material: NonNullable<SceneObjectChild['material']>
+  opacity: number
+  transparent: boolean
+  depthWrite: boolean
+}
+
+function collectFadeTargets(root: SceneObject): FadeTarget[] {
+  const targets: FadeTarget[] = []
+  root.traverse((child) => {
+    if (!child.isMesh || !child.material) return
+    targets.push({
+      material: child.material,
+      opacity: child.material.opacity,
+      transparent: child.material.transparent,
+      depthWrite: child.material.depthWrite,
+    })
+  })
+  return targets
+}
+
+/**
+ * Scales each material toward transparent by `factor`, RELATIVE to the
+ * opacity it already had. Scaling rather than assigning is what keeps
+ * `tintFatLayer`'s translucent amber fat layer translucent: writing
+ * `opacity = factor` (as an earlier draft of this task did) would end every
+ * crossfade with the fat layer at 1.0 instead of 0.4, i.e. an opaque shell
+ * hiding the fibroglandular tissue the density series exists to show.
+ *
+ * `depthWrite` is suppressed for the whole fade and only restored at the
+ * fully-opaque end: a partially transparent mesh that still writes depth
+ * occludes everything drawn behind it, so a crossfade with depth writing
+ * left on shows the outgoing model punching holes in the incoming one.
+ */
+function setFade(targets: FadeTarget[], factor: number) {
+  for (const t of targets) {
+    t.material.transparent = true
+    t.material.opacity = t.opacity * factor
+    t.material.depthWrite = t.depthWrite && factor >= 1
+  }
+}
+
+/** Puts each material back exactly as `collectFadeTargets` found it. */
+function restoreFade(targets: FadeTarget[]) {
+  for (const t of targets) {
+    t.material.transparent = t.transparent
+    t.material.opacity = t.opacity
+    t.material.depthWrite = t.depthWrite
+  }
+}
+
+/** Frees the GPU buffers behind a model that has been removed from the
+ * scene. `scene.remove` only unlinks it -- three keeps the geometry's VBOs
+ * and the material's textures alive until they are disposed explicitly, and
+ * §7.1 replaces a model on every single density step. */
+function disposeSceneObject(root: SceneObject) {
+  root.traverse((child) => {
+    if (!child.isMesh) return
+    child.geometry?.dispose()
+    child.material?.dispose()
+  })
 }
 
 /**

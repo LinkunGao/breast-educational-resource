@@ -88,10 +88,21 @@ export interface NrrdSlice {
   repaint: (this: NrrdSlice) => void
 }
 
+/**
+ * One of copper3d's three nrrd slice planes. Only `name` is ever read or
+ * written here; the object itself is otherwise opaque and is only ever
+ * handed straight back to copper3d (`addObject`, `pickSpecifiedModel`), so
+ * it deliberately does not model three's `Mesh` -- see this file's header on
+ * why no `three` type may cross this boundary.
+ */
+export interface NrrdMesh {
+  name: string
+}
+
 export interface NrrdMeshes {
-  x: { name: string }
-  y: { name: string }
-  z: { name: string }
+  x: NrrdMesh
+  y: NrrdMesh
+  z: NrrdMesh
 }
 
 export interface NrrdVolume {
@@ -215,6 +226,32 @@ export interface CopperScene extends CopperBaseScene {
    * re-add it (it does exist, and is harmless) if a real caller shows up.
    */
   loadView: (data: CopperViewPoint) => void
+  /**
+   * Inherited from `commonScene` (Scene/commonSceneMethod.d.ts), so it is
+   * genuinely on `copperSceneOnDemond`'s prototype chain -- unlike
+   * `resetView`/`loadPureGLB`. Raycasts `content` against the current camera
+   * and returns the nearest hit, which is how the legacy app decided whether
+   * a drag on the canvas was a slice scrub or a camera orbit
+   * (frontend/plugins/copper.js:90).
+   *
+   * TWO things about the implementation matter to callers:
+   *  · `mousePosition` is divided by `container.clientWidth/clientHeight`
+   *    (dist/bundle.esm.js:65336-65341, `baseRaycaster`), so the coordinates
+   *    must be relative to the renderer's CONTAINER. The legacy passed
+   *    `event.offsetX/offsetY`, which are relative to whatever element the
+   *    pointer is over -- the same thing only while the canvas exactly fills
+   *    the container. useSliceControl measures off the container's own
+   *    `getBoundingClientRect()` instead.
+   *  · Passing a single mesh PUSHES it onto the scene's retained
+   *    `pickableObjects` array; passing an ARRAY replaces that array
+   *    (dist/bundle.esm.js:68832-68839). Per-pointer-event calls must
+   *    therefore always pass an array, or the pickable list grows without
+   *    bound for the life of the scene.
+   */
+  pickSpecifiedModel: (
+    content: NrrdMesh[],
+    mousePosition: { x: number, y: number },
+  ) => { intersectedObject: unknown | null }
   /**
    * `copperSceneOnDemond`'s constructor does
    * `window.addEventListener("resize", this.confirmResize, false)`
