@@ -27,7 +27,6 @@ const SPACING = 2
 function makeSliceState(overrides: Partial<{ index: number, max: number }> = {}): SliceState {
   const index = overrides.index ?? 0
   return {
-    index,
     max: overrides.max ?? 100,
     raw: {
       index: index * SPACING,
@@ -112,6 +111,40 @@ describe('useSliceControl', () => {
     expect(api.index.value).toBe(42)
     expect(api.max.value).toBe(104)
     expect(api.settledIndex.value).toBe(42)
+  })
+
+  /**
+   * Fix round 1, Important. The readout and the follower must both start
+   * from where the slice plane ACTUALLY is, which lives in
+   * `raw.index` (a world coordinate) and nowhere else.
+   *
+   * Concrete failure this closes: open `/case/cancer-dcis/mri`, scrub to
+   * 40, step to 3D Mammogram, step back. `load()`'s cache-hit branch
+   * restores the same `SliceState` object it stored at load time, and the
+   * scene was never repainted, so the plane is still at 40 -- but a
+   * load-time snapshot would say 88, and the first drag pixel would ease
+   * the plane 48 slices to catch up with a number that was only ever a
+   * stale copy.
+   */
+  it('seeds from where the slice plane actually is, not from a value captured at load time', () => {
+    // A cached scene coming back into view: the user scrubbed it to 40 on
+    // an earlier visit and nothing has repainted it since.
+    const state = makeSliceState({ index: 40, max: 175 })
+
+    const { api } = mountControl(shallowRef(makeScene(true)), shallowRef(state), instantRun())
+
+    expect(api.index.value).toBe(40)
+    expect(api.settledIndex.value).toBe(40)
+  })
+
+  it('starts a drag from the plane\'s real position, so the first pixel does not jump', () => {
+    const state = makeSliceState({ index: 40, max: 175 })
+    const { el } = mountControl(shallowRef(makeScene(true)), shallowRef(state), instantRun())
+
+    el.dispatchEvent(pointer('pointerdown', { clientY: 0 }))
+    el.dispatchEvent(pointer('pointermove', { clientY: 4 })) // +1 slice
+
+    expect(state.raw.index).toBeCloseTo(41 * SPACING, 10)
   })
 
   it('converts a vertical drag into slice numbers and writes copper3d\'s world coordinate', () => {

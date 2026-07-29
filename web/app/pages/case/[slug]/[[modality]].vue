@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { getCase } from '~~/content/cases'
+import { getCase, lesionSliceIndexFor } from '~~/content/cases'
 import type { ModalityId } from '~~/content/types'
 
 // This must be a route guard, not a setup-time `throw createError`.
@@ -54,6 +54,14 @@ useHead(() => ({
  * canvas, and why provide/inject rather than a bus.
  */
 const stageControls = provideStageControls()
+
+/**
+ * §7.2's locate target for the modality actually on screen. Zero on every
+ * modality but MRI -- `lesionSliceIndexFor` explains why, and the shipped
+ * mammogram volumes are shallower than the index, so this is a correctness
+ * gate rather than a presentational one.
+ */
+const lesionSliceIndex = computed(() => lesionSliceIndexFor(current.value!, modalityId.value))
 </script>
 
 <template>
@@ -79,7 +87,7 @@ const stageControls = provideStageControls()
       <CopperStage
         :slug="slug"
         :group="current!.group"
-        :lesion-slice-index="current!.lesionSliceIndex ?? 0"
+        :lesion-slice-index="lesionSliceIndex"
         :modality="modality"
       />
     </template>
@@ -89,7 +97,7 @@ const stageControls = provideStageControls()
         :slice-index="stageControls.sliceIndex.value"
         :slice-max="stageControls.sliceMax.value"
         :settled-slice-index="stageControls.settledSliceIndex.value"
-        :lesion-slice-index="current!.lesionSliceIndex ?? 0"
+        :lesion-slice-index="lesionSliceIndex"
         :film="stageControls.film.value"
         :ready="Boolean(stageControls.actions.value)"
         @reset="stageControls.actions.value?.reset()"

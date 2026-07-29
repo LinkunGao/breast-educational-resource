@@ -303,6 +303,20 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
     const { durationMs = 900, dollyTo, onIndex } = opts
     const spacing = sliceRaw.volume.spacing[2]
     const fromIndex = sliceRaw.index / spacing
+    /**
+     * Fix round 1, Critical -- a property of the driver, not a patch for one
+     * caller. copper3d does NO bounds checking on the way in:
+     * `VolumeSlice.repaint` -> `Volume.extractPerpendicularPlane`
+     * (dist/bundle.esm.js:60796, :61153) positions the plane mesh straight
+     * from the index it is handed, so an out-of-range value translates the
+     * plane bodily outside the volume and then samples past the end of
+     * `volume.data` -- every voxel `undefined` -> NaN -> clamped to 0. The
+     * result is a blank plane floating outside the model while the readout
+     * confidently names a slice that does not exist. Nothing downstream of
+     * here can catch that, so nothing upstream may be trusted not to cause
+     * it.
+     */
+    const endIndex = Math.min(sliceRaw.MaxIndex, Math.max(0, targetIndex))
 
     // Resolved before the animation starts so the frame callback stays pure
     // arithmetic. `dollyTo` is an absolute orbit radius, not a factor, and
@@ -322,7 +336,7 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
     }
 
     await animate(durationMs, (t) => {
-      const index = fromIndex + (targetIndex - fromIndex) * t
+      const index = fromIndex + (endIndex - fromIndex) * t
       sliceRaw.index = index * spacing
       sliceRaw.repaint.call(sliceRaw)
       onIndex?.(index)

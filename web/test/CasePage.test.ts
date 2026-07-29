@@ -160,6 +160,22 @@ describe('case page', () => {
     expect(mountPage().findComponent(StageControls).props('lesionSliceIndex')).toBe(0)
   })
 
+  /**
+   * Fix round 1, Critical. `lesionSliceIndex` is an MRI slice number, and
+   * cancer-dcis's mammogram volume is 39 slices deep against an index of
+   * 90. Both the stage and the bar have to be told zero there -- the bar so
+   * it does not offer the control, the stage so nothing can drive the slice
+   * plane to a position in a volume the number was never measured on.
+   */
+  it('withholds the lesion index from every modality it was not measured on', () => {
+    stubRoute({ slug: 'cancer-dcis', modality: 'mammogram' })
+    const wrapper = mountPage()
+
+    expect(wrapper.findComponent(StageControls).props('lesionSliceIndex')).toBe(0)
+    expect(wrapper.find('.copper-stage-stub').attributes('data-lesion')).toBe('0')
+    expect(wrapper.find('.controls-slot').text()).not.toContain('Locate lesion')
+  })
+
   it('gives the stage the case fields its §7 transitions depend on', () => {
     stubRoute({ slug: 'cancer-dcis', modality: 'mri' })
     const stage = mountPage().find('.copper-stage-stub')

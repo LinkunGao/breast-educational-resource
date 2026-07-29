@@ -26,7 +26,18 @@ export interface Case {
   biRads?: BiRads
   /** Stated explicitly when the case borrows another case's anatomy model */
   referenceDensity?: BiRads
-  /** Slice index holding the lesion. 0 or absent means no specific lesion. */
+  /**
+   * Slice index holding the lesion, **in this case's MRI volume**. 0 or
+   * absent means no specific lesion.
+   *
+   * Read `lesionSliceIndexFor(case, modality)` rather than this field
+   * directly. The number is the legacy `rightBoundingBoxIndex`
+   * (frontend/plugins/data.js:41), which was only ever read by the
+   * right-hand panel and so only ever meant an MRI slice -- and the
+   * mammogram volumes are far shallower, so using it there points at a
+   * slice that does not exist. The schema keeps one value per case because
+   * that is all the source data ever had; it is not one value per modality.
+   */
   lesionSliceIndex?: number
   modalities: Modality[]
   /** Has copy but no imaging assets: generates no route and no nav entry */

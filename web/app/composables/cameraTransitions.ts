@@ -1,3 +1,4 @@
+import { isMorphFamilyGroup } from '~~/content/cases'
 import type { CaseGroup, ModalityId } from '~~/content/types'
 import type { CopperViewPoint } from './copper-types'
 
@@ -49,9 +50,16 @@ export function easeInOutCubic(t: number): number {
  * density levels while staying on the Anatomy modality. `the-breast`
  * borrows density-1's GLB, so the `overview` group belongs to the same
  * morph family as `density`.
+ *
+ * Fix round 1: membership now comes from `content/cases.ts`, because
+ * `app.vue`'s page key reads the same predicate to decide which cases share
+ * a renderer. Two copies of this rule that drifted apart would silently
+ * disable the morph. Importing a pure predicate from the content layer
+ * keeps this file free of `three` and of copper3d, which is the property
+ * that matters here.
  */
 function inDensityFamily(v: ViewKey) {
-  return v.group === 'density' || v.group === 'overview'
+  return isMorphFamilyGroup(v.group)
 }
 
 export function chooseTransition(from: ViewKey, to: ViewKey): Transition {

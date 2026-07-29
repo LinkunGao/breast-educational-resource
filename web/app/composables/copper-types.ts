@@ -75,6 +75,19 @@ export interface CopperControls {
    * on the incoming one at every switch.
    */
   enabled: boolean
+  /**
+   * From three's `EventDispatcher`, which `Controls` extends. The one
+   * listener that matters here is the `change` handler
+   * `copperSceneOnDemond`'s constructor registers
+   * (`controls.addEventListener("change", this.requestRenderIfNotRequested)`,
+   * dist/bundle.esm.js:84291) -- it is the reference chain that keeps an
+   * evicted scene, and its decoded volume, reachable from the shared
+   * canvas's own DOM listeners. Optional on this type only because a
+   * copper3d upgrade could plausibly drop `EventDispatcher`; see
+   * useModalityScene's `evictScene` for why `controls.dispose()` is NOT
+   * used instead.
+   */
+  removeEventListener?: (type: 'change', listener: () => void) => void
 }
 
 /** copper3d's nrrd slice object. `index` is a world coordinate; divide by
@@ -179,6 +192,24 @@ export interface CopperBaseScene {
 export interface CopperScene extends CopperBaseScene {
   camera: CopperCamera
   controls: CopperControls
+  /**
+   * copper3d's own record of the key this scene is registered under in
+   * `CopperRenderer.sceneMap` (`baseScene`'s field, written by
+   * `createScene`, dist/bundle.esm.js:84350). §7.1's morph swaps a scene's
+   * contents without rebuilding it, so useModalityScene re-keys the scene
+   * and keeps this in step -- a scene whose own `sceneName` disagreed with
+   * the map it lives in is exactly the kind of quiet inconsistency the
+   * morph already had to fix once for its asset.
+   */
+  sceneName: string
+  /**
+   * `copperSceneOnDemond`'s per-frame render request
+   * (Scene/copperSceneOnDemond.d.ts:12), declared as a property rather than
+   * a method, so reading it back gives the exact function reference its
+   * constructor registered on `controls`' `change` event. That makes it
+   * removable -- the same trick `confirmResize` below relies on.
+   */
+  requestRenderIfNotRequested: () => void
   scene: {
     add: (obj: SceneObject) => void
     remove: (obj: SceneObject) => void

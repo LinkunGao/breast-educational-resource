@@ -32,18 +32,49 @@ function makeModality(overrides: Partial<Modality> = {}): Modality {
   }
 }
 
+/**
+ * `scene.add`/`remove`/`getObjectByName` and `addObject` are backed by a
+ * real array rather than bare spies, because two things under test here
+ * genuinely read the scene back: §7.1's morph finds the outgoing model by
+ * name, and eviction finds everything it has to dispose the same way. A
+ * `getObjectByName` that always returned undefined would let both of those
+ * "pass" by doing nothing at all.
+ */
 function makeFakeScene(): CopperScene {
-  return {
+  const objects: Array<{ name: string }> = []
+  const scene = {
     camera: {} as CopperScene['camera'],
-    controls: { rotateSpeed: 0, panSpeed: 0, enableRotate: true, enablePan: true, enabled: true },
-    scene: { add: vi.fn(), remove: vi.fn(), getObjectByName: vi.fn() },
-    addObject: vi.fn(),
+    controls: {
+      rotateSpeed: 0,
+      panSpeed: 0,
+      enableRotate: true,
+      enablePan: true,
+      enabled: true,
+      removeEventListener: vi.fn(),
+    },
+    sceneName: '',
+    requestRenderIfNotRequested: vi.fn(),
+    objects,
+    scene: {
+      add: vi.fn((obj: { name: string }) => { objects.push(obj) }),
+      remove: vi.fn((obj: { name: string }) => {
+        const at = objects.indexOf(obj)
+        if (at !== -1) objects.splice(at, 1)
+      }),
+      getObjectByName: vi.fn((name: string) => objects.find(o => o.name === name)),
+    },
+    // copper3d's own addObject is `this.scene.add(obj)` (bundle.esm.js:68800).
+    addObject: vi.fn((obj: { name: string }) => { objects.push(obj) }),
+    // ...and loadGltf adds the group itself before invoking the callback
+    // (bundle.esm.js:84314). Tests that need a group resolve this per call.
     loadNrrd: vi.fn(),
     loadGltf: vi.fn(),
     loadView: vi.fn(),
     onWindowResize: vi.fn(),
     confirmResize: vi.fn(),
+    pickSpecifiedModel: vi.fn(() => ({ intersectedObject: null })),
   }
+  return scene as unknown as CopperScene & { objects: Array<{ name: string }> }
 }
 
 /** A single fixed scene, for tests that only ever touch one. `sceneMap` is
@@ -537,7 +568,8 @@ describe('useModalityScene', () => {
     vi.mocked(renderer.getSceneByName).mockReturnValueOnce(staleScene)
     await modalityScene.load('the-breast', makeModality({ id: 'mammogram' }))
 
-    expect(modalityScene.sliceState.value).toEqual({ index: 4, max: 30, raw: staleSlice, mesh: { name: 'z' } })
+    expect(modalityScene.sliceState.value!.max).toBe(30)
+    expect(modalityScene.sliceState.value!.raw).toStrictEqual(staleSlice)
     expect(staleScene.loadView).toHaveBeenCalledWith(DEFAULT_VIEWPOINT)
   })
 
@@ -580,7 +612,7 @@ describe('useModalityScene', () => {
     expect(modalityScene.sliceState.value).toBeNull()
   })
 
-  it('computes slice index/max from the z slice for 3D imaging modalities', async () => {
+  it('carries the z slice, its depth and its mesh -- and no copy of the current index', async () => {
     const scene = makeFakeScene()
     const renderer = makeFakeRenderer(scene)
     const stage = makeFakeStage(renderer)
@@ -591,10 +623,18 @@ describe('useModalityScene', () => {
     resolveNrrd(scene, slice)
     await loadPromise
 
-    // Task 10 added `mesh`: useSliceControl raycasts against the z plane to
-    // tell a slice scrub from a camera orbit, so the mesh has to travel with
-    // the slice it paints.
-    expect(modalityScene.sliceState.value).toEqual({ index: 3, max: 40, raw: slice, mesh: { name: 'z' } })
+    // `mesh` travels with the slice it paints: useSliceControl raycasts the
+    // z plane to tell a slice scrub from a camera orbit.
+    //
+    // The exact shape is the assertion (fix round 1, Important). There must
+    // be no `index` field: it was written once at load and never again,
+    // while the real position moved in `raw.index`, so anything reading it
+    // after a cached scene came back into view read a stale number. Adding
+    // one back here would fail this test, which is the point.
+    expect(Object.keys(modalityScene.sliceState.value!).sort()).toEqual(['max', 'mesh', 'raw'])
+    expect(modalityScene.sliceState.value!.max).toBe(40)
+    expect(modalityScene.sliceState.value!.raw).toStrictEqual(slice)
+    expect(modalityScene.sliceState.value!.mesh.name).toBe('z')
   })
 
   it('tints only the anatomy model\'s fat-layer mesh, leaving other meshes untouched', async () => {
@@ -703,16 +743,7 @@ describe('useModalityScene', () => {
       const stage = makeFakeStage(renderer)
       const modalityScene = useModalityScene(stage)
 
-      // Stands in for three's own Scene: `loadGltf` adds the group itself
-      // (dist/bundle.esm.js:84314), `getObjectByName` searches what is
-      // actually in the scene, and `remove` takes it back out.
-      const objects: Array<{ name: string }> = []
-      vi.mocked(scene.scene.getObjectByName).mockImplementation(
-        name => objects.find(o => o.name === name) as never,
-      )
-      vi.mocked(scene.scene.remove).mockImplementation((obj) => {
-        objects.splice(objects.indexOf(obj as never), 1)
-      })
+      const objects = (scene as unknown as { objects: Array<{ name: string }> }).objects
       /** Resolves the next `loadGltf` call with `group`, as copper3d does. */
       const resolveGltf = (group: { name: string }) => {
         vi.mocked(scene.loadGltf).mockImplementationOnce((_url, cb) => {
@@ -725,7 +756,7 @@ describe('useModalityScene', () => {
       resolveGltf(initial.group)
       await modalityScene.load('density-a', anatomy(asset))
 
-      return { scene, modalityScene, initial, objects, resolveGltf }
+      return { scene, renderer, modalityScene, initial, objects, resolveGltf }
     }
 
     it('crossfades in a different density\'s model without creating or switching scenes', async () => {
@@ -733,7 +764,7 @@ describe('useModalityScene', () => {
       const next = makeAnatomyGroup()
       resolveGltf(next.group)
 
-      const morph = await modalityScene.prepareMorph(anatomy('density-2/left/density50.glb'))!
+      const morph = await modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb'))!
 
       expect(morph).not.toBeNull()
       // §7.1: the SAME scene, so the camera cannot move. Only the model changes.
@@ -758,7 +789,7 @@ describe('useModalityScene', () => {
       const next = makeAnatomyGroup()
       resolveGltf(next.group)
 
-      const morph = (await modalityScene.prepareMorph(anatomy('density-2/left/density50.glb')))!
+      const morph = (await modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb')))!
 
       // The fully-faded-in state is the tinted one, not a blanket 1.0: a
       // crossfade that ASSIGNS opacity rather than scaling it lands here at
@@ -781,7 +812,7 @@ describe('useModalityScene', () => {
       const next = makeAnatomyGroup()
       resolveGltf(next.group)
 
-      const morph = (await modalityScene.prepareMorph(anatomy('density-2/left/density50.glb')))!
+      const morph = (await modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb')))!
       morph.apply(0.25)
 
       expect(next.gland.material.opacity).toBeCloseTo(0.25, 10)
@@ -800,7 +831,7 @@ describe('useModalityScene', () => {
       const next = makeAnatomyGroup()
       resolveGltf(next.group)
 
-      const morph = (await modalityScene.prepareMorph(anatomy('density-2/left/density50.glb')))!
+      const morph = (await modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb')))!
       morph.commit()
       morph.commit()
 
@@ -818,7 +849,7 @@ describe('useModalityScene', () => {
     it('refuses to crossfade a model against an identical copy of itself', async () => {
       const { scene, modalityScene } = await loadInitialAnatomy('density-1/left/density25.glb')
 
-      const morph = await modalityScene.prepareMorph(anatomy('density-1/left/density25.glb'))
+      const morph = await modalityScene.prepareMorph('the-breast', anatomy('density-1/left/density25.glb'))
 
       expect(morph).toBeNull()
       expect(scene.loadGltf).toHaveBeenCalledTimes(1) // no second download
@@ -829,17 +860,92 @@ describe('useModalityScene', () => {
       const next = makeAnatomyGroup()
       resolveGltf(next.group)
 
-      const forward = (await modalityScene.prepareMorph(anatomy('density-2/left/density50.glb')))!
+      const forward = (await modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb')))!
       forward.commit()
 
       // Back to the original asset: the scene is still named
       // `density-a:anatomy`, but what it DISPLAYS is density50 now, so this
       // is a real morph rather than a no-op.
       resolveGltf(makeAnatomyGroup().group)
-      expect(await modalityScene.prepareMorph(anatomy('density-1/left/density25.glb'))).not.toBeNull()
+      expect(await modalityScene.prepareMorph('the-breast', anatomy('density-1/left/density25.glb'))).not.toBeNull()
 
       // ...and the one it now displays is refused.
-      expect(await modalityScene.prepareMorph(anatomy('density-2/left/density50.glb'))).toBeNull()
+      expect(await modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb'))).toBeNull()
+    })
+
+    /**
+     * Fix round 1. The outgoing model used to be renamed BEFORE the
+     * incoming one was awaited, so a GLB that never arrived (the 30s
+     * timeout -- copper3d has no error callback to fail faster on) left the
+     * scene with nothing named `anatomy-model` at all. Every later
+     * `prepareMorph` on that scene then found no previous model and
+     * returned null, silently and permanently degrading §7.1 to a hard cut
+     * for the rest of the session.
+     */
+    it('leaves the on-screen model intact when the incoming one never arrives', async () => {
+      const { scene, modalityScene, initial, objects, resolveGltf } = await loadInitialAnatomy()
+      // loadGltf's default mock never invokes its callback.
+      vi.mocked(scene.loadGltf).mockImplementationOnce(() => {})
+
+      const attempt = modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb'))
+      await expect(advanceAndSettle(attempt, 31_000)).rejects.toThrow(/Timed out/)
+
+      expect(initial.group.name).toBe('anatomy-model')
+      expect(objects).toEqual([initial.group])
+
+      // ...and a later morph from this scene still works.
+      const next = makeAnatomyGroup()
+      resolveGltf(next.group)
+      expect(await modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb'))).not.toBeNull()
+    })
+
+    /**
+     * Fix round 1. Two morphs racing on one scene would both take the same
+     * outgoing model as theirs: the second would rename or remove a group
+     * the first is still fading. Reachable by clicking density-b then
+     * density-c before the first ~1.28MB GLB lands.
+     */
+    it('refuses a second morph on a scene whose incoming model is still downloading', async () => {
+      const { scene, modalityScene } = await loadInitialAnatomy()
+      let land!: () => void
+      vi.mocked(scene.loadGltf).mockImplementationOnce((_url, cb) => {
+        land = () => cb!(makeAnatomyGroup().group as never)
+      })
+
+      const first = modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb'))
+      // Second navigation arrives while the first model is still in flight.
+      expect(await modalityScene.prepareMorph('density-c', anatomy('density-3/left/density75.glb'))).toBeNull()
+      expect(scene.loadGltf).toHaveBeenCalledTimes(2) // no third download started
+
+      land()
+      expect(await first).not.toBeNull()
+    })
+
+    /**
+     * Fix round 1. §7.1 suppresses `load()`, so after density-a -> density-b
+     * the live scene is still registered as `density-a:anatomy`. Left alone,
+     * stepping to density-b's MRI and back would miss the cache, build a
+     * SECOND anatomy scene and re-download a GLB already in memory, while
+     * the original sat in `sceneMap` under a name that no longer described
+     * it for the life of the renderer -- which, now that the renderer
+     * outlives a case navigation, is the whole session.
+     */
+    it('re-keys the scene under the case it now displays, so returning to that case is a cache hit', async () => {
+      const { scene, modalityScene, renderer, resolveGltf } = await loadInitialAnatomy()
+      expect(renderer.sceneMap['density-a:anatomy']).toBe(scene)
+
+      resolveGltf(makeAnatomyGroup().group)
+      const morph = (await modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb')))!
+      morph.commit()
+
+      expect(renderer.sceneMap['density-b:anatomy']).toBe(scene)
+      expect(renderer.sceneMap['density-a:anatomy']).toBeUndefined()
+      // copper3d keeps its own copy on the instance; a stale one would make
+      // any reader of `sceneName` disagree with the map it is keyed in.
+      expect(scene.sceneName).toBe('density-b:anatomy')
+      // The per-scene bookkeeping travels with the name, or the re-keyed
+      // scene comes back framed by whatever preset happened to load last.
+      expect(modalityScene.viewpoint.value).toEqual(DEFAULT_VIEWPOINT)
     })
 
     it('has nothing to morph before any model has loaded, or for an imaging modality', async () => {
@@ -848,10 +954,146 @@ describe('useModalityScene', () => {
       const stage = makeFakeStage(renderer)
       const modalityScene = useModalityScene(stage)
 
-      expect(await modalityScene.prepareMorph(anatomy('density-1/left/density25.glb'))).toBeNull()
+      expect(await modalityScene.prepareMorph('the-breast', anatomy('density-1/left/density25.glb'))).toBeNull()
 
       const loaded = await loadInitialAnatomy()
-      expect(await loaded.modalityScene.prepareMorph(makeModality({ id: 'mri' }))).toBeNull()
+      expect(await loaded.modalityScene.prepareMorph('density-a', makeModality({ id: 'mri' }))).toBeNull()
+    })
+  })
+
+  /**
+   * Fix round 1. Before it, the cache needed no cap: `app.vue` keyed the
+   * case page by slug, so leaving a case tore the whole renderer down, and
+   * no case offers more than three modalities. §7.1's crossfade needs the
+   * renderer to survive a case navigation within the morph family, so that
+   * structural bound is gone for those five cases and this replaces it with
+   * the same number -- which matters because the family's imaging volumes
+   * decode to considerably more than the 167MB they occupy on disk.
+   */
+  describe('cached-scene residency cap', () => {
+    /** A renderer that builds a DISTINCT scene per name and answers
+     * `getSceneByName` from its own map, the way the real one does --
+     * `makeFakeRenderer` deliberately returns one fixed scene, which cannot
+     * express eviction. */
+    function makeMultiSceneRenderer() {
+      const sceneMap: Record<string, CopperScene> = {}
+      const renderer: CopperRenderer = {
+        sceneMap,
+        getSceneByName: vi.fn((name: string) => sceneMap[name]),
+        createScene: vi.fn((name: string) => {
+          const scene = makeFakeScene()
+          sceneMap[name] = scene
+          return scene
+        }),
+        setCurrentScene: vi.fn(),
+        getCurrentScene: vi.fn(() => ({ onWindowResize: vi.fn() })),
+        render: vi.fn(),
+        stop: vi.fn(),
+        dispose: vi.fn(),
+      }
+      return renderer
+    }
+
+    /** Loads one imaging modality to completion. */
+    async function visit(
+      modalityScene: ReturnType<typeof useModalityScene>,
+      renderer: CopperRenderer,
+      slug: string,
+      id: 'mammogram' | 'mri',
+    ) {
+      const pending = modalityScene.load(slug, makeModality({ id, asset: `${slug}/${id}.nrrd` }))
+      const scene = renderer.sceneMap[`${slug}:${id}`]!
+      if (vi.mocked(scene.loadNrrd).mock.calls.length) resolveNrrd(scene)
+      await pending
+      return scene
+    }
+
+    it('keeps three scenes and evicts the least recently used, never the one on screen', async () => {
+      const renderer = makeMultiSceneRenderer()
+      const modalityScene = useModalityScene(makeFakeStage(renderer))
+
+      const a = await visit(modalityScene, renderer, 'density-a', 'mammogram')
+      await visit(modalityScene, renderer, 'density-b', 'mammogram')
+      await visit(modalityScene, renderer, 'density-c', 'mammogram')
+      expect(Object.keys(renderer.sceneMap)).toHaveLength(3)
+
+      await visit(modalityScene, renderer, 'density-d', 'mammogram')
+
+      expect(Object.keys(renderer.sceneMap).sort()).toEqual([
+        'density-b:mammogram', 'density-c:mammogram', 'density-d:mammogram',
+      ])
+      // Evicting means freeing: `scene.remove` alone only unlinks, and the
+      // slice plane's texture IS the decoded volume slice.
+      expect(a.scene.remove).toHaveBeenCalled()
+      // ...and cutting the last reference the shared canvas holds to it.
+      expect(a.controls.removeEventListener).toHaveBeenCalledWith('change', a.requestRenderIfNotRequested)
+      expect(a.controls.enabled).toBe(false)
+    })
+
+    it('counts a revisit as recent, so the scene you keep coming back to is not the one thrown away', async () => {
+      const renderer = makeMultiSceneRenderer()
+      const modalityScene = useModalityScene(makeFakeStage(renderer))
+
+      await visit(modalityScene, renderer, 'density-a', 'mammogram')
+      await visit(modalityScene, renderer, 'density-b', 'mammogram')
+      await visit(modalityScene, renderer, 'density-c', 'mammogram')
+      // Back to A: it is now the most recently used, so B is the victim.
+      await visit(modalityScene, renderer, 'density-a', 'mammogram')
+
+      await visit(modalityScene, renderer, 'density-d', 'mammogram')
+
+      expect(Object.keys(renderer.sceneMap).sort()).toEqual([
+        'density-a:mammogram', 'density-c:mammogram', 'density-d:mammogram',
+      ])
+    })
+
+    it('drops the evicted scene\'s own bookkeeping, so a rebuild is not handed the old scene\'s framing', async () => {
+      const renderer = makeMultiSceneRenderer()
+      const modalityScene = useModalityScene(makeFakeStage(renderer))
+
+      await visit(modalityScene, renderer, 'density-a', 'mammogram')
+      await visit(modalityScene, renderer, 'density-b', 'mammogram')
+      await visit(modalityScene, renderer, 'density-c', 'mammogram')
+      await visit(modalityScene, renderer, 'density-d', 'mammogram')
+
+      // density-a was evicted; visiting it again must genuinely rebuild.
+      const rebuilt = await visit(modalityScene, renderer, 'density-a', 'mammogram')
+      expect(vi.mocked(renderer.createScene).mock.calls.filter(c => c[0] === 'density-a:mammogram')).toHaveLength(2)
+      expect(rebuilt.loadNrrd).toHaveBeenCalledTimes(1)
+      expect(modalityScene.sliceState.value).not.toBeNull()
+      expect(modalityScene.viewpoint.value).toEqual(DEFAULT_VIEWPOINT)
+    })
+
+    // The one place the cap must yield: never blank the stage to satisfy it.
+    it('never evicts the scene currently displayed, even if it is the only one left', async () => {
+      const renderer = makeMultiSceneRenderer()
+      const modalityScene = useModalityScene(makeFakeStage(renderer))
+
+      const only = await visit(modalityScene, renderer, 'density-a', 'mammogram')
+      for (let i = 0; i < 5; i++) await visit(modalityScene, renderer, 'density-a', 'mammogram')
+
+      expect(renderer.sceneMap['density-a:mammogram']).toBe(only)
+      expect(modalityScene.scene.value).toBe(only)
+    })
+
+    // Shared with Task 8's failed-load eviction: one way out of the map,
+    // one place that checks it took.
+    it('fails loudly if a copper3d upgrade makes deleting from sceneMap a silent no-op', async () => {
+      const renderer = makeMultiSceneRenderer()
+      // Simulates `sceneMap` no longer being a plain object keyed by name:
+      // the delete stops taking, but nothing throws on its own.
+      const modalityScene = useModalityScene(makeFakeStage(renderer))
+      await visit(modalityScene, renderer, 'density-a', 'mammogram')
+      await visit(modalityScene, renderer, 'density-b', 'mammogram')
+      await visit(modalityScene, renderer, 'density-c', 'mammogram')
+
+      const survivor = renderer.sceneMap['density-a:mammogram']!
+      vi.mocked(renderer.getSceneByName).mockImplementation(
+        (name: string) => name === 'density-a:mammogram' ? survivor : renderer.sceneMap[name],
+      )
+
+      await visit(modalityScene, renderer, 'density-d', 'mammogram')
+      expect(modalityScene.loadError.value?.message).toMatch(/survived eviction/)
     })
   })
 
@@ -872,8 +1114,25 @@ function fakeVolume() {
   return { RASDimensions: [1, 1, 1], windowHigh: 1, repaintAllSlices: vi.fn() }
 }
 
+/** The three slice-plane meshes copper3d hands back. `z` is a real
+ * traversable object because it is the one this app adds to the scene, and
+ * eviction disposes it by traversal -- a bare `{ name }` would make that
+ * throw here while working against a genuine THREE.Mesh. */
+function fakeMesh(name = '') {
+  const material = { dispose: vi.fn(), transparent: false, opacity: 1, depthWrite: true }
+  const geometry = { dispose: vi.fn() }
+  const mesh = {
+    name,
+    isMesh: true,
+    geometry,
+    material,
+    traverse(fn: (child: unknown) => void) { fn(mesh) },
+  }
+  return mesh
+}
+
 function fakeMeshes() {
-  return { x: { name: '' }, y: { name: '' }, z: { name: '' } }
+  return { x: fakeMesh(), y: fakeMesh(), z: fakeMesh() }
 }
 
 function fakeSlice(overrides: { index?: number, MaxIndex?: number, spacing?: number[] } = {}) {
@@ -911,6 +1170,14 @@ function captureNextLoadingBar(stage: StageApi): { progress: HTMLDivElement } {
       return bar!.progress
     },
   }
+}
+
+/** Runs the fake clock forward while `promise` is pending, without letting
+ * its rejection race the assertion that is about to await it. */
+async function advanceAndSettle<T>(promise: Promise<T>, ms: number): Promise<T> {
+  promise.catch(() => {})
+  await vi.advanceTimersByTimeAsync(ms)
+  return promise
 }
 
 /** Lets a MutationObserver's queued microtask callback run. Fake timers

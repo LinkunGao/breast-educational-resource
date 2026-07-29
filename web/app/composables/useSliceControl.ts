@@ -242,11 +242,15 @@ export function useSliceControl(
       target = 0
       return
     }
-    index.value = state.index
-    settledIndex.value = state.index
     max.value = state.max
-    current = state.index
-    target = state.index
+    // Fix round 1, Important: seeded from the plane's actual position, via
+    // the same `syncFromRaw` every other reader uses. Switching back to a
+    // cached scene restores the very `SliceState` object stored at load
+    // time, and nothing repaints that scene on the way in, so anything
+    // captured at load time is a stale copy of where the plane really is by
+    // then -- see `SliceState`'s own doc.
+    syncFromRaw()
+    settledIndex.value = index.value
   }, { immediate: true })
 
   onMounted(attach)

@@ -2,7 +2,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { extractLegacyCopy } from '../../scripts/lib/extract-copy.mjs'
-import { cases, enabledCases, getCase, getModality } from '../content/cases'
+import { cases, enabledCases, getCase, getModality, isMorphFamilyGroup, lesionSliceIndexFor } from '../content/cases'
 import type { ModalityId } from '../content/types'
 
 /** Re-extract the source copy independently of copy.generated.ts, so the
@@ -131,6 +131,50 @@ describe('lesion slice indices carry over from rightBoundingBoxIndex', () => {
   })
 })
 
+/**
+ * Fix round 1, Critical. `rightBoundingBoxIndex` was read in exactly one
+ * place in the legacy app -- frontend/components/model/PanelControls.vue:100,
+ * which is mounted only inside RightPane.vue, whose `start()` loads
+ * `right/mri.nrrd`. It is an MRI slice number and has never meant anything
+ * on any other modality.
+ *
+ * The shipped volumes make that concrete rather than theoretical: read
+ * straight out of the NRRD headers under public/modelView, cancer-dcis's
+ * mammogram is `sizes: 517 1018 39` (39 slices, MaxIndex 38) against a
+ * lesion index of 90, and cancer-ductal's is 18 against 27. Offering "Locate
+ * lesion" there would point at a place in a mammogram volume and label it as
+ * where the lesion is.
+ */
+describe('the lesion slice index only applies to the modality it was measured on', () => {
+  const lesionCases = enabledCases().filter(c => (c.lesionSliceIndex ?? 0) > 0)
+
+  it('covers the five lesion cases and no others', () => {
+    expect(lesionCases.map(c => c.slug)).toEqual([
+      'benign-cyst', 'benign-fibroadenoma', 'cancer-dcis', 'cancer-lobular', 'cancer-ductal',
+    ])
+  })
+
+  it('reports the index for MRI', () => {
+    for (const c of lesionCases) {
+      expect(lesionSliceIndexFor(c, 'mri')).toBe(c.lesionSliceIndex)
+    }
+  })
+
+  it('reports zero for every non-MRI modality, including ones the case actually has', () => {
+    for (const c of lesionCases) {
+      for (const m of c.modalities) {
+        if (m.id === 'mri') continue
+        expect(lesionSliceIndexFor(c, m.id)).toBe(0)
+      }
+    }
+  })
+
+  it('reports zero for a case with no lesion at all', () => {
+    expect(lesionSliceIndexFor(getCase('density-d')!, 'mri')).toBe(0)
+    expect(lesionSliceIndexFor(getCase('the-breast')!, 'mri')).toBe(0)
+  })
+})
+
 describe('every modality carries the right paragraph, byte for byte', () => {
   for (const c of cases) {
     for (const m of c.modalities) {
@@ -184,5 +228,27 @@ describe('lookup helpers', () => {
 
   it('getModality returns undefined for a modality the case lacks', () => {
     expect(getModality('cancer-dcis', 'anatomy')).toBeUndefined()
+  })
+})
+
+/**
+ * Fix round 1. The page key now shares one component instance -- and so one
+ * WebGLRenderer and one scene cache -- across §7.1's morph family, because a
+ * crossfade needs both models alive on one renderer and every morph trigger
+ * is a case navigation. `chooseTransition` decides the same membership from
+ * a `ViewKey`; both read this one predicate so they cannot drift apart and
+ * leave the family sharing a renderer it no longer morphs within (or, worse,
+ * morphing across a boundary the renderer is torn down at).
+ */
+describe('morph family membership', () => {
+  it('is exactly the density series plus the overview case that borrows its model', () => {
+    const family = enabledCases().filter(c => isMorphFamilyGroup(c.group)).map(c => c.slug)
+    expect(family).toEqual(['the-breast', 'density-a', 'density-b', 'density-c', 'density-d'])
+  })
+
+  it('excludes every lesion case', () => {
+    for (const c of enabledCases().filter(c => c.group === 'benign' || c.group === 'cancer')) {
+      expect(isMorphFamilyGroup(c.group)).toBe(false)
+    }
   })
 })

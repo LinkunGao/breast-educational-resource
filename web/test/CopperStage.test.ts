@@ -15,12 +15,17 @@ import CopperStage from '../app/components/stage/CopperStage.client.vue'
  * the real component against a mocked copper3d -- the same approach
  * useCopperStage.test.ts already established.
  *
- * `prefers-reduced-motion: reduce` is forced on throughout. That is not a
- * convenience: it makes every animation resolve in a single synchronous
- * frame, so these tests assert on ORDER and on WHICH transition ran rather
- * than on a hand-driven clock (useCameraChoreography.test.ts owns the
- * per-frame behaviour). It also exercises design doc §7's own reduced-motion
- * rule, under which the cross-dissolve becomes a direct switch.
+ * `prefers-reduced-motion: reduce` is forced on by default here. That is not
+ * a convenience: it makes every animation resolve in a single synchronous
+ * frame, so most of these tests can assert on ORDER and on WHICH transition
+ * ran rather than on a hand-driven clock (useCameraChoreography.test.ts owns
+ * the per-frame behaviour). It also exercises design doc §7's own
+ * reduced-motion rule, under which the cross-dissolve becomes a direct
+ * switch.
+ *
+ * The last test turns it back OFF and drives the clock by hand, because the
+ * crossfade's interrupt path only exists when there are frames to interrupt
+ * (fix round 1: that path was previously asserted nowhere).
  *
  * What is still not covered here and needs a browser: that the crossfade
  * looks like tissue filling in rather than two models blinking, and that the
@@ -45,19 +50,20 @@ function makeVec3(x = 0, y = 0, z = 0) {
   return self
 }
 
-/** A GLB group shaped like the real anatomy model. */
+/** A GLB group shaped like the real anatomy model. One mesh, whose material
+ * is a stable object so the crossfade's opacity can be read back mid-fade. */
 function makeGroup() {
+  const material = { dispose: vi.fn(), transparent: false, opacity: 1, depthWrite: true, color: { set: vi.fn() } }
+  const child = { isMesh: true, name: 'VH_F_gland_L', geometry: { dispose: vi.fn() }, material }
   return {
     name: '',
-    traverse: (fn: (child: Record<string, unknown>) => void) => {
-      fn({
-        isMesh: true,
-        name: 'VH_F_gland_L',
-        geometry: { dispose: vi.fn() },
-        material: { dispose: vi.fn(), transparent: false, opacity: 1, depthWrite: true, color: { set: vi.fn() } },
-      })
-    },
+    material,
+    traverse: (fn: (c: typeof child) => void) => { fn(child) },
   }
+}
+
+function materialOpacityOf(object: { name: string }): number {
+  return (object as unknown as { material: { opacity: number } }).material.opacity
 }
 
 function makeScene() {
@@ -151,6 +157,7 @@ function modality(id: ModalityId, asset: string): Modality {
 
 const DENSITY_A = modality('anatomy', 'density-1/left/density25.glb')
 const DENSITY_B = modality('anatomy', 'density-2/left/density50.glb')
+const DENSITY_C = modality('anatomy', 'density-3/left/density75.glb')
 const MRI = modality('mri', 'density-1/right/mri.nrrd')
 
 function mountStage(props: Record<string, unknown>) {
@@ -304,6 +311,105 @@ describe('CopperStage navigation choreography', () => {
     expect(renderer.createScene).toHaveBeenCalledTimes(2)
     expect(renderer.createScene).toHaveBeenLastCalledWith('density-a:anatomy')
     expect(scenes.get('the-breast:anatomy')!.scene.remove).not.toHaveBeenCalled()
+  })
+
+  /**
+   * Fix round 1, Important. `prepareMorph` awaits a ~1.28MB GLB, and the
+   * user can step to a third density inside that window. Before the fix the
+   * superseded morph came back and called `camera.animate`, whose
+   * unconditional `interrupt()` (useCameraChoreography.ts) cancels whatever
+   * the NEWER navigation started -- its entrance orbit, mid-swing -- and
+   * then ran an 800ms crossfade in a scene that was no longer on screen.
+   */
+  it('does not animate a crossfade that a newer navigation has already superseded', async () => {
+    const animate = vi.fn()
+    vi.stubGlobal('useCameraChoreography', (...args: Parameters<typeof useCameraChoreography>) => {
+      const api = useCameraChoreography(...args)
+      animate.mockImplementation(api.animate)
+      return { ...api, animate }
+    })
+
+    const wrapper = mountStage({})
+    await settle()
+    const first = scenes.get('density-a:anatomy')!
+
+    // Hold density-b's GLB open, as a slow network would.
+    let landB!: () => void
+    first.loadGltf.mockImplementationOnce((_url: string, cb?: (g: unknown) => void) => {
+      const group = makeGroup()
+      first.objects.push(group)
+      landB = () => cb?.(group)
+    })
+    await wrapper.setProps({ slug: 'density-b', modality: DENSITY_B })
+    await settle()
+    animate.mockClear()
+
+    // The user steps on to density-c before density-b's model arrives.
+    await wrapper.setProps({ slug: 'density-c', modality: DENSITY_C })
+    await settle()
+    const animateCallsForNavTwo = animate.mock.calls.length
+
+    landB()
+    await settle()
+
+    // The superseded morph settled its own scene without ever reaching the
+    // driver -- no interrupt, no 800ms crossfade off screen.
+    expect(animate.mock.calls.length).toBe(animateCallsForNavTwo)
+    // ...and it left exactly one model behind, not two stacked.
+    expect(first.objects).toHaveLength(1)
+    expect(first.objects[0]!.name).toBe('anatomy-model')
+  })
+
+  /**
+   * Fix round 1, test hole. Every other test in this file forces reduced
+   * motion, which makes `animate` resolve in one synchronous frame -- good
+   * for asserting ordering, but it means the crossfade's interrupt path was
+   * never driven. That path is a deliberate design decision (a drag during
+   * a morph COMPLETES the swap instead of freezing two half-transparent
+   * models, because unlike a camera pose there is no valid resting state
+   * between the two ends), and it was asserted nowhere.
+   */
+  it('an interrupted crossfade still settles on one fully-opaque model', async () => {
+    // Reduced motion OFF, and a hand-driven clock so the morph can be
+    // caught mid-fade.
+    let queued: FrameRequestCallback | null = null
+    let now = 0
+    vi.stubGlobal('matchMedia', () => ({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { queued = cb; return 1 })
+    vi.stubGlobal('cancelAnimationFrame', () => { queued = null })
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    const advance = (ms: number) => {
+      now += ms
+      const cb = queued
+      queued = null
+      cb?.(now)
+    }
+
+    const wrapper = mountStage({})
+    await settle()
+    const scene = scenes.get('density-a:anatomy')!
+    const outgoing = scene.objects[0]!
+
+    await wrapper.setProps({ slug: 'density-b', modality: DENSITY_B })
+    await settle()
+
+    advance(200) // 200ms into an 800ms crossfade: both models part-faded
+    const opacities = scene.objects.map(o => materialOpacityOf(o))
+    expect(opacities.some(value => value > 0 && value < 1)).toBe(true)
+
+    // Any user input hands control back (§7.4) -- and here that has to mean
+    // "finish the swap now", not "leave it half-done forever".
+    const camera = (wrapper.vm as unknown as { camera: { interrupt: () => void } }).camera
+    camera.interrupt()
+    await settle()
+
+    expect(scene.objects).toHaveLength(1)
+    expect(scene.objects[0]).not.toBe(outgoing)
+    expect(materialOpacityOf(scene.objects[0]!)).toBe(1)
   })
 
   it('publishes slice state and actions to the control bar it cannot render itself', async () => {

@@ -395,6 +395,53 @@ describe('useCameraChoreography', () => {
   })
 
   /**
+   * Fix round 1, Critical. `lesionSliceIndex` is an MRI slice number
+   * (legacy `rightBoundingBoxIndex`, frontend/plugins/data.js:41), but every
+   * lesion case's mammogram volume is far shallower: cancer-dcis is 90 on a
+   * volume whose z dimension is 39 (`sizes: 517 1018 39` in its own NRRD
+   * header), i.e. MaxIndex 38.
+   *
+   * copper3d does no bounds checking of its own:
+   * `VolumeSlice.repaint` -> `Volume.extractPerpendicularPlane`
+   * (bundle.esm.js:60796, :61153) sets the plane mesh's position from the
+   * requested index unconditionally, so an out-of-range index physically
+   * translates the slice plane outside the volume and samples past the end
+   * of `volume.data`. The gate that stops the button appearing on the
+   * mammogram at all is a separate fix (content/cases.ts); this clamp is a
+   * property of the driver, so that NO caller can drive a slice plane out
+   * of its own volume.
+   */
+  it('locateLesion cannot drive the slice plane past the end of its own volume', async () => {
+    const scene = shallowRef(makeFakeScene([0, 0, 10]))
+    const stage = makeFakeStage()
+    const { camera } = mountChoreography(stage, scene)
+    const raw = { index: 0, MaxIndex: 38, volume: { spacing: [1, 1, 2] }, repaint: vi.fn() }
+    const seen: number[] = []
+
+    const locate = camera.locateLesion(raw, 90, { durationMs: 1000, onIndex: n => seen.push(n) })
+    clock.advance(500)
+    clock.advance(500)
+    await locate
+
+    expect(raw.index).toBeCloseTo(38 * 2, 5)
+    // Not just the endpoint: no intermediate frame may overshoot either.
+    expect(Math.max(...seen)).toBeLessThanOrEqual(38)
+  })
+
+  it('locateLesion cannot drive the slice plane below zero', async () => {
+    const scene = shallowRef(makeFakeScene([0, 0, 10]))
+    const stage = makeFakeStage()
+    const { camera } = mountChoreography(stage, scene)
+    const raw = { index: 20, MaxIndex: 38, volume: { spacing: [1, 1, 1] }, repaint: vi.fn() }
+
+    const locate = camera.locateLesion(raw, -5, { durationMs: 1000 })
+    clock.advance(1000)
+    await locate
+
+    expect(raw.index).toBeCloseTo(0, 5)
+  })
+
+  /**
    * Task 10 controller correction C9 -- explicitly called out as a
    * collision: this composable has ONE `cancelCurrent` slot, so a camera
    * dolly started as its own `animate()` call alongside the slice glide

@@ -30,9 +30,16 @@ const GLB_LOAD_TIMEOUT_MS = 30_000
 const NRRD_STALL_TIMEOUT_MS = 15_000
 
 export interface SliceState {
-  /** Current slice number (already converted from copper3d's world
-   * coordinate), not a world coordinate itself. */
-  index: number
+  /**
+   * There is deliberately NO `index` field here (fix round 1, Important).
+   * It existed, was computed once at load time, and was never written
+   * again -- scrubbing and `locateLesion` both move `raw.index` instead --
+   * so the moment a cached scene was revisited it was a stale copy of the
+   * truth that `useSliceControl` then seeded its readout and its follower
+   * from. `raw.index` (a world coordinate; divide by `volume.spacing[2]`)
+   * is the only place the current slice lives. Do not reintroduce a second
+   * copy: the bug is unrepresentable while there is only one.
+   */
   max: number
   /** copper3d's own slice object, for useSliceControl (Task 10) to drive
    * directly. */
@@ -114,6 +121,49 @@ export function useModalityScene(stage: StageApi) {
    */
   const anatomyAssetByScene = new Map<CopperScene, string>()
 
+  /**
+   * The `slug:modality` name each scene is registered under in copper3d's
+   * own `sceneMap`. The reverse of that map, which copper3d does not
+   * provide, and which is needed because §7.1's morph makes a scene's name
+   * stop matching what it holds -- see `adoptSceneName`.
+   */
+  const nameOfScene = new Map<CopperScene, string>()
+
+  /**
+   * Scenes whose incoming morph model is still downloading. Two morphs on
+   * one scene would both claim the same outgoing model as theirs: the
+   * second would rename or remove a group the first is still fading.
+   * Reachable by stepping density-b then density-c before the first
+   * ~1.28MB GLB lands.
+   */
+  const morphingScenes = new Set<CopperScene>()
+
+  /**
+   * Scene names in least-recently-activated order. Mirrors the subset of
+   * copper3d's `sceneMap` this composable created, so the LRU below has an
+   * order to evict in -- `sceneMap` is a plain object with no ordering
+   * guarantee worth relying on.
+   */
+  const recentScenes: string[] = []
+
+  /**
+   * How many built scenes may stay resident.
+   *
+   * Before fix round 1 this needed no cap: `app.vue` keyed the case page by
+   * slug, so leaving a case tore the whole renderer down, and a single case
+   * offers at most three modalities. §7.1's crossfade needs the outgoing
+   * model, its scene and its renderer to survive a CASE navigation, so the
+   * five morph-family cases now share one page instance (app/utils/pageKey.ts)
+   * -- and with it this cache. Three keeps residency at exactly the figure
+   * the paragraph in `load()` below already reasoned about, which matters
+   * because the family's imaging volumes decode to considerably more than
+   * the 167MB they occupy compressed on disk.
+   *
+   * Anatomy costs nothing extra either way: a morph loads its model into
+   * the scene already on screen and creates none.
+   */
+  const MAX_CACHED_SCENES = 3
+
   /** Bumped on every `load()` call. Guards against a stale async result
    * (a slow network response, or a timeout/stall) landing after the user
    * has already switched to a different modality and overwriting
@@ -156,6 +206,145 @@ export function useModalityScene(stage: StageApi) {
     return `${slug}:${modality.id}`
   }
 
+  /**
+   * Removes `name` from copper3d's own scene map. The only way out of that
+   * map: copper3d has no eviction method at all (see copper-types.ts's
+   * `sceneMap`), and `delete` on a missing property is a silent no-op, so a
+   * copper3d upgrade that restructured `sceneMap` into, say, a real Map
+   * would stop evicting with no crash and no type error -- quietly
+   * unbounding both the failed-load cache poisoning this originally fixed
+   * and, since fix round 1, this composable's residency cap. Confirm
+   * through the library's OWN accessor, which survives that kind of change,
+   * and fail loudly if it did not take.
+   */
+  function evictFromSceneMap(renderer: CopperRenderer, name: string) {
+    delete renderer.sceneMap[name]
+    if (renderer.getSceneByName(name)) {
+      throw new Error(
+        `copper3d scene "${name}" survived eviction: its sceneMap is no `
+        + `longer a plain object keyed by scene name. Failed loads will `
+        + `poison the cache and cached scenes will accumulate without bound `
+        + `until this is updated to match the new shape.`,
+      )
+    }
+  }
+
+  /**
+   * Drops a cached scene entirely: out of copper3d's map, out of this
+   * composable's bookkeeping, and out of the GPU.
+   *
+   * On what is NOT done here: `scene.controls.dispose()` looks like the
+   * obvious way to break the last reference (three's `OrbitControls`
+   * listeners live on the shared canvas and reach the scene through the
+   * `change` handler copper3d registers), but `dispose()` calls
+   * `disconnect()`, which ends with `this.domElement.style.touchAction = ''`
+   * (dist/bundle.esm.js, OrbitControls.disconnect). Every scene shares ONE
+   * canvas, and only `connect()` ever sets `touchAction` back to `'none'`,
+   * so disposing an evicted scene's controls would re-enable browser touch
+   * scrolling over the stage for whichever scene is actually on screen --
+   * one eviction would break touch orbiting for the rest of the session.
+   * Removing just the `change` listener breaks the same reference chain
+   * (`requestRenderIfNotRequested` is a stable property on the scene, the
+   * exact reference copper3d registered) and touches nothing shared.
+   */
+  function evictScene(renderer: CopperRenderer, name: string) {
+    const victim = renderer.getSceneByName(name)
+    evictFromSceneMap(renderer, name)
+    sliceStateByScene.delete(name)
+    viewpointByScene.delete(name)
+    const position = recentScenes.indexOf(name)
+    if (position !== -1) recentScenes.splice(position, 1)
+    if (!victim) return
+
+    anatomyAssetByScene.delete(victim)
+    nameOfScene.delete(victim)
+    victim.controls.enabled = false
+    victim.controls.removeEventListener?.('change', victim.requestRenderIfNotRequested)
+    // `scene.remove` only unlinks; three keeps the geometry's buffers and
+    // the material's textures (an NRRD slice plane's texture is the decoded
+    // volume slice) alive on the GPU until they are disposed explicitly.
+    // These two names are every object this app ever adds to a scene --
+    // `loadAnatomy`'s group and `loadImaging`'s z plane.
+    for (const objectName of ['anatomy-model', 'anatomy-model-outgoing', 'z']) {
+      const object = victim.scene.getObjectByName(objectName)
+      if (!object) continue
+      victim.scene.remove(object)
+      disposeSceneObject(object)
+    }
+  }
+
+  /**
+   * Caps residency at `MAX_CACHED_SCENES`, evicting least-recently-activated
+   * first and never the scene on screen.
+   */
+  function evictOverflow(renderer: CopperRenderer, currentName: string) {
+    while (recentScenes.length > MAX_CACHED_SCENES) {
+      const victim = recentScenes.find(name => name !== currentName)
+      // Only the current scene is left. Nothing evictable, and evicting it
+      // would blank the stage.
+      if (victim === undefined) return
+      evictScene(renderer, victim)
+    }
+  }
+
+  /** Records `name` as the most recently activated scene and applies the
+   * cap. Called only once a scene genuinely holds content -- a failed load
+   * is evicted by `load()`'s own catch instead. */
+  function touchScene(renderer: CopperRenderer, scene: CopperScene, name: string) {
+    nameOfScene.set(scene, name)
+    const position = recentScenes.indexOf(name)
+    if (position !== -1) recentScenes.splice(position, 1)
+    recentScenes.push(name)
+    evictOverflow(renderer, name)
+  }
+
+  /**
+   * Re-registers `target` under `nextName`.
+   *
+   * §7.1's morph swaps the model inside an existing scene and deliberately
+   * suppresses `load()`, so after density-a -> density-b the live scene is
+   * still registered as `density-a:anatomy`. Left alone, stepping to that
+   * case's MRI and back would miss the cache, build a second scene, and
+   * re-download a GLB already in memory -- while the original sat in
+   * `sceneMap` under a name that no longer described it, for the life of
+   * the renderer. The scene's name has to follow what it displays, exactly
+   * as `anatomyAssetByScene` already makes its asset do.
+   */
+  function adoptSceneName(renderer: CopperRenderer, target: CopperScene, nextName: string) {
+    const currentName = nameOfScene.get(target)
+    if (currentName === nextName) return
+
+    // A scene already registered under the destination name is stale by
+    // definition: the one adopting the name is the one on screen. Two
+    // scenes cannot share a key, and keeping the other would leak it.
+    const occupant = renderer.getSceneByName(nextName)
+    if (occupant && occupant !== target) evictScene(renderer, nextName)
+
+    if (currentName !== undefined) {
+      evictFromSceneMap(renderer, currentName)
+      const slice = sliceStateByScene.get(currentName)
+      if (slice !== undefined) {
+        sliceStateByScene.set(nextName, slice)
+        sliceStateByScene.delete(currentName)
+      }
+      const preset = viewpointByScene.get(currentName)
+      if (preset !== undefined) {
+        viewpointByScene.set(nextName, preset)
+        viewpointByScene.delete(currentName)
+      }
+      const position = recentScenes.indexOf(currentName)
+      if (position !== -1) recentScenes.splice(position, 1)
+    }
+
+    renderer.sceneMap[nextName] = target
+    // copper3d keeps its own copy on the instance
+    // (dist/bundle.esm.js:84350); leaving it stale would make any future
+    // reader of `scene.sceneName` disagree with the map it is keyed in.
+    target.sceneName = nextName
+    nameOfScene.set(target, nextName)
+    recentScenes.push(nextName)
+  }
+
   async function load(slug: string, modality: Modality) {
     const renderer = stage.renderer.value
     const Copper = stage.Copper.value
@@ -166,19 +355,22 @@ export function useModalityScene(stage: StageApi) {
     loadError.value = undefined
 
     // Already built: switch to it rather than re-downloading a 10-50MB
-    // volume. Scenes only accumulate within one case visit (at most 3 --
-    // no case in the catalogue combines all four modalities, see
-    // content/cases.ts) before CopperStage's host component (keyed by
-    // case slug, app.vue's pageKey) unmounts and useCopperStage's dispose()
-    // tears the whole renderer down, freeing the actual GPU context
-    // (`renderer.dispose()` + `forceContextLoss()` -- not a GPU leak). What
-    // it does not free until then is decoded volume memory: the worst case
-    // in the catalogue (cancer-lobular's mammogram + MRI) holds ~75MB of
-    // NRRD files resident at once on disk, and NRRD volumes decode to raw
-    // typed arrays that run larger still in memory than that compressed
+    // volume. What the cache does not free while a scene is resident is
+    // decoded volume memory: the worst pair in the catalogue
+    // (cancer-lobular's mammogram + MRI) is ~75MB of NRRD on disk, and NRRD
+    // volumes decode to raw typed arrays larger still than that compressed
     // size. The bandwidth this saves on the modality stepper's
-    // back-and-forth navigation outweighs that for a single case visit,
-    // but it is a real tradeoff, not a free one.
+    // back-and-forth navigation outweighs that, but it is a real tradeoff,
+    // not a free one -- which is why `MAX_CACHED_SCENES` caps it.
+    //
+    // Before fix round 1 the cap was structural: `app.vue` keyed the case
+    // page by slug, so leaving a case unmounted CopperStage and
+    // `useCopperStage`'s dispose() tore the whole renderer down, GPU
+    // context included, and no case offers more than three modalities. §7.1
+    // needs the renderer to survive a case navigation within the morph
+    // family (app/utils/pageKey.ts), so that structural bound is gone for
+    // those five cases and `evictOverflow` replaces it with the same
+    // number.
     const existing = renderer.getSceneByName(name)
     if (existing) {
       activateScene(renderer, existing)
@@ -186,6 +378,7 @@ export function useModalityScene(stage: StageApi) {
       viewpoint.value = viewpointByScene.get(name)
       loading.value = false
       progress.value = 1
+      touchScene(renderer, existing, name)
       renderer.render()
       return
     }
@@ -238,6 +431,7 @@ export function useModalityScene(stage: StageApi) {
       // state, no camera preset, `getSceneByName` short-circuiting on it
       // forever.
       sliceStateByScene.set(name, slice)
+      nameOfScene.set(next, name)
       // Named `preset`, not `viewpoint`, to avoid shadowing the outer
       // `viewpoint` ref this composable exposes.
       const preset = await fetchViewPoint(url(modality.viewPreset))
@@ -252,6 +446,11 @@ export function useModalityScene(stage: StageApi) {
       next.onWindowResize()
       loading.value = false
       progress.value = 1
+      // Applied only once the scene genuinely holds content, and only for
+      // the load still on screen -- a failed load is evicted by the catch
+      // below instead, and a superseded one must not push the scene the
+      // user is actually looking at further down the LRU.
+      touchScene(renderer, next, name)
       renderer.render()
     }
     catch (err) {
@@ -264,22 +463,10 @@ export function useModalityScene(stage: StageApi) {
       // entry must not survive under its own name, or a later visit to
       // that modality finds it via getSceneByName regardless of which
       // load happened to be "current" when it failed.
-      if (next) {
-        delete renderer.sceneMap[name]
-        // `delete` on a property that no longer exists is a silent no-op,
-        // so a copper3d upgrade that restructures sceneMap (say, into a
-        // Map) would stop evicting without a crash or a type error --
-        // quietly restoring the poisoned-cache bug this whole branch
-        // exists to fix. Confirm through the library's OWN accessor, which
-        // survives that kind of change, and fail loudly if it didn't take.
-        if (renderer.getSceneByName(name)) {
-          throw new Error(
-            `copper3d scene "${name}" survived eviction: its sceneMap is no `
-            + `longer a plain object keyed by scene name. Failed loads will `
-            + `poison the cache until this is updated to match the new shape.`,
-          )
-        }
-      }
+      // Shared with fix round 1's residency cap, so there is exactly one
+      // way out of copper3d's scene map and exactly one place that checks
+      // the eviction actually took.
+      if (next) evictFromSceneMap(renderer, name)
       if (token !== loadToken) return
       loadError.value = err instanceof Error ? err : new Error(String(err))
       loading.value = false
@@ -334,9 +521,19 @@ export function useModalityScene(stage: StageApi) {
    * (dist/bundle.esm.js:84305). Without a previous `loadView` this method
    * would silently move the camera, which is exactly what §7.1 forbids.
    */
-  async function prepareMorph(modality: Modality): Promise<AnatomyMorph | null> {
+  async function prepareMorph(slug: string, modality: Modality): Promise<AnatomyMorph | null> {
+    const renderer = stage.renderer.value
     const target = scene.value
-    if (disposed || !target || modality.id !== 'anatomy') return null
+    if (disposed || !renderer || !target || modality.id !== 'anatomy') return null
+
+    // Fix round 1: a second morph on a scene whose incoming model is still
+    // downloading would claim the same outgoing model as its own -- both
+    // would rename it, and whichever committed second would remove a group
+    // the other was still fading. Reachable by stepping density-b then
+    // density-c before the first ~1.28MB GLB lands. Falling through to an
+    // ordinary load is the right answer for the second navigation anyway:
+    // it is the one the user is waiting on.
+    if (morphingScenes.has(target)) return null
 
     const previous = target.scene.getObjectByName('anatomy-model')
     if (!previous) return null
@@ -344,12 +541,27 @@ export function useModalityScene(stage: StageApi) {
     const assetUrl = url(modality.asset)
     if (anatomyAssetByScene.get(target) === assetUrl) return null
 
-    // Renamed BEFORE the incoming model takes the name, so `getObjectByName`
+    morphingScenes.add(target)
+    let incoming: SceneObject
+    try {
+      incoming = await loadGlb(target, assetUrl)
+    }
+    finally {
+      morphingScenes.delete(target)
+    }
+    // Fix round 1: nothing above this line may mutate the scene. An earlier
+    // version renamed `previous` BEFORE this await, so a GLB that never
+    // arrived (the 30s timeout -- copper3d has no error callback to fail
+    // faster on) left the scene with nothing named `anatomy-model` at all,
+    // and every later morph from that scene returned null: §7.1 silently
+    // and permanently degraded to a hard cut for the rest of the session.
+    if (disposed) return null
+
+    // Renamed as the incoming model takes the name, so `getObjectByName`
     // can never return the outgoing model to a morph that starts while this
     // one is still fading. Both objects are in the scene at once for the
     // whole crossfade; only one of them may answer to 'anatomy-model'.
     previous.name = 'anatomy-model-outgoing'
-    const incoming = await loadGlb(target, assetUrl)
     incoming.name = 'anatomy-model'
 
     const outgoingFade = collectFadeTargets(previous)
@@ -370,6 +582,9 @@ export function useModalityScene(stage: StageApi) {
         target.scene.remove(previous)
         disposeSceneObject(previous)
         anatomyAssetByScene.set(target, assetUrl)
+        // The scene now holds the incoming case's model, so it has to
+        // answer to the incoming case's name -- see `adoptSceneName`.
+        adoptSceneName(renderer, target, sceneName(slug, modality))
       },
     }
   }
@@ -461,12 +676,7 @@ export function useModalityScene(stage: StageApi) {
             }
             else {
               const z = slices.z
-              resolve({
-                index: Math.round(z.index / z.volume.spacing[2]),
-                max: z.MaxIndex,
-                raw: z,
-                mesh: meshes.z,
-              })
+              resolve({ max: z.MaxIndex, raw: z, mesh: meshes.z })
             }
           },
           { openGui: false },

@@ -107,13 +107,31 @@ let navToken = 0
  * the one already displayed, as for `the-breast` <-> `density-a`, which
  * share `density25.glb`.
  */
-async function runDensityMorph(): Promise<boolean> {
-  const morph = await modalityScene.prepareMorph(props.modality).catch(() => {
+async function runDensityMorph(token: number): Promise<boolean> {
+  const morph = await modalityScene.prepareMorph(props.slug, props.modality).catch(() => {
     // The incoming GLB never arrived. Fall through to the ordinary load,
     // which reports the failure through `loadError` like any other.
     return null
   })
   if (!morph) return false
+
+  // Fix round 1: that await is a ~1.28MB download, and the user can step to
+  // a third density inside it. Without this check the superseded morph
+  // would come back and call `camera.animate`, whose unconditional
+  // `interrupt()` kills whatever the NEWER navigation started (its entrance
+  // orbit, mid-swing) and then spends 800ms crossfading a scene nobody is
+  // looking at. Task 8 and Task 9 both already guard their own awaits this
+  // way; this was the one path that did not.
+  //
+  // Committing rather than bailing outright: the incoming model is already
+  // in that scene (copper3d's `loadGltf` adds it itself), so abandoning it
+  // here would leave two models stacked, one of them invisible, forever.
+  // `commit` settles the swap without animating and without touching the
+  // driver the newer navigation now owns.
+  if (token !== navToken) {
+    morph.commit()
+    return true
+  }
 
   try {
     await camera.animate(MORPH_MS, t => morph.apply(t))
@@ -150,7 +168,8 @@ async function enterView() {
   const transition = previousView ? chooseTransition(previousView, next) : 'cut'
   previousView = next
 
-  if (transition === 'density-morph' && await runDensityMorph()) return
+  if (transition === 'density-morph' && await runDensityMorph(token)) return
+  if (token !== navToken) return
 
   // Captured BEFORE the load: a flight starts from the outgoing scene's
   // orientation, and `load()` switches the renderer to the incoming scene's

@@ -1,5 +1,5 @@
 import { anatomyText, mammogramText, mriText } from './copy.generated'
-import type { BiRads, Case, Modality, ModalityId } from './types'
+import type { BiRads, Case, CaseGroup, Modality, ModalityId } from './types'
 
 /** Build a modality entry, always with an empty keyFacts (global constraint). */
 function modality(
@@ -122,4 +122,48 @@ export function getCase(slug: string): Case | undefined {
 
 export function getModality(slug: string, id: ModalityId): Modality | undefined {
   return getCase(slug)?.modalities.find(m => m.id === id)
+}
+
+/**
+ * The modality `lesionSliceIndex` was measured on. See that field's doc:
+ * it is the legacy `rightBoundingBoxIndex`, which only ever reached the
+ * right-hand (MRI) panel.
+ */
+const LESION_MODALITY: ModalityId = 'mri'
+
+/**
+ * How many slices into `modality`'s volume this case's lesion sits, or 0 if
+ * that question has no answer for this case/modality pair.
+ *
+ * Guards design doc §7.2's "Locate lesion" affordance. The number is an MRI
+ * slice index and the volumes are not interchangeable: cancer-dcis's lesion
+ * is at slice 90, but its mammogram volume is 39 slices deep (`sizes: 517
+ * 1018 39` in the shipped NRRD header) and cancer-ductal's is 18 deep
+ * against an index of 27. Offering to "locate the lesion" there would move
+ * the slice plane to a position in a mammogram volume and label it as where
+ * the lesion is -- which, in a resource that teaches people to read these
+ * images, is worse than not offering it at all.
+ */
+export function lesionSliceIndexFor(c: Case, modality: ModalityId): number {
+  return modality === LESION_MODALITY ? (c.lesionSliceIndex ?? 0) : 0
+}
+
+/**
+ * Design doc §7.1's morph family: the four density levels plus `the-breast`,
+ * which borrows density-1's GLB. Membership has two consequences that must
+ * agree, so both read this one predicate:
+ *
+ *  · `chooseTransition` (cameraTransitions.ts) only returns 'density-morph'
+ *    within the family, and
+ *  · `app.vue`'s page key gives the whole family ONE component instance, so
+ *    the renderer and the outgoing model survive the case navigation a
+ *    crossfade needs.
+ *
+ * If those two ever disagreed the app would either share a renderer across
+ * cases it never morphs between (paying the residency for nothing) or try to
+ * morph across a boundary the renderer is torn down at (doing nothing at
+ * all, the exact failure mode fix round 1 exists to close).
+ */
+export function isMorphFamilyGroup(group: CaseGroup): boolean {
+  return group === 'density' || group === 'overview'
 }
