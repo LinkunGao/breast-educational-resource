@@ -138,8 +138,16 @@ export function useModalityScene(stage: StageApi) {
     loading.value = true
     progress.value = 0
 
+    // Hoisted above the try block so the catch below can tell "createScene
+    // itself refused" (nothing to undo) apart from "a scene was created
+    // but its content failed to load" (review round 2, fix #1 -- that
+    // scene is now registered in copper3d's own sceneMap and must be
+    // evicted, or a later visit finds it and treats it as a silently
+    // broken success).
+    let next: CopperScene | undefined
+
     try {
-      const next = renderer.createScene(name)
+      next = renderer.createScene(name)
       if (!next) throw new Error(`copper3d refused to create scene "${name}"`)
       // Review fix #1 (second half): remove the leaked resize listener
       // immediately at creation, not deferred to this scope's disposal.
@@ -162,14 +170,14 @@ export function useModalityScene(stage: StageApi) {
 
       const slice = modality.id === 'anatomy'
         ? await loadAnatomy(next, url(modality.asset))
-        : await loadImaging(next, Copper, modality, url(modality.asset))
+        : await loadImaging(next, Copper, modality, url(modality.asset), token)
 
       if (disposed) return // torn down mid-load; nothing left to update
 
-      // Content was already added into `next` synchronously inside the
-      // load callback above, and is now sitting in copper3d's own scene
-      // map under `name` for good (there is no API to evict it). Finish
-      // its bookkeeping unconditionally, even if a newer load has since
+      // This load succeeded (a failed one is handled in the catch below,
+      // via eviction instead). Content was already added into `next`
+      // synchronously inside the load callback above, so finish its
+      // bookkeeping unconditionally, even if a newer load has since
       // superseded this one (review fix #3) -- otherwise a later switch
       // back to this modality finds it cached but half-built: no slice
       // state, no camera preset, `getSceneByName` short-circuiting on it
@@ -188,7 +196,17 @@ export function useModalityScene(stage: StageApi) {
       renderer.render()
     }
     catch (err) {
-      if (disposed || token !== loadToken) return
+      if (disposed) return
+      // Review round 2, fix #1: `next` is only set once `createScene`
+      // actually built (and registered) a scene for `name` this attempt --
+      // evicting here undoes exactly that registration, never an
+      // unrelated scene already cached from an earlier, successful load.
+      // Unconditional on `token`: even a superseded load's own poisoned
+      // entry must not survive under its own name, or a later visit to
+      // that modality finds it via getSceneByName regardless of which
+      // load happened to be "current" when it failed.
+      if (next) delete renderer.sceneMap[name]
+      if (token !== loadToken) return
       loadError.value = err instanceof Error ? err : new Error(String(err))
       loading.value = false
     }
@@ -214,6 +232,7 @@ export function useModalityScene(stage: StageApi) {
     Copper: CopperModule,
     modality: Modality,
     assetUrl: string,
+    token: number,
   ): Promise<SliceState | null> {
     return new Promise((resolve, reject) => {
       const bar = Copper.loading()
@@ -236,10 +255,33 @@ export function useModalityScene(stage: StageApi) {
       // `copperNrrdLoader`'s xhr progress handler writes into it (see this
       // file's header comment) -- the only liveness/progress signal
       // available, since there is no onProgress/onError callback exposed
-      // to us directly.
+      // to us directly. Re-arms the stall timer unconditionally (even for
+      // a superseded load -- it still needs to eventually settle so
+      // review fix #1's eviction can run), but only writes the shared
+      // `progress` ref when this is still the current load (review round
+      // 2, fix #2): without that guard, a superseded load's own late
+      // progress events kept landing in the ref a newer, on-screen load
+      // already owns, which would jitter design doc §13.1's progress ring
+      // between two unrelated downloads.
       const observer = new MutationObserver(() => {
-        const match = /(\d+)\s*%/.exec(bar.progress.textContent ?? '')
-        if (match) progress.value = Number(match[1]) / 100
+        if (token === loadToken) {
+          const text = bar.progress.textContent ?? ''
+          if (/Infinity/.test(text)) {
+            // The server omitted Content-Length, so xhr.total is 0 and
+            // copper3d's own `Math.ceil((xhr.loaded / xhr.total) * 100)`
+            // (Loader/copperNrrdLoader.js:152) divides by zero -> the
+            // literal string "Infinity". Bytes are still arriving, there
+            // is just no way to express a fraction -- NaN signals
+            // "indeterminate" to whatever renders this, rather than
+            // silently freezing at whatever `progress` last held (review
+            // round 2, fix #3).
+            progress.value = Number.NaN
+          }
+          else {
+            const match = /(\d+)\s*%/.exec(text)
+            if (match) progress.value = Number(match[1]) / 100
+          }
+        }
         armStallTimer()
       })
       observer.observe(bar.progress, { childList: true, characterData: true, subtree: true })
@@ -289,15 +331,14 @@ export function useModalityScene(stage: StageApi) {
     })
   }
 
-  /** `loadViewUrl` (kept on CopperScene for whatever else needs it) is a
-   * raw XHR with no completion signal at all (see CopperScene.loadView's
-   * doc) -- fetching the same JSON directly is the only way to know when
-   * the preset has actually landed, so a render can be requested after. A
-   * missing/malformed preset propagates to `load()`'s own catch (surfaced
-   * as the modality's load failure) rather than silently leaving the
-   * default camera in place -- content/cases.ts pairs every modality with
-   * a real viewPreset path, so a 404 here means the asset catalogue
-   * itself is wrong and should say so, not hide it. */
+  /** `loadViewUrl` is a raw XHR with no completion signal at all (see
+   * CopperScene.loadView's doc) -- fetching the same JSON directly is the
+   * only way to know when the preset has actually landed, so a render can
+   * be requested after. A missing/malformed preset propagates to
+   * `load()`'s own catch (surfaced as the modality's load failure) rather
+   * than silently leaving the default camera in place -- content/cases.ts
+   * pairs every modality with a real viewPreset path, so a 404 here means
+   * the asset catalogue itself is wrong and should say so, not hide it. */
   async function fetchViewPoint(viewPresetUrl: string): Promise<CopperViewPoint> {
     const response = await fetch(viewPresetUrl)
     if (!response.ok) throw new Error(`Failed to fetch view preset (${response.status}): ${viewPresetUrl}`)

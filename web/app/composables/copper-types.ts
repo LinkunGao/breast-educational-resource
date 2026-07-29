@@ -195,9 +195,8 @@ export interface CopperScene extends CopperBaseScene {
    * only `loadPureGLB`'s post-load PBR material tweaks are unavailable here.
    */
   loadGltf: (url: string, callback?: (content: SceneObject) => void) => void
-  loadViewUrl: (url: string) => void
   /**
-   * Review fix #5: `loadViewUrl` (Scene/baseScene.js:77-87) is a raw
+   * Not `loadViewUrl`. That method (Scene/baseScene.js:77-87) is a raw
    * `XMLHttpRequest` with no callback, event, or promise of any kind --
    * there is no way to know from outside when (or whether) it actually
    * lands. Under on-demand rendering, the `render()` call any caller makes
@@ -209,7 +208,11 @@ export interface CopperScene extends CopperBaseScene {
    * `CopperViewPoint` above) is the synchronous part `loadViewUrl` calls
    * internally after its XHR resolves; useModalityScene fetches the same
    * JSON itself and calls this directly so it has an awaitable completion
-   * signal to render after.
+   * signal to render after. `loadViewUrl` itself is deliberately not in
+   * this interface: nothing in this codebase calls it, and per this
+   * project's standing rule against keeping unused surface "for whatever
+   * else needs it," it was removed rather than kept on a vague promise --
+   * re-add it (it does exist, and is harmless) if a real caller shows up.
    */
   loadView: (data: CopperViewPoint) => void
   /**
@@ -238,9 +241,9 @@ export interface CopperScene extends CopperBaseScene {
   // `baseScene`/`copperSceneOnDemond`'s prototype chain (confirmed absent
   // in Scene/baseScene.d.ts and Scene/commonSceneMethod.d.ts). Task 9/10's
   // "reset view" affordance and camera choreography need to build that
-  // behaviour from what baseScene *does* provide instead: `loadViewUrl`
-  // above, plus `loadView`/`getDefaultViewPoint`/`setViewPoint` if this
-  // interface grows to need them.
+  // behaviour from what baseScene *does* provide instead: `loadView`
+  // above, plus `getDefaultViewPoint`/`setViewPoint` if this interface
+  // grows to need them.
 }
 
 export interface CopperRenderer {
@@ -253,7 +256,28 @@ export interface CopperRenderer {
    * not that broader union, is what's actually returned here.
    */
   getSceneByName: (name: string) => CopperScene | undefined
+  /**
+   * `createScene(name)` (Renderer/copperRendererOnDemond.js:25-33) checks
+   * `sceneMap[name]` and, if unset, synchronously constructs the new scene
+   * and stores it there *before* returning -- registration happens whether
+   * or not any content ever successfully loads into that scene afterward.
+   */
   createScene: (name: string) => CopperScene | undefined
+  /**
+   * `copperRendererOnDemond.sceneMap` (Renderer/copperRendererOnDemond.js:
+   * 2-3,15-16,25-33) is declared `private` in the `.d.ts`
+   * (Renderer/copperRendererOnDemond.d.ts:5), but that's TypeScript-only:
+   * at runtime it's a plain `{}` object assigned with `this.sceneMap = {}`
+   * and read/written with ordinary bracket access, not a real ECMAScript
+   * private field. There is no public eviction method anywhere in
+   * copper3d -- once `createScene` registers a name, nothing removes it
+   * again except deleting this property directly. Review round 2, fix #1:
+   * useModalityScene needs exactly this to stop a scene whose *content*
+   * failed to load (stall, timeout, bad view-preset) from sitting in the
+   * cache forever, indistinguishable from a real successful load on the
+   * next `getSceneByName` call.
+   */
+  sceneMap: Record<string, CopperScene>
   setCurrentScene: (scene: CopperScene) => void
   /**
    * Inherited from `baseRenderer` (Renderer/baseRenderer.d.ts:24). Typed

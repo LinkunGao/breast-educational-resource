@@ -40,18 +40,30 @@ function makeFakeScene(): CopperScene {
     addObject: vi.fn(),
     loadNrrd: vi.fn(),
     loadGltf: vi.fn(),
-    loadViewUrl: vi.fn(),
     loadView: vi.fn(),
     onWindowResize: vi.fn(),
     confirmResize: vi.fn(),
   }
 }
 
-/** A single fixed scene, for tests that only ever touch one. */
+/** A single fixed scene, for tests that only ever touch one. `sceneMap` is
+ * a real object `createScene`'s default mock populates, mirroring
+ * copper3d's own synchronous "register before content loads" behavior
+ * (Renderer/copperRendererOnDemond.js:25-33) closely enough for the
+ * eviction-on-failure tests to observe it directly. Tests that override a
+ * specific `createScene` call via `mockReturnValueOnce` bypass this
+ * default (Vitest doesn't run the base implementation for a `*Once`
+ * override) -- fine, since only the eviction tests below inspect
+ * `sceneMap` at all. */
 function makeFakeRenderer(scene: CopperScene): CopperRenderer {
+  const sceneMap: Record<string, CopperScene> = {}
   return {
+    sceneMap,
     getSceneByName: vi.fn(() => undefined),
-    createScene: vi.fn(() => scene),
+    createScene: vi.fn((name: string) => {
+      sceneMap[name] = scene
+      return scene
+    }),
     setCurrentScene: vi.fn(),
     getCurrentScene: vi.fn(() => ({ onWindowResize: vi.fn() })),
     render: vi.fn(),
@@ -293,6 +305,52 @@ describe('useModalityScene', () => {
     expect(modalityScene.loading.value).toBe(false)
   })
 
+  // Review round 2, fix #1: createScene() registers the scene in
+  // copper3d's own sceneMap synchronously, before any content loads
+  // (Renderer/copperRendererOnDemond.js:25-33). A scene whose content then
+  // fails used to stay registered forever -- fix #3 (the previous round)
+  // only handled a *superseded* load, not a genuinely *failed* one, so a
+  // failed load followed by a return visit used to hit the poisoned entry,
+  // silently clear loadError/loading, and land on a permanently blank,
+  // unframed stage with no way to retry.
+  it('evicts a scene from copper3d\'s own map when its content fails to load, so a retry actually rebuilds it', async () => {
+    const scene = makeFakeScene()
+    const renderer = makeFakeRenderer(scene)
+    const stage = makeFakeStage(renderer)
+    const modalityScene = useModalityScene(stage)
+    const modality = makeModality()
+    const name = 'the-breast:mammogram'
+
+    const firstLoad = modalityScene.load('the-breast', modality)
+    // createScene's default mock registers into sceneMap synchronously,
+    // exactly like the real renderer.
+    expect(renderer.sceneMap[name]).toBe(scene)
+
+    await vi.advanceTimersByTimeAsync(15_000) // stalls out
+    await firstLoad
+    expect(modalityScene.loadError.value).toBeInstanceOf(Error)
+
+    // The poisoned entry must be gone -- otherwise a retry's own
+    // getSceneByName(name) would find it and treat it as a valid,
+    // silently-broken cache hit instead of reloading.
+    expect(renderer.sceneMap[name]).toBeUndefined()
+
+    // Retry: a real copper3d renderer would also report nothing for this
+    // name now that the entry is deleted.
+    const retryScene = makeFakeScene()
+    vi.mocked(renderer.createScene).mockReturnValueOnce(retryScene)
+    const retry = modalityScene.load('the-breast', modality)
+    resolveNrrd(retryScene)
+    await retry
+
+    expect(modalityScene.loadError.value).toBeUndefined()
+    expect(modalityScene.scene.value).toBe(retryScene)
+    // Not just "a load was attempted" -- the bookkeeping a return visit
+    // depends on (Task 10's slice slider included) must actually be there.
+    expect(modalityScene.sliceState.value).not.toBeNull()
+    expect(retryScene.loadView).toHaveBeenCalledWith(DEFAULT_VIEWPOINT)
+  })
+
   it('parses the real load percentage out of copper3d\'s own progress text', async () => {
     const scene = makeFakeScene()
     const renderer = makeFakeRenderer(scene)
@@ -305,6 +363,29 @@ describe('useModalityScene', () => {
     await flushMicrotasks()
 
     expect(modalityScene.progress.value).toBeCloseTo(0.42)
+
+    resolveNrrd(scene)
+    await loadPromise
+  })
+
+  // Review round 2, fix #3: when the server omits Content-Length,
+  // copper3d's own percentage math divides by zero and writes the literal
+  // string "File: x Infinity % loaded" (Loader/copperNrrdLoader.js:152).
+  // The old digit-only regex simply didn't match, silently freezing
+  // `progress` at whatever it last held (0, on the very first event) --
+  // this should read as indeterminate instead.
+  it('treats a missing-Content-Length "Infinity %" as indeterminate, not stuck at 0', async () => {
+    const scene = makeFakeScene()
+    const renderer = makeFakeRenderer(scene)
+    const stage = makeFakeStage(renderer)
+    const modalityScene = useModalityScene(stage)
+    const bar = captureNextLoadingBar(stage)
+
+    const loadPromise = modalityScene.load('the-breast', makeModality())
+    bar.progress.textContent = 'File: m3d.nrrd Infinity % loaded'
+    await flushMicrotasks()
+
+    expect(modalityScene.progress.value).toBeNaN()
 
     resolveNrrd(scene)
     await loadPromise
@@ -350,6 +431,44 @@ describe('useModalityScene', () => {
     expect(modalityScene.loadError.value).toBeUndefined()
     expect(modalityScene.loading.value).toBe(false)
     expect(modalityScene.scene.value).toBe(freshScene)
+  })
+
+  // Review round 2, fix #2: the observer callback had no token guard, so
+  // once a load was superseded, its own late progress events still landed
+  // in the shared `progress` ref -- once design doc §13.1's progress ring
+  // is wired to this value, that would jitter between two unrelated
+  // downloads.
+  it('does not let a superseded load\'s own progress events touch the current progress ref', async () => {
+    const stalledScene = makeFakeScene()
+    const freshScene = makeFakeScene()
+    const renderer = makeFakeRenderer(stalledScene)
+    const stage = makeFakeStage(renderer)
+    const modalityScene = useModalityScene(stage)
+    const stalledBar = captureNextLoadingBar(stage)
+
+    void modalityScene.load('the-breast', makeModality({ id: 'mammogram' }))
+
+    vi.mocked(renderer.createScene).mockReturnValueOnce(freshScene)
+    const freshBar = captureNextLoadingBar(stage)
+    const secondLoad = modalityScene.load('the-breast', makeModality({ id: 'mri', asset: 'x/mri.nrrd' }))
+    freshBar.progress.textContent = 'File: mri.nrrd 10 % loaded'
+    await flushMicrotasks()
+
+    expect(modalityScene.progress.value).toBeCloseTo(0.1)
+
+    // The superseded (mammogram) load's own progress event arrives late --
+    // must not overwrite the current (mri) load's progress, still in
+    // flight at 10%.
+    stalledBar.progress.textContent = 'File: m3d.nrrd 77 % loaded'
+    await flushMicrotasks()
+
+    expect(modalityScene.progress.value).toBeCloseTo(0.1)
+
+    resolveNrrd(freshScene)
+    await secondLoad
+    // Lets the stalled load's own stall timer fire so it doesn't leak a
+    // pending timer into a later test.
+    await vi.advanceTimersByTimeAsync(15_000)
   })
 
   // Review fix #3: the earlier guard returned before finishing the stale
