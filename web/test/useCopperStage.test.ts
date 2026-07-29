@@ -177,20 +177,15 @@ describe('useCopperStage', () => {
     expect(stage.ready.value).toBe(false)
   })
 
-  it('does not set loadError when the constructor fails after unmount', async () => {
-    copperRendererOnDemond.mockImplementationOnce(function () {
-      throw new Error('WebGL unavailable')
-    })
-
-    const wrapper = mount(HostWrapper)
-    const stage = getStage(wrapper)
-    wrapper.unmount()
-    await flushPromises()
-
-    // Nothing is left to display it, and the component is gone -- reporting
-    // an error against a disposed stage would be noise.
-    expect(stage.loadError.value).toBeUndefined()
-  })
+  // NOT tested, and deliberately so: "the constructor throws after the
+  // component unmounted" is structurally unreachable. useCopperStage checks
+  // `cancelled` immediately before `new`, with no `await` between the two,
+  // so once unmounted the function returns before the constructor is ever
+  // called. A test for it would queue a throwing mock that never runs and
+  // pass for the same reason the cancellation test above already does --
+  // green, but proving nothing. The `if (!cancelled)` guard in the catch
+  // block is therefore belt-and-braces against a future edit introducing an
+  // await in that window, not a live code path.
 
   // NOT tested here, deliberately: making the dynamic `import('copper3d')`
   // itself reject (not just the constructor throw, which is a different

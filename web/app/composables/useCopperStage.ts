@@ -111,9 +111,15 @@ export function useCopperStage(host: Ref<HTMLElement | undefined>): StageApi {
       // `PMREMGenerator.compileEquirectangularShader()`, another throw
       // site -- both would otherwise leave `ready` false and `loadError`
       // unset forever, the exact permanently-blank-stage-plus-unhandled-
-      // rejection state fix #7 existed to eliminate. There is nothing
-      // partially-constructed to dispose on this path: if `new` throws,
-      // no renderer object exists to hold a reference to.
+      // rejection state fix #7 existed to eliminate.
+      //
+      // Nothing this call site can reach needs disposing on that path, but
+      // that is not the same as nothing existing: if `new WebGLRenderer`
+      // succeeds and the later `compileEquirectangularShader()` throws, a
+      // live GPU context was already created and assigned to the instance
+      // `new` then discards. JS gives no access to a constructor's `this`
+      // after it throws, so that context is unreachable and released only
+      // by GC -- an upstream constraint, not something fixable here.
       mod = (await import('copper3d')) as unknown as CopperModule
       // The component may have unmounted while that chunk was still
       // downloading -- see `cancelled`'s comment above. Checking before
