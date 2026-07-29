@@ -13,11 +13,10 @@
  * The sheet is transparent apart from the logos and the photos, and the
  * photos are the only large FULLY opaque rectangles on it. So: find the rows
  * that are opaque across a wide span (the photo strips), then the columns
- * within each strip, then divide each strip by the number of people in it --
- * the headshots inside a strip butt directly against each other with no
- * gutter, so there is no seam to detect and equal division is the only thing
- * that can separate them. Strip bounds are measured, not hardcoded; only the
- * roster is.
+ * within each strip, then split each strip at the hairline seams between its
+ * photos. Portraits within a strip are NOT equal width, so those seams -- not
+ * arithmetic -- are what separates one person from the next. Strip bounds and
+ * seams are both measured; only the roster is hardcoded.
  *
  *     node scripts/extract-team-photos.mjs [--dry-run]
  */
@@ -34,8 +33,20 @@ const SOURCE = join(root, 'assets-src/images/team.png')
 const OUT_DIR = join(root, 'web/public/team')
 const DRY_RUN = process.argv.includes('--dry-run')
 
-/** Output size. Displayed at ~96px on the About page; 2x for retina. */
-const SIZE = 192
+/**
+ * Output WIDTH. Height follows the source cell's own aspect ratio -- these
+ * are never cropped to a square.
+ *
+ * An earlier version squared them (`fit: cover`) and the page then clipped
+ * the square to a circle. Between the two, every portrait lost its edges and
+ * several lost the top of the head: "能不能不要使用圆圈来裁剪，每个人的面貌
+ * 都要完全显示出来". Nothing here discards pixels now; the page letterboxes
+ * whatever is left over inside a fixed frame, which costs a little empty
+ * space and keeps every face whole.
+ *
+ * 240px is 2x the ~120px the tiles render at.
+ */
+const WIDTH = 240
 
 /**
  * The roster, in the sheet's own reading order: top strip left to right, then
@@ -247,13 +258,9 @@ for (const [i, block] of found.entries()) {
         width: cells[j].width,
         height: block.bottom - block.top,
       })
-      // `attention`, not a fixed anchor. These cells are portrait-shaped, so
-      // squaring them discards a band -- and which band depends on where the
-      // person is in frame. Anchoring to the top cropped chins off some and
-      // the crown off others, and the round mask on the page then ate another
-      // ring. sharp's attention strategy keeps the highest-salience region,
-      // which on a headshot is the face.
-      .resize(SIZE, SIZE, { fit: 'cover', position: sharp.strategy.attention })
+      // Width only: the height falls out of the cell's own aspect ratio, so
+      // nothing is cropped. See WIDTH.
+      .resize({ width: WIDTH })
       .webp({ quality: 82 })
       .toFile(join(OUT_DIR, file))
   }

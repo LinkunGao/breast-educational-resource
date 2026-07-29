@@ -68,20 +68,29 @@ const { publicUrl } = useAssetUrl()
       <div v-for="org in organisations" :key="org.name" class="mt-8">
         <h3 class="text-body font-bold text-text">{{ org.name }}</h3>
         <ul class="mt-4 grid grid-cols-3 gap-x-6 gap-y-6 sm:grid-cols-4 md:grid-cols-6">
-          <li v-for="person in org.members" :key="person.name" class="flex flex-col items-center text-center">
-            <!-- Decorative: the person's name is the very next node in the
-                 accessibility tree, so an `alt` repeating it would announce
-                 everyone twice. -->
+          <li v-for="person in org.members" :key="person.name" class="text-center">
+            <!--
+              `object-contain` in a fixed 3:4 frame, NOT `object-cover` in a
+              circle. The circle version clipped every portrait's edges and
+              took the top of several heads with them. Nothing is cropped
+              here: the frame letterboxes against the page's own sunken
+              surface, so tiles stay a uniform size while each face stays
+              whole.
+
+              Decorative: the person's name is the very next node in the
+              accessibility tree, so an `alt` repeating it would announce
+              everyone twice.
+            -->
             <img
               :src="publicUrl(`team/${person.photo}`)"
               alt=""
               aria-hidden="true"
-              width="96"
-              height="96"
+              width="240"
+              height="320"
               loading="lazy"
-              class="size-20 rounded-full object-cover ring-1 ring-border sm:size-24"
+              class="aspect-3/4 w-full rounded-card bg-surface-sunken object-contain ring-1 ring-border"
             >
-            <span class="mt-2 text-body-sm leading-snug text-text">{{ person.name }}</span>
+            <span class="mt-2 block text-body-sm leading-snug text-text">{{ person.name }}</span>
           </li>
         </ul>
       </div>
