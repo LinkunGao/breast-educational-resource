@@ -10,23 +10,27 @@
     "postinstall": "nuxt prepare",
     "test": "vitest run",
     "test:watch": "vitest",
-    "assets": "node ../scripts/optimize-assets.mjs"
+    "assets": "node ../scripts/optimize-assets.mjs",
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "@pinia/nuxt": "^1",
     "copper3d": "^3.7.3",
     "nuxt": "^4.5.1",
     "pinia": "^4",
+    "three": "0.185.1",
     "vue": "^3.5.40",
     "vue-router": "^5.2.0"
   },
   "devDependencies": {
     "@gltf-transform/cli": "^4.4.2",
     "@nuxt/test-utils": "^4",
+    "@playwright/test": "^1.62.0",
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.4.11",
     "happy-dom": "^20.11.1",
+    "pngjs": "^7.0.0",
     "tailwindcss": "^4.3.3",
     "vitest": "^4"
   }

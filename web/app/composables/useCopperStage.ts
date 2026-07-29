@@ -14,6 +14,46 @@ import type { CopperModule, CopperRenderer, StageApi } from './copper-types'
  * requestContinuous(), and fall back to on-demand via releaseContinuous()
  * once they finish (design doc §7.6).
  */
+/**
+ * Imports copper3d, working around a throw in its own bundle.
+ *
+ * `copper3d/dist/bundle.esm.js` inlines a whole nested webpack runtime
+ * (for a WASM module it vendors). That runtime resolves its public path at
+ * MODULE EVALUATION time, unconditionally -- before any of copper3d's own
+ * code runs and whether or not the WASM is ever used -- like this:
+ *
+ *   currentScript?.src, else the LAST <script> element's src,
+ *   else `throw new Error("Automatic publicPath is not supported...")`
+ *
+ * Under native ESM `document.currentScript` is always null, and Nuxt's last
+ * injected `<script>` is inline, so its `src` is `""`. Both fall through and
+ * copper3d throws on import. The legacy Nuxt 2 app never hit this because
+ * webpack substituted its own public path at build time; Vite does not.
+ *
+ * Appending a real `<script src>` would satisfy the fallback but fire a
+ * doomed network request, so instead `document.currentScript` is shadowed
+ * for the duration of the import with an object carrying a same-origin src,
+ * then restored. The value only ever becomes the base URL for fetching that
+ * vendored WASM, which nothing on this app's NRRD/GLB paths touches.
+ */
+async function importCopper3d(): Promise<CopperModule> {
+  const shimmed = document.currentScript === null
+  if (shimmed) {
+    Object.defineProperty(document, 'currentScript', {
+      configurable: true,
+      value: { src: new URL('./', document.baseURI).href },
+    })
+  }
+  try {
+    return (await import('copper3d')) as unknown as CopperModule
+  }
+  finally {
+    // Restores the native getter rather than leaving a frozen value behind,
+    // which would break any other consumer that reads currentScript later.
+    if (shimmed) delete (document as unknown as Record<string, unknown>).currentScript
+  }
+}
+
 export function useCopperStage(host: Ref<HTMLElement | undefined>): StageApi {
   const renderer = shallowRef<CopperRenderer>()
   const Copper = shallowRef<CopperModule>()
@@ -97,7 +137,20 @@ export function useCopperStage(host: Ref<HTMLElement | undefined>): StageApi {
     // checks together still pass the same tests the `typeof window`-only
     // guard did.
     if (import.meta.server || typeof window === 'undefined') return
-    if (!host.value) return
+
+    // `host` is NOT bound yet when this hook fires. Verified in a real
+    // browser: `onMounted` sees `host.value === undefined`, and the very
+    // next tick sees it bound -- the stage host is patched in a later flush
+    // than this component's own mount, under the page's Suspense boundary.
+    //
+    // Without this await the guard below returned on EVERY page load and
+    // the renderer was never constructed, silently: an early return sets
+    // neither `ready` nor `loadError`, so the stage showed no canvas, no
+    // spinner and no error message. Every 3D test on this branch mocks
+    // copper3d and passes the host element in directly, so not one of them
+    // could see it. Only a real browser could.
+    await nextTick()
+    if (cancelled || !host.value) return
 
     let mod: CopperModule
     let built: CopperRenderer
@@ -120,7 +173,7 @@ export function useCopperStage(host: Ref<HTMLElement | undefined>): StageApi {
       // `new` then discards. JS gives no access to a constructor's `this`
       // after it throws, so that context is unreachable and released only
       // by GC -- an upstream constraint, not something fixable here.
-      mod = (await import('copper3d')) as unknown as CopperModule
+      mod = await importCopper3d()
       // The component may have unmounted while that chunk was still
       // downloading -- see `cancelled`'s comment above. Checking before
       // ever calling `new` means no renderer, and therefore no GPU

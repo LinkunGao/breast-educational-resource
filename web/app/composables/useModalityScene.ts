@@ -74,6 +74,14 @@ export interface AnatomyMorph {
 
 export function useModalityScene(stage: StageApi) {
   const { url } = useAssetUrl()
+  /**
+   * Where the self-hosted DRACO decoder lives (`public/draco/`), resolved
+   * against the deployment base so a GitHub Pages subpath deploy asks for
+   * `/te-uma/draco/` rather than `/draco/`. three appends the file names to
+   * this verbatim, applying no base of its own -- the same trap
+   * `resolveAssetBase` exists for on the model URLs.
+   */
+  const dracoPath = `${useRuntimeConfig().app.baseURL.replace(/\/$/, '')}/draco/`
 
   const scene = shallowRef<CopperScene>()
   const loading = ref(false)
@@ -483,18 +491,31 @@ export function useModalityScene(stage: StageApi) {
    * correction C2) -- otherwise every crossfade would end on a model that
    * looks different from the one it replaced, a visible pop at t=1.
    */
-  function loadGlb(target: CopperScene, assetUrl: string): Promise<SceneObject> {
-    return new Promise<SceneObject>((resolve, reject) => {
-      const timer = setTimeout(
+  async function loadGlb(target: CopperScene, assetUrl: string): Promise<SceneObject> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const stalled = new Promise<never>((_, reject) => {
+      timer = setTimeout(
         () => reject(new Error(`Timed out loading anatomy model: ${assetUrl}`)),
         GLB_LOAD_TIMEOUT_MS,
       )
-      target.loadGltf(assetUrl, (group) => {
-        clearTimeout(timer)
-        tintFatLayer(group)
-        resolve(group)
-      })
     })
+    try {
+      const { group, size } = await Promise.race([
+        loadGltfModel(assetUrl, dracoPath),
+        stalled,
+      ])
+      // Both were copper3d's job inside `loadGltf`; taking the load over
+      // means taking these two with it. `maxDistance` bounds how far the
+      // user can dolly out (`bundle.esm.js:83648`), and without the `add`
+      // the model would load correctly and never appear.
+      target.controls.maxDistance = size * 10
+      target.scene.add(group)
+      tintFatLayer(group)
+      return group
+    }
+    finally {
+      clearTimeout(timer)
+    }
   }
 
   async function loadAnatomy(target: CopperScene, assetUrl: string): Promise<null> {
@@ -662,6 +683,24 @@ export function useModalityScene(stage: StageApi) {
             settle()
             target.addObject(meshes.z)
             meshes.z.name = 'z'
+
+            // copper3d's `loadNrrd` builds the slice objects and their
+            // canvas-backed textures but never PAINTS them, so the plane
+            // renders as solid black until something moves the slice.
+            // Measured in a real browser on
+            // `/case/density-d/mammogram`: the texture canvas held 0
+            // non-transparent pixels out of 1,161,405 after a fully
+            // successful load, and 359,777 non-black ones immediately
+            // after this call. The stage was black on every imaging
+            // modality, on every case.
+            //
+            // `load()` already calls `renderer.render()` once the preset
+            // has been applied, so no extra render is needed here -- the
+            // frame it draws simply had nothing in the texture to show.
+            // Called via `.call` because copper3d's own scrubbing does the
+            // same (`frontend/plugins/copper.js:110`): `repaint` is taken
+            // off the slice object and needs its `this` bound back.
+            slices.z.repaint.call(slices.z)
 
             if (flat) {
               // copperSceneOnDemond hardcodes OrbitControls, not
