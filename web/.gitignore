@@ -1,0 +1,45 @@
+# Nuxt dev/build outputs
+.output
+.data
+.nuxt
+.nitro
+.cache
+dist
+
+# Asset pipeline staging directories (scripts/optimize-assets.mjs) --
+# disposable. .staging holds an in-progress run; .complete holds a finished
+# run once it's been marked complete, right before it's swapped into
+# public/modelView.
+public/modelView.staging
+public/modelView.complete
+
+# The compressed imaging build (public/modelView/, produced by
+# scripts/optimize-assets.mjs from assets-src/) is deliberately NOT ignored.
+# frontend/static/modelView held the only committed copy until Task 12 deleted
+# it, and GitHub Pages builds straight from the repo -- ignoring it here would
+# deploy a site with no models to serve.
+
+# Shim modules written by scripts/lib/extract-copy.mjs. They live inside
+# web/ rather than the OS tmpdir so Vite's fs.allow boundary covers them;
+# each is unlinked in a finally block, so this directory stays empty.
+.tmp-extract-copy
+
+# Node dependencies
+node_modules
+
+# Logs
+logs
+*.log
+
+# Misc
+.DS_Store
+.fleet
+.idea
+
+# Local env files
+.env
+.env.*
+!.env.example
+
+test-results
+legacy/*

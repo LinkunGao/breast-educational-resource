@@ -1,0 +1,184 @@
+const serveStatic = require("serve-static");
+const path = require("path");
+
+const routerBase =
+  process.env.DEPLOY_ENV === "GH_PAGES"
+    ? {
+        router: {
+          base: "/breast-educational-resource/",
+        },
+      }
+    : {
+        router: {
+          // mode: "hash",
+          mode: "history",
+          base: "/",
+        },
+      };
+
+export default {
+  // Global page headers: https://go.nuxtjs.dev/config-head
+  head: {
+    title: "Breast Educational Resource",
+    htmlAttrs: {
+      lang: "en",
+    },
+    link: [
+      // Was a render-blocking @import url() inside variables.scss, which the
+      // build injects into every SCSS file, so it was duplicated everywhere.
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
+      {
+        rel: "preconnect",
+        href: "https://fonts.gstatic.com",
+        crossorigin: true,
+      },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Inria+Sans:ital,wght@0,300;0,400;0,700;1,300;1,400;1,700&display=swap",
+      },
+    ],
+    meta: [
+      { charset: "utf-8" },
+      { name: "viewport", content: "width=device-width, initial-scale=1" },
+      {
+        name: "google-site-verification",
+        content: "L6CIHWX38cm1gLthoxa4mWPpp_l6UGCrtyRe5ZNeKB0",
+      },
+      {
+        hid: "description",
+        name: "description",
+        content: "Auckland Bioengineering Institute Breast Research App",
+      },
+      { name: "format-detection", content: "telephone=no" },
+      {
+        name: "keywords",
+        content: "Your Key words",
+      },
+    ],
+    script: [
+      {
+        src: "https://www.googletagmanager.com/gtag/js?id=G-LXD5LJXP2Y",
+        async: true,
+      },
+    ],
+  },
+
+  serverMiddleware: [
+    // add middlewares
+    {
+      handler: serveStatic(path.resolve(__dirname, "static"), {
+        setHeaders(res, path) {
+          if (/\.mp4$/.test(path)) {
+            res.setHeader("Content-Type", "video/mp4");
+          }
+        },
+      }),
+      prefix: "@/static",
+    },
+  ],
+  server: {
+    host: "0.0.0.0", // default: localhost
+    port: 3158, // default: 3000
+  },
+
+  // Global CSS: https://go.nuxtjs.dev/config-css
+  css: [
+    "@/assets/sass/global.scss",
+    "@/assets/sass/base.scss",
+    // Last, so utilities win ties the way the old runtime-injected CDN did.
+    "@/assets/css/tailwind.css",
+  ],
+
+  // Plugins to run before rendering page: https://go.nuxtjs.dev/config-plugins
+  plugins: [
+    "@/plugins/breakpoint",
+    "@/plugins/topics",
+    "@/plugins/current-content",
+    "@/plugins/models",
+    "@/plugins/data",
+    { src: "~/plugins/copper.js", ssr: false },
+  ],
+
+  // Auto import components: https://go.nuxtjs.dev/config-components
+  components: {
+    dirs: [
+      "~/components/about",
+      "~/components/model",
+      "~/components/navigation",
+      "~/components/topics",
+    ],
+  },
+
+  // Modules for dev and build (recommended): https://go.nuxtjs.dev/config-modules
+  buildModules: ["@nuxtjs/pwa"],
+  pwa: {
+    manifest: {
+      name: 'Breast Educational Resource',
+      short_name: 'Breast Education App',
+      description: 'An ABI Education App for Breast Cancer.',
+      theme_color: '#ffffff',
+    },
+
+  },
+
+  // Modules: https://go.nuxtjs.dev/config-modules
+  modules: ["@nuxtjs/axios"],
+
+  // Build Configuration: https://go.nuxtjs.dev/config-build
+  build: {
+    postcss: {
+      plugins: {
+        tailwindcss: {},
+        autoprefixer: {},
+      },
+    },
+    extend(config) {
+      config.module.rules.push({
+        test: /\.md$/i,
+        use: "raw-loader",
+      });
+    },
+    loaders: {
+      sass: {
+        implementation: require("sass"),
+      },
+      scss: {
+        implementation: require("sass"),
+        // Vuetify's `customVariables` option used to inject variables.scss
+        // into every SCSS file; that went away with the module, and the
+        // SCSS files rely on it for $display-breakpoints, $text-color, etc.
+        // Skip the variables files themselves or the import recurses.
+        additionalData(content, loaderContext) {
+          const path = loaderContext.resourcePath.replace(/\\/g, "/");
+          if (
+            path.endsWith("/assets/sass/variables.scss") ||
+            path.endsWith("/assets/sass/_breakpoints.scss")
+          ) {
+            return content;
+          }
+          return `@import "~assets/sass/variables.scss";\n${content}`;
+        },
+      },
+    },
+  },
+
+  target: "static",
+
+  ...routerBase,
+  generate: {
+    dir: "build",
+    routes: [
+      // Modify these routes, when you config your routes for app
+      "/model-breast",
+      "/density-1",
+      "/density-2",
+      "/density-3",
+      "/density-4",
+      "/benign-cyst",
+      "/benign-fibroadenoma",
+      "/cancer-dcis",
+      "/cancer-lobular",
+      "/cancer-ductal",
+    ],
+  },
+};

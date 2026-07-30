@@ -1,24 +1,43 @@
-name: Deploy from multiple branches
+name: Deploy to GitHub Pages
 
 on:
   release:
     types: [created]
+  # Lets a deploy be kicked off by hand from the Actions tab without cutting
+  # a release -- useful when showing work in progress to reviewers.
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 16
-      - run: cd frontend && yarn install && yarn generate:gh-pages
-      - run: ls
+          node-version: 24
+          cache: yarn
+          cache-dependency-path: web/yarn.lock
+
+      - run: yarn install --frozen-lockfile
+        working-directory: web
+
+      - run: yarn generate
+        working-directory: web
+        env:
+          # Pages serves this repo under /<repo-name>/. Nuxt resolves the
+          # public runtime config's `assetBase` against `app.baseURL`, so this
+          # one variable is enough -- do not also set NUXT_PUBLIC_ASSET_BASE
+          # or the imaging URLs double up to /breast-educational-resource/
+          # breast-educational-resource/modelView/.
+          NUXT_APP_BASE_URL: /breast-educational-resource/
 
       - uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{secrets.BREAST_APP}}
-          publish_dir: "./frontend/build"
+          publish_dir: "./web/.output/public"
           user_name: "LinkunGao"
           user_email: "gaolinkun123@gmail.com"
+          # The imaging is ~350MB. Without this, every deploy stacks another
+          # copy into gh-pages history and the repo grows without bound.
+          force_orphan: true

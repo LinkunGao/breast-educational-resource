@@ -2,3 +2,18 @@ docs/build
 
 .DS_Store
 build
+
+.claude
+plan
+
+# Subagent-driven-development scratch: per-plan ledgers, task briefs,
+# implementer reports and review packages. Disposable -- git history is the
+# record once a plan has been executed.
+.superpowers/sdd
+
+# Uncompressed source imaging. scripts/optimize-assets.mjs reads this and
+# writes the compressed build into web/public/modelView.
+assets-src/
+
+# web/ ignores its own build outputs, node_modules and staging directories
+# in web/.gitignore -- do not duplicate them here.
