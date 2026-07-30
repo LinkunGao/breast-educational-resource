@@ -715,11 +715,12 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `web/public/icon.png`
-- Create: `web/pwa-assets.config.ts`
+- Create: `scripts/recover-legacy-icon.mjs`
+- Create: `scripts/generate-pwa-icons.mjs`
 - Create (generated): `web/public/pwa-64x64.png`, `web/public/pwa-192x192.png`, `web/public/pwa-512x512.png`, `web/public/maskable-icon-512x512.png`, `web/public/apple-touch-icon-180x180.png`
 - Modify: `web/public/favicon.ico`
 - Modify: `web/package.json`
-- Create: `scripts/recover-legacy-icon.mjs`
+- Test: `web/test/pwa-icons.test.ts`
 
 **Interfaces:**
 - Consumes: nothing from other tasks.
@@ -789,46 +790,188 @@ node scripts/recover-legacy-icon.mjs
 
 Expected output: `wrote .../web/public/icon.png: 15214 bytes, 88x88`. If the byte count or the dimensions differ, stop — `main` has moved and the source needs re-checking before anything is generated from it.
 
-- [ ] **Step 3: Add the generator dependency**
+- [ ] **Step 3: Write the generator**
 
-Run from `web/`:
+**Why not `@vite-pwa/assets-generator`.** It was tried first and is a dead end here: it pulls `sharp`, whose prebuilt native binary fails to load on this machine's Node 24 / win32-x64 with `ERR_DLOPEN_FAILED: The specified procedure could not be found`, reproducibly and after a clean reinstall. Rather than pin an older Node or chase a VC++ runtime for a one-shot image resize, this generates the set with `pngjs` — already a devDependency of `web/`, already used by `web/test/nrrd-gzip.test.ts`, and pure JavaScript with no native component to fail.
 
-```
-yarn add -D @vite-pwa/assets-generator
-```
+Bilinear is also the *right* filter for this input, not merely the available one: the source is 88px and every output but one is an upscale, where a sharpening resampler like Lanczos rings on the edges instead of adding detail that is not there.
 
-- [ ] **Step 4: Write the generator config**
+Create `scripts/generate-pwa-icons.mjs`:
 
-Create `web/pwa-assets.config.ts`:
+```js
+/**
+ * Generates the PWA icon set from `web/public/icon.png`.
+ *
+ * ## Why this is hand-rolled
+ *
+ * `@vite-pwa/assets-generator` is the obvious tool and does not work here:
+ * it depends on `sharp`, whose prebuilt native binary fails to load on
+ * Node 24 / win32-x64 with ERR_DLOPEN_FAILED, reproducibly and after a
+ * clean reinstall. `pngjs` is already a devDependency of `web/` (see
+ * web/test/nrrd-gzip.test.ts), is pure JS, and has nothing native to fail.
+ *
+ * Bilinear resampling is also the correct choice for this input rather
+ * than a concession: the source is 88x88 and every output but the 64px
+ * one is an UPSCALE, where a sharpening filter rings on edges instead of
+ * inventing detail.
+ *
+ * ## The source's known limitation
+ *
+ * `web/public/icon.png` is 88x88, recovered verbatim from the legacy app
+ * (scripts/recover-legacy-icon.mjs). The 512px outputs are therefore soft.
+ * No higher-resolution copy exists in this repository or its history.
+ * Replacing the source with a vector render or a >=512px raster and
+ * re-running this script is the entire fix, with no code change.
+ */
+import { readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { PNG } from 'pngjs'
 
-```ts
-import { defineConfig, minimal2023Preset } from '@vite-pwa/assets-generator/config'
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const publicDir = join(repoRoot, 'web', 'public')
+
+/** Fraction of a maskable icon's width that must survive an aggressive
+ *  platform crop. Android's maskable safe zone is the centre 80%. */
+const MASKABLE_CONTENT = 0.8
+/** Apple crops the corners of a touch icon into a squircle, so the mark
+ *  gets a little breathing room there too -- less than maskable's, since
+ *  the crop is much gentler. */
+const APPLE_CONTENT = 0.9
+
+/** Bilinear resample. `src` and the result are both RGBA PNG instances. */
+function resize(src, size) {
+  const out = new PNG({ width: size, height: size })
+  const { width: sw, height: sh, data: sd } = src
+
+  for (let y = 0; y < size; y++) {
+    // Sample at pixel CENTRES (+0.5 / -0.5), otherwise the output is
+    // shifted half a destination pixel up and left.
+    const sy = ((y + 0.5) * sh) / size - 0.5
+    const y0 = Math.max(0, Math.floor(sy))
+    const y1 = Math.min(sh - 1, y0 + 1)
+    const fy = Math.min(1, Math.max(0, sy - y0))
+
+    for (let x = 0; x < size; x++) {
+      const sx = ((x + 0.5) * sw) / size - 0.5
+      const x0 = Math.max(0, Math.floor(sx))
+      const x1 = Math.min(sw - 1, x0 + 1)
+      const fx = Math.min(1, Math.max(0, sx - x0))
+
+      const at = (y * size + x) * 4
+      for (let c = 0; c < 4; c++) {
+        const p00 = sd[(y0 * sw + x0) * 4 + c]
+        const p01 = sd[(y0 * sw + x1) * 4 + c]
+        const p10 = sd[(y1 * sw + x0) * 4 + c]
+        const p11 = sd[(y1 * sw + x1) * 4 + c]
+        const top = p00 + (p01 - p00) * fx
+        const bottom = p10 + (p11 - p10) * fx
+        out.data[at + c] = Math.round(top + (bottom - top) * fy)
+      }
+    }
+  }
+  return out
+}
+
+/** Centres `content` on a `size`x`size` canvas filled with `bg` (RGBA). */
+function onCanvas(content, size, bg) {
+  const out = new PNG({ width: size, height: size })
+  for (let i = 0; i < out.data.length; i += 4) {
+    out.data[i] = bg[0]
+    out.data[i + 1] = bg[1]
+    out.data[i + 2] = bg[2]
+    out.data[i + 3] = bg[3]
+  }
+  const offset = Math.round((size - content.width) / 2)
+  for (let y = 0; y < content.height; y++) {
+    for (let x = 0; x < content.width; x++) {
+      const from = (y * content.width + x) * 4
+      const to = ((y + offset) * size + (x + offset)) * 4
+      // Source over, so a transparent source pixel keeps the background.
+      const alpha = content.data[from + 3] / 255
+      for (let c = 0; c < 3; c++) {
+        out.data[to + c] = Math.round(
+          content.data[from + c] * alpha + out.data[to + c] * (1 - alpha),
+        )
+      }
+      out.data[to + 3] = Math.max(out.data[to + 3], content.data[from + 3])
+    }
+  }
+  return out
+}
 
 /**
- * Icon set for the installable app (client feedback item 1).
- *
- * Source is `public/icon.png`, recovered verbatim from the legacy app by
- * `scripts/recover-legacy-icon.mjs`.
- *
- * KNOWN LIMITATION: that source is 88x88. The 512x512 maskable output is
- * therefore an upscale and is visibly soft on a home screen. There is no
- * higher-resolution copy anywhere in this repository or its history. A
- * vector or >=512px raster from the client would fix it with no code
- * change -- drop it in at `public/icon.png` and re-run `yarn icons`.
+ * A Vista-style ICO: the directory entries point at whole PNG payloads
+ * rather than at BMP bitmaps. Every browser this app targets reads it,
+ * and it avoids hand-writing a BMP encoder with its bottom-up rows and
+ * AND-mask padding.
  */
-export default defineConfig({
-  headLinkOptions: { preset: '2023' },
-  preset: minimal2023Preset,
-  images: ['public/icon.png'],
-})
+function ico(entries) {
+  const header = Buffer.alloc(6)
+  header.writeUInt16LE(0, 0) // reserved
+  header.writeUInt16LE(1, 2) // type: icon
+  header.writeUInt16LE(entries.length, 4)
+
+  const directory = []
+  let offset = 6 + entries.length * 16
+  for (const { size, png } of entries) {
+    const entry = Buffer.alloc(16)
+    // 0 means 256 in this field; nothing here is that large, but the
+    // encoding is the spec's and writing it out documents the limit.
+    entry[0] = size >= 256 ? 0 : size
+    entry[1] = size >= 256 ? 0 : size
+    entry[2] = 0 // palette size: none, this is truecolour
+    entry[3] = 0 // reserved
+    entry.writeUInt16LE(1, 4) // colour planes
+    entry.writeUInt16LE(32, 6) // bits per pixel
+    entry.writeUInt32LE(png.length, 8)
+    entry.writeUInt32LE(offset, 12)
+    directory.push(entry)
+    offset += png.length
+  }
+  return Buffer.concat([header, ...directory, ...entries.map(e => e.png)])
+}
+
+const source = PNG.sync.read(readFileSync(join(publicDir, 'icon.png')))
+/** The source has no alpha channel, so its corner pixel is a real colour
+ *  and is what the mark was drawn against. Padding with anything else
+ *  would put a visible square behind it. */
+const background = [source.data[0], source.data[1], source.data[2], 255]
+
+function write(name, png) {
+  const buffer = PNG.sync.write(png)
+  writeFileSync(join(publicDir, name), buffer)
+  console.log(`${name}  ${png.width}x${png.height}  ${buffer.length}B`)
+  return buffer
+}
+
+for (const size of [64, 192, 512]) {
+  write(`pwa-${size}x${size}.png`, resize(source, size))
+}
+
+write(
+  'maskable-icon-512x512.png',
+  onCanvas(resize(source, Math.round(512 * MASKABLE_CONTENT)), 512, background),
+)
+
+write(
+  'apple-touch-icon-180x180.png',
+  onCanvas(resize(source, Math.round(180 * APPLE_CONTENT)), 180, background),
+)
+
+writeFileSync(
+  join(publicDir, 'favicon.ico'),
+  ico([32, 48].map(size => ({ size, png: PNG.sync.write(resize(source, size)) }))),
+)
+console.log('favicon.ico  32 + 48')
 ```
 
-- [ ] **Step 5: Add the script and generate**
+- [ ] **Step 4: Add the script and generate**
 
-Add to `web/package.json`'s `scripts`:
+Add to `web/package.json`'s `scripts`, after `"assets"`:
 
 ```json
-    "icons": "pwa-assets-generator",
+    "icons": "node ../scripts/generate-pwa-icons.mjs",
 ```
 
 Run from `web/`:
@@ -837,22 +980,129 @@ Run from `web/`:
 yarn icons
 ```
 
-Expected: `public/pwa-64x64.png`, `public/pwa-192x192.png`, `public/pwa-512x512.png`, `public/maskable-icon-512x512.png`, `public/apple-touch-icon-180x180.png` and a regenerated `public/favicon.ico`.
+Expected: six lines naming each generated file with its dimensions and byte count, then `favicon.ico  32 + 48`.
 
-- [ ] **Step 6: Verify the generated set**
+- [ ] **Step 5: Write the test**
 
-Run from the repository root:
+Create `web/test/pwa-icons.test.ts`:
+
+```ts
+import { readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { describe, expect, it } from 'vitest'
+
+/**
+ * The generated icon set is committed, not built on demand, so these
+ * assert the committed artefacts. Task 5's manifest references these
+ * names verbatim; a rename that misses one would otherwise surface as an
+ * icon that silently 404s on a home screen.
+ *
+ * Built by `yarn icons` (scripts/generate-pwa-icons.mjs).
+ */
+const publicDir = resolve(dirname(fileURLToPath(import.meta.url)), '../public')
+
+function png(name: string) {
+  // `new URL(..., import.meta.url)` cannot be used here: Vite's
+  // import-analysis plugin rewrites that literal pattern as an asset URL.
+  // See the comment at the top of web/test/tokens.test.ts.
+  return readFileSync(join(publicDir, name))
+}
+
+describe('generated PWA icons', () => {
+  const expected: Record<string, number> = {
+    'pwa-64x64.png': 64,
+    'pwa-192x192.png': 192,
+    'pwa-512x512.png': 512,
+    'maskable-icon-512x512.png': 512,
+    'apple-touch-icon-180x180.png': 180,
+  }
+
+  for (const [name, size] of Object.entries(expected)) {
+    it(`${name} is a ${size}x${size} PNG`, () => {
+      const buffer = png(name)
+      expect(buffer.subarray(1, 4).toString('ascii')).toBe('PNG')
+      expect(buffer.readUInt32BE(16)).toBe(size)
+      expect(buffer.readUInt32BE(20)).toBe(size)
+    })
+  }
+
+  it('the source is the legacy mark, unmodified', () => {
+    const buffer = png('icon.png')
+    expect(buffer.readUInt32BE(16)).toBe(88)
+    expect(buffer.readUInt32BE(20)).toBe(88)
+    expect(buffer.length).toBe(15214)
+  })
+
+  it('favicon.ico declares two PNG entries', () => {
+    const buffer = png('favicon.ico')
+    expect(buffer.readUInt16LE(0)).toBe(0) // reserved
+    expect(buffer.readUInt16LE(2)).toBe(1) // type: icon
+    expect(buffer.readUInt16LE(4)).toBe(2) // two sizes
+
+    const sizes: number[] = []
+    for (let i = 0; i < 2; i++) {
+      const entry = 6 + i * 16
+      sizes.push(buffer[entry]!)
+      const length = buffer.readUInt32LE(entry + 8)
+      const offset = buffer.readUInt32LE(entry + 12)
+      // Each payload really is a PNG, and really is inside the file.
+      expect(offset + length).toBeLessThanOrEqual(buffer.length)
+      expect(buffer.subarray(offset + 1, offset + 4).toString('ascii')).toBe('PNG')
+    }
+    expect(sizes).toEqual([32, 48])
+  })
+
+  it('the maskable icon keeps its content inside the safe zone', () => {
+    // Android crops a maskable icon to the centre 80%, so the mark must
+    // not reach the edge. The generator pads it; this catches the padding
+    // being dropped, which no dimension check would notice.
+    const { PNG } = require('pngjs') as typeof import('pngjs')
+    const image = PNG.sync.read(png('maskable-icon-512x512.png'))
+    const plain = PNG.sync.read(png('pwa-512x512.png'))
+
+    function centreRow(source: { width: number, data: Buffer }) {
+      const y = Math.floor(source.width / 2)
+      return Array.from(
+        { length: source.width },
+        (_, x) => source.data[(y * source.width + x) * 4]!,
+      )
+    }
+
+    const maskableRow = centreRow(image)
+    const plainRow = centreRow(plain)
+    const corner = image.data[0]!
+    // The outer 10% of each side is untouched background on the maskable
+    // version and, on the unpadded one, is not.
+    const edge = Math.floor(512 * 0.05)
+    expect(maskableRow.slice(0, edge).every(v => v === corner)).toBe(true)
+    expect(plainRow.slice(0, edge).every(v => v === corner)).toBe(false)
+  })
+})
+```
+
+- [ ] **Step 6: Run the test and look at the result**
+
+Run from `web/`:
 
 ```
-node -e "const fs=require('fs');for(const f of ['pwa-64x64.png','pwa-192x192.png','pwa-512x512.png','maskable-icon-512x512.png','apple-touch-icon-180x180.png']){const b=fs.readFileSync('web/public/'+f);console.log(f, b.readUInt32BE(16)+'x'+b.readUInt32BE(20), b.length+'B')}"
+yarn vitest run test/pwa-icons.test.ts
 ```
 
-Expected: each file reports the size its name claims, and a non-zero byte count. Also open `web/public/pwa-512x512.png` and look at it — confirm the mark is centred and recognisable even though soft.
+Expected: PASS.
+
+Then **look at** `web/public/pwa-512x512.png` and `web/public/maskable-icon-512x512.png` with the Read tool — they render as images. Confirm the mark is centred, recognisable, and (on the maskable one) clear of the edges. Say in your report what you actually saw. If the mark is off-centre or clipped, that is a real defect in the generator, not something to accept.
+
+Then run the full suite once:
+
+```
+yarn test
+```
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add scripts/recover-legacy-icon.mjs web/pwa-assets.config.ts web/package.json web/yarn.lock web/public/icon.png web/public/pwa-64x64.png web/public/pwa-192x192.png web/public/pwa-512x512.png web/public/maskable-icon-512x512.png web/public/apple-touch-icon-180x180.png web/public/favicon.ico
+git add scripts/recover-legacy-icon.mjs scripts/generate-pwa-icons.mjs web/package.json web/test/pwa-icons.test.ts web/public/icon.png web/public/pwa-64x64.png web/public/pwa-192x192.png web/public/pwa-512x512.png web/public/maskable-icon-512x512.png web/public/apple-touch-icon-180x180.png web/public/favicon.ico
 git commit -m "feat(pwa): recover the legacy app icon and generate the icon set
 
 Client feedback item 1, first half. The mark the client linked to is
