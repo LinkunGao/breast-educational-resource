@@ -7,7 +7,7 @@
  * `density75.glb` (density-3) is the model the author actually built. The
  * others were meant to be it with lobes removed or added:
  *
- *     density-1  -50%   density-2  -25%   density-3  baseline   density-4  +50%
+ *     density-1  -50%   density-2  -25%   density-3  baseline   density-4  +100%
  *
  * They had drifted badly from that. Measured on the shipped assets, counting
  * connected lobe islands: density-1 had 4 of 19 (-79%), density-2 had 7
@@ -102,7 +102,10 @@ const TARGETS = [
   // rebuilt like the others so the orphan shards come out of it too. It
   // shipped with them.
   { dir: 'density-3', file: 'density75.glb', ratio: 1 },
-  { dir: 'density-4', file: 'density100.glb', ratio: 1.5 },
+  // BI-RADS D is "extremely dense", and at 1.5 it read no fuller than C on
+  // screen -- partly the count, partly that duplicates were landing behind
+  // lobes that were already there (see `planDuplicates`).
+  { dir: 'density-4', file: 'density100.glb', ratio: 2 },
 ]
 
 /**
@@ -371,10 +374,32 @@ function dropOrphans(islands, prim, nearestDuct) {
  * further along is skipped rather than dropped somewhere invalid, so the
  * final count can come in under target; the caller reports what it got.
  */
-function planDuplicates(candidates, prim, ductPoints) {
+/**
+ * The areola/nipple region, as a box, so duplicates are never placed into
+ * it. A copy that lands there pokes through the skin and shows as a pale
+ * patch on the nipple -- which is exactly what +100% produced on the first
+ * build. Taken from the areola mesh's own bounds with a small margin.
+ */
+function forbiddenZone(doc) {
+  const mesh = doc.getRoot().listMeshes().find(m => m.getName().startsWith('VH_F_areola_L'))
+  const pos = mesh?.listPrimitives()[0]?.getAttribute('POSITION')
+  if (!pos) return null
+  const min = pos.getMin([])
+  const max = pos.getMax([])
+  const pad = 0.004
+  return {
+    min: min.map(v => v - pad),
+    max: max.map(v => v + pad),
+  }
+}
+
+function planDuplicates(candidates, prim, ductPoints, occupied, forbidden) {
   const idx = prim.getIndices().getArray()
   const pos = prim.getAttribute('POSITION').getArray()
   const placed = []
+  // Grows as duplicates are placed, so two of them cannot pick the same
+  // empty spot.
+  const taken = [...occupied]
 
   for (const island of candidates) {
     // The lobe's own contact point on the duct tree, and the duct point it
@@ -394,21 +419,41 @@ function planDuplicates(candidates, prim, ductPoints) {
     }
     if (!contact || !anchor) continue
 
-    // Another point on the tree, about one lobe further along.
+    /**
+     * Where on the tree to put the copy.
+     *
+     * Not simply "one lobe further along": the first version took the duct
+     * point nearest that distance and, often as not, that was straight into
+     * the middle of the cluster, where the copy sat behind a lobe already
+     * there and added nothing visible. density-4 came out looking no denser
+     * than density-3 despite carrying eight more lobes.
+     *
+     * So candidates within a band of the anchor are scored by how far they
+     * are from every lobe already placed, and the emptiest wins. `taken`
+     * grows as copies are placed, so two of them cannot choose the same gap.
+     */
     const want = island.size * DUPLICATE_NUDGE
     let target = null
-    let closest = Infinity
+    let bestScore = -Infinity
     for (const q of ductPoints) {
       const d = Math.hypot(q[0] - anchor[0], q[1] - anchor[1], q[2] - anchor[2])
-      const err = Math.abs(d - want)
-      if (err < closest) { closest = err; target = q }
+      if (d < want * 0.6 || d > want * 2.5) continue
+      if (forbidden
+        && q[0] >= forbidden.min[0] && q[0] <= forbidden.max[0]
+        && q[1] >= forbidden.min[1] && q[1] <= forbidden.max[1]
+        && q[2] >= forbidden.min[2] && q[2] <= forbidden.max[2]) continue
+      let nearest = Infinity
+      for (const o of taken) {
+        const dist = Math.hypot(q[0] - o[0], q[1] - o[1], q[2] - o[2])
+        if (dist < nearest) nearest = dist
+      }
+      if (nearest > bestScore) { bestScore = nearest; target = q }
     }
-    if (!target || closest > want) continue
+    if (!target) continue
 
-    placed.push({
-      ...island,
-      duplicateDelta: [0, 1, 2].map(a => target[a] - anchor[a]),
-    })
+    const delta = [0, 1, 2].map(a => target[a] - anchor[a])
+    taken.push([0, 1, 2].map(a => island.centroid[a] + delta[a]))
+    placed.push({ ...island, duplicateDelta: delta })
   }
   return placed
 }
@@ -752,10 +797,16 @@ for (const target of TARGETS) {
   }
   else if (wanted > islands.length) {
     const extra = wanted - islands.length
+    // `extra` can exceed the number of lobes, so the picks cycle: at +100%
+    // every lobe is duplicated once, and beyond that some are duplicated
+    // twice.
+    const sources = Array.from({ length: extra }, (_, k) => islands[k % islands.length])
     duplicates = planDuplicates(
-      evenPicks(islands.length, extra).map(i => islands[i]),
+      sources,
       prim,
       ductVertices(doc),
+      islands.map(i => i.centroid),
+      forbiddenZone(doc),
     )
   }
 
