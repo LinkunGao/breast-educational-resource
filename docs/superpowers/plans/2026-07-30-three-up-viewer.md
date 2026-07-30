@@ -1092,8 +1092,14 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 **Files:**
 - Create: `web/app/composables/fitToView.ts`
 - Create: `web/test/fitToView.test.ts`
+- Modify: `web/app/composables/copper-types.ts`
 - Modify: `web/app/composables/useModalityScene.ts`
 - Modify: `web/app/components/stage/CopperStage.client.vue`
+
+**Verified before this plan was executed** (do not re-derive, but do not assume beyond it either):
+- `web/app/composables/copper-types.ts`'s `CopperCamera` declares only `position`, `up`, `lookAt`, `updateProjectionMatrix`. It has **no `fov`**. Step 5 adds it.
+- Tailwind 4.3.3 compiles `@[1000px]:` to `@container (width >= 1000px)` and `@max-[1000px]:` to `@container (width < 1000px)`. Both variants work as written in Task 5 — checked against the generated stylesheet, not assumed.
+- Chromium fires a `ResizeObserver` callback immediately on observing a `display:none` element, reporting 0×0, and fires again with real dimensions when it is shown. Task 4's load gate depends on both directions and both hold.
 
 **Interfaces:**
 - Consumes: `SceneBudget` from Task 2 only incidentally (same file is edited).
@@ -1269,7 +1275,24 @@ yarn vitest run test/fitToView.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 5: Apply the fit after every load**
+- [ ] **Step 5: Widen `CopperCamera` to expose the field the fit reads**
+
+`web/app/composables/copper-types.ts`'s `CopperCamera` declares `position`, `up`, `lookAt` and `updateProjectionMatrix` — and **no `fov`**. Verified by reading the file; `refitCurrentScene` below needs it, so without this the next step does not type-check.
+
+The field exists at runtime: `copperSceneOnDemond` builds a three `PerspectiveCamera`, and the `*_view.json` presets already drive `nearPlane`/`farPlane` on the same object. Add it with a comment saying so, in the same spirit as the rest of that file, which documents each field against the copper3d source it was read from:
+
+```ts
+  /**
+   * Vertical field of view in degrees. Not used by copper3d's own view
+   * presets -- `fitToView` reads it to work out how far back the camera
+   * has to sit for the object to fill the frame. Present because the
+   * underlying object is a three `PerspectiveCamera`; declared here
+   * because this type is the app's whole view of it.
+   */
+  fov: number
+```
+
+- [ ] **Step 6: Apply the fit after every load**
 
 In `web/app/composables/useModalityScene.ts`:
 
@@ -1372,7 +1395,7 @@ Call `refitCurrentScene(hostAspect)` immediately after `next.loadView(preset)` i
 
 Add `refitCurrentScene`, `markPosed` to the composable's return object, and clean up `boundsByScene`/`posedScenes` inside `evictScene` and `adoptSceneName` exactly the way `viewpointByScene` is handled there.
 
-- [ ] **Step 6: Wire the flag and the resize refit in `CopperStage`**
+- [ ] **Step 7: Wire the flag and the resize refit in `CopperStage`**
 
 In `web/app/components/stage/CopperStage.client.vue`:
 
@@ -1425,7 +1448,7 @@ and in the observer, after the existing `handleResize()` call:
 
 The `width === 0 || height === 0` early return above it already guarantees the hook never sees a degenerate box.
 
-- [ ] **Step 7: Run the unit suite**
+- [ ] **Step 8: Run the unit suite**
 
 Run from `web/`:
 
@@ -1435,11 +1458,11 @@ yarn test
 
 Expected: PASS. `useCopperStage.test.ts` and `CopperStage.test.ts` will need their fakes extended with `camera: { fov: 45, position: { set() {} }, updateProjectionMatrix() {} }` and an `aspect()` on the stage stub.
 
-- [ ] **Step 8: See it**
+- [ ] **Step 9: See it**
 
 Run `yarn dev` and open `http://localhost:3158/cancer-dcis/mri`. The volume should now fill most of the panel height with a small margin, instead of a quarter of it. Compare against the client's screenshot. Then drag to rotate, collapse the content panel from the header, and confirm the view does **not** jump back — that is `posedScenes` working. Press `Reset view`, collapse the panel again, and confirm it now does refit.
 
-- [ ] **Step 9: Settle the up-vector question, or hand it to the client**
+- [ ] **Step 10: Settle the up-vector question, or hand it to the client**
 
 The spec's §6.3 records a pre-existing inconsistency this task must not silently paper over: `density-*/right/mri_view.json` has `upVector: [0, 1, 0]` and every lesion case's has `[0, -1, 0]`, so the two groups' MRIs are displayed upside down relative to each other. The client did not report it, and flipping a medical image the wrong way is worse than leaving it inconsistent.
 
@@ -1457,7 +1480,7 @@ Screenshot the MRI panel on both, side by side with this branch's `/density-c/mr
 
 Either way, write the outcome down. An investigation with no recorded result gets redone.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add web/app/composables/fitToView.ts web/test/fitToView.test.ts web/app/composables/useModalityScene.ts web/app/composables/useCopperStage.ts web/app/composables/copper-types.ts web/app/components/stage/CopperStage.client.vue web/test/useCopperStage.test.ts web/test/CopperStage.test.ts
