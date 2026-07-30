@@ -49,7 +49,8 @@ const NRRD_STALL_TIMEOUT_MS = 15_000
  *
  *   0.4*(163,147,42) + 0.6*(251,247,248) = (216,207,166)  -- khaki
  *
- * which is exactly the "太土了" the human reported, and is reproduced
+ * which is exactly the drab, dated colour the human reported, and is
+ * reproduced
  * pixel-for-pixel by a screenshot of this app. Nothing is wrong with the
  * model or the material; the background changed underneath it.
  *
@@ -290,9 +291,9 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
    * three files (`density-1/left/density25.glb`,
    * `density-1/middle/m3d.nrrd`, `density-1/right/mri.nrrd`), so stepping
    * between them built a second scene per modality and paid for a second
-   * copy of a 21MB volume -- which is what the human saw: "The Breast 页面
-   * 和 density-A 页面他们就是完全一样的内容，直接复用就行了，为何要反复
-   * 渲染？！". The same waste applied five times over to the lesion cases,
+   * copy of a 21MB volume -- which is what the human saw: The Breast and
+   * density-A are exactly the same content, so just reuse it; why render
+   * it twice? The same waste applied five times over to the lesion cases,
    * which all borrow `density-3/left/density75.glb` for their anatomy.
    *
    * `slug` stays in the signature because every call site has it and the
@@ -985,9 +986,16 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
               // 3D modalities only, exactly like the legacy app: the flat
               // branch above returns before this, and Model.vue:267-283 put
               // the box in the same `else`.
-              void addVolumeBoundingBox(target, volume.RASDimensions)
+              //
+              // Resolved AFTER the box lands. `addVolumeBoundingBox` is
+              // async, and rendering here is on demand, so a fire-and-
+              // forget call added the wireframe one microtask after
+              // `load()` had drawn its only frame -- invisible until the
+              // reader touched the canvas. The catch keeps it decorative.
               const z = slices.z
-              resolve({ max: z.MaxIndex, raw: z, mesh: meshes.z })
+              void addVolumeBoundingBox(target, volume.RASDimensions)
+                .catch(() => {})
+                .then(() => resolve({ max: z.MaxIndex, raw: z, mesh: meshes.z }))
             }
           },
           { openGui: false },
@@ -1121,8 +1129,8 @@ function disposeUnusedSlicePlane(mesh: NrrdMesh) {
  * REPLACES the material, as the legacy app does. An earlier version instead
  * mutated the GLB's own material in place -- setting `transparent`,
  * `opacity` and `color` on it -- to avoid importing `three` here. That is
- * not the same thing, and it is what the human meant by "颜色不是很对啊 ...
- * 太土了":
+ * not the same thing, and it is what the human meant by the colour being
+ * off, and drab:
  *
  *   - `material.color` MULTIPLIES `material.map` in three. The GLB's fat
  *     mesh carries a flesh-toned baseColor texture, so tinting it olive

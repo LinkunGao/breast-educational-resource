@@ -64,11 +64,8 @@ describe('body text meets AA on every light surface', () => {
 })
 
 describe('every ink used for TEXT meets AA on white', () => {
-  // `brand` is deliberately absent, and that is the point of the pair of
-  // describes: the design system's Breast Rose is an ACCENT (fills,
-  // indicators, focus rings) and `brand-hover` -- its Deep Burgundy
-  // secondary -- is the ink that goes with it. The band `brand` does have
-  // to stay inside is asserted below.
+  // `brand` is deliberately absent: it is an accent, not an ink. Its own
+  // band is asserted below.
   const inks = [
     'brand-hover',
     'group-anatomy', 'group-benign', 'group-cancer',
@@ -83,13 +80,8 @@ describe('every ink used for TEXT meets AA on white', () => {
 })
 
 describe('documented exceptions stay in the graphics-only band', () => {
-  // Neither colour reaches body-text AA, so both are pinned into the 3:1
-  // graphics band. Asserting BOTH ends is the point: the lower bound stops
-  // one being lightened past the non-text floor, and the upper bound is
-  // what stops `brand` quietly being darkened until it "can" be used as
-  // text again -- which is the exact drift that turned this interface pink
-  // in the first place, and which the design system's §3 forbids in words
-  // a test cannot check.
+  // Both ends matter: the lower bound keeps them over the non-text floor,
+  // the upper one stops `brand` being darkened until it "can" be text.
   for (const name of ['text-subtle', 'brand'] as const) {
     it(`--color-${name} is 3:1..4.5:1 on white`, () => {
       const ratio = contrastRatio(t[name]!, t.surface!)
@@ -110,11 +102,7 @@ describe('the dark reading panel is gone', () => {
     })
   }
 
-  // Same reasoning for the two accents the design-system palette dropped:
-  // `accent-plum` became `--color-mammogram-ink`'s job and `accent-hot`
-  // existed only as a second graphics-band pink, which `brand` now is.
-  // Neither has a use left, and a stray redefinition would be a dead
-  // custom property nobody would notice.
+  // Same for the two accents the design-system palette dropped.
   for (const dead of ['accent-plum', 'accent-hot']) {
     it(`does not define --color-${dead}`, () => {
       expect(t[dead]).toBeUndefined()
@@ -146,28 +134,20 @@ describe('scrollbars are the app\'s own, not the platform default', () => {
   it('draws the bar itself, at an explicit width, with a rounded thumb', () => {
     expect(css).toMatch(/::-webkit-scrollbar\s*\{[^}]*width:\s*10px/)
     expect(css).toMatch(/::-webkit-scrollbar-thumb\s*\{[^}]*border-radius:\s*9999px/)
-    // A transparent border plus padding-box clipping is the only way to
-    // inset a thumb inside its gutter; a thumb has no padding of its own.
+    // The only way to inset a thumb: it has no padding of its own.
     expect(css).toMatch(/::-webkit-scrollbar-thumb\s*\{[^}]*background-clip:\s*padding-box/)
   })
 
   it('removes the stepper arrows', () => {
     // The two buttons at the ends of a Windows scrollbar. Reported
-    // directly: "上下的那两个箭头不允许存在".
+    // directly: the two arrows at the top and bottom must not exist.
     expect(css).toMatch(/::-webkit-scrollbar-button\s*\{[^}]*display:\s*none/)
   })
 
   /**
-   * The regression this file exists to prevent, and it has already
-   * happened once.
-   *
-   * In Chromium, `scrollbar-width` set to anything but `auto` makes the
-   * engine ignore every `::-webkit-scrollbar` rule for that element. A
-   * global `:root { scrollbar-width: thin }` therefore does not merely
-   * fail to help -- it silently switches off the whole treatment above and
-   * hands back the engine's own bar, arrows and all. The standard
-   * properties are allowed here only inside the @supports block that
-   * excludes the engines which honour the pseudo-elements.
+   * A global `scrollbar-width` silently switches the whole treatment above
+   * off in Chromium and hands back the engine's own bar, arrows and all.
+   * This has already happened once.
    */
   it('never sets scrollbar-width outside the Firefox-only @supports block', () => {
     const firefoxOnly = css.match(

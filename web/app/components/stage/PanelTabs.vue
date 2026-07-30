@@ -8,8 +8,9 @@ import type { Case, ModalityId, PanelId } from '~~/content/types'
  * matters for `benign-cyst`, whose middle slot holds both the 3D mammogram
  * and the 2D ultrasound: the reader switches between those two, so the
  * ultrasound is a variant inside the mammogram tab rather than a fourth tab
- * of its own. The client's words were "有的页面可能有 2d 和 3d 的
- * mammogram，他们是不用展开的，是需要切换的，默认先显示 3d 的".
+ * of its own. The client's words were: some pages have both a 2D and a 3D
+ * mammogram; those are not both laid out, the reader switches between
+ * them, and the 3D one comes up first.
  *
  * Three-up has no use for this: each panel is labelled in place there, so a
  * strip would name the same three things twice.
@@ -34,7 +35,8 @@ const emit = defineEmits<{ variant: [{ panel: PanelId, modality: ModalityId }] }
  *
  * Each icon draws HOW THE IMAGE IS MADE, which is the one thing that
  * actually distinguishes the four. An earlier set was abstract geometry and
- * read as exactly that: "你那三个图标有什么含义吗？完全搞不懂".
+ * read as exactly that -- the human could not work out what any of the
+ * three icons was meant to mean.
  *
  *   anatomy     a breast in profile against the chest wall -- the model
  *   mammogram   the same profile flattened between two compression plates
@@ -109,19 +111,10 @@ function onKeydown(event: KeyboardEvent) {
     aria-label="Imaging modalities"
     @keydown="onKeydown"
   >
-    <!--
-      The active underline lives on the <li>, not on the link, because the
-      3D/2D control below is the link's SIBLING rather than its child.
-
-      It used to be nested inside the NuxtLink, which is invalid HTML -- an
-      `<a>`'s content model forbids interactive descendants -- and had a
-      visible consequence the human reported: hovering one of those buttons
-      made the browser show the enclosing link's target in its status bar,
-      because as far as the browser was concerned the pointer was over a
-      link. `@click.prevent` was papering over the same nesting. Out of the
-      anchor, the buttons are buttons: no status-bar URL, no swallowed
-      click, nothing to prevent.
-    -->
+    <!-- The underline is on the <li> because the 3D/2D control is the
+         link's sibling, not its child. Nested inside the anchor it was
+         invalid HTML, and hovering a button showed the link's URL in the
+         browser status bar. -->
     <li
       v-for="t in tabs"
       :key="t.panel.id"
@@ -153,8 +146,7 @@ function onKeydown(event: KeyboardEvent) {
         <span class="whitespace-nowrap">{{ t.panel.label }}</span>
       </NuxtLink>
 
-      <!-- The 3D/2D control, on the active slot only. Beside the tab it
-           belongs to, so the two readings stay adjacent. -->
+      <!-- The 3D/2D control, on the active slot only. -->
       <span
         v-if="t.panel.id === props.activePanel && t.panel.modalities.length > 1"
         data-variant

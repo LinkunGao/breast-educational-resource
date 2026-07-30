@@ -94,9 +94,9 @@ export function fitDistance(
    * is a tall, wide, THIN slab (33 slices), so almost nothing was added
    * for depth and it filled its panel edge to edge, while the MRI's
    * near-cubic volume was pushed far enough back to look half the size
-   * beside it. The human saw the result across three panels: "尽量让所有
-   * 模型的 size 都差不多一样大，你没发现所有的 mammogram 的图像都很大吗？
-   * 大的过分了".
+   * beside it. The human saw the result across three panels: make every
+   * model roughly the same size on screen -- the mammograms are all far
+   * too large.
    *
    * A sphere has no orientation, so the framing no longer depends on which
    * face is toward the camera or on how thin the object is. Two objects of

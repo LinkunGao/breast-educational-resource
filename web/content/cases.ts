@@ -24,7 +24,7 @@ function modality(
 //     (the five lesion cases all borrow density-3's, client feedback item 2)
 
 /** The anatomy model every case without one of its own borrows. The client
- *  named it: "复用 density-3/left/density75.glb". */
+ *  named the file to reuse: density-3/left/density75.glb. */
 const SHARED_ANATOMY_GLB = 'density-3/left/density75.glb'
 /** One preset for every anatomy slot -- there is only one in the catalogue. */
 const ANATOMY_VIEW_PRESET = 'left_breast_view.json'

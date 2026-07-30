@@ -68,8 +68,9 @@ export const useViewerStore = defineStore('viewer', () => {
    * Without this, every case page opens on its first slot (anatomy),
    * because that is what the URL falls back to -- so a reader comparing the
    * MRI across four density grades had to re-pick MRI on each one. The
-   * human asked for it directly: "点击过后，就算切换了页面也要记住，返回
-   * 来时也要显示之前高亮的 panel".
+   * human asked for it directly: once a panel has been clicked, remember
+   * it even across a page change, and highlight the same one on the way
+   * back.
    *
    * Deliberately a SLOT, not a modality: `benign-cyst` is the only case
    * with a 2D ultrasound, so remembering `ultrasound` would mean every

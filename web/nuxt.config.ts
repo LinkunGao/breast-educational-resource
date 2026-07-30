@@ -149,29 +149,13 @@ export default defineNuxtConfig({
 
   app: {
     /**
-     * Keeps every page's component instance alive across navigation.
+     * The case page owns the single WebGLRenderer and every scene decoded
+     * into it, so leaving for /about used to dispose the GPU context and
+     * re-download everything on the way back.
      *
-     * This is here for one reason: the case page owns the single
-     * `WebGLRenderer` and every scene decoded into it (see
-     * `useCopperStage`'s `onScopeDispose`, which calls `renderer.dispose()`).
-     * `app/utils/pageKey.ts` already pins one instance across all nine cases,
-     * so case-to-case navigation keeps its cache -- but `/about` is a
-     * different route, so leaving the case page unmounted the stage, tore the
-     * GPU context down, and every model and volume was downloaded and decoded
-     * again on the way back. The human reported exactly that: "为何从 about
-     * 页面跳转回来之后，还有重新加载已经加载过了的模型？"
-     *
-     * Set HERE rather than as `definePageMeta({ keepalive: true })` on the
-     * case page, and the difference is not stylistic: `NuxtPage` reads the
-     * keepalive config off the CURRENT route's meta, so a per-page flag means
-     * the `<KeepAlive>` wrapper itself disappears the moment `/about` is the
-     * current route -- taking the cache, and the renderer, with it. A default
-     * on `app` keeps the wrapper mounted for every route, which is the only
-     * arrangement that survives the round trip.
-     *
-     * The cost is three WebGL contexts held while the reader is on `/about`.
-     * Browsers cap live contexts around 16, and this app has exactly one page
-     * that builds any.
+     * On `app`, not `definePageMeta`: NuxtPage reads keepalive off the
+     * CURRENT route's meta, so a per-page flag removes the <KeepAlive>
+     * wrapper -- and the cache with it -- the moment /about is current.
      */
     keepalive: true,
 
@@ -185,8 +169,8 @@ export default defineNuxtConfig({
        * browser tab, a bookmark, a search result and a shared link are all
        * places where a reader who does not speak te reo gets the title and
        * nothing else, and there it says nothing about what the site is. The
-       * human's question was exactly that: "你认为把 Te Uma 当做网站的
-       * title 合理吗？"
+       * human's question was exactly that: is "Te Uma" on its own a
+       * reasonable title for the site?
        */
       title: 'Breast Educational Resource',
       htmlAttrs: { lang: 'en' },

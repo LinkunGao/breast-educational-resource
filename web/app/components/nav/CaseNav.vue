@@ -9,7 +9,7 @@ import { GROUP_INK } from '~/utils/groupInk'
  * This is what the layout's `prevnext` slot was reserved for. It stood empty
  * behind a "Placeholder: prev/next case navigation (Task 6)" fallback that
  * shipped to the browser and was the first thing the human asked about
- * ("这个 Placeholder ... 是什么东西？").
+ * (the human asked what that "Placeholder" was).
  *
  * Order comes from `enabledCases()` -- the same declaration order the sidebar
  * groups and renders, so "next" always means the entry visibly below the
@@ -38,15 +38,9 @@ const neighbours = computed<{ previous?: Case, next?: Case }>(() => {
 </script>
 
 <template>
-  <!--
-    `@container`, and the breakpoint below is a CONTAINER query, because
-    this nav lives in the content panel -- 400px wide at xl on a 1600px
-    screen. The two links used to sit side by side under `sm:grid-cols-2`,
-    a VIEWPORT breakpoint, so on any desktop they were forced into two
-    ~176px columns and a heading like "Scattered fibroglandular densities"
-    broke across three lines. Asking the panel how wide it actually is
-    stacks them there and pairs them only where there is room.
-  -->
+  <!-- A CONTAINER query, not `sm:`: this nav lives in the 400px content
+       panel, where a viewport breakpoint forced two ~176px columns and
+       broke long headings across three lines. -->
   <nav
     v-if="neighbours.previous || neighbours.next"
     aria-label="Previous and next case"
@@ -54,20 +48,9 @@ const neighbours = computed<{ previous?: Case, next?: Case }>(() => {
   >
     <ul class="grid gap-3 @[30rem]:grid-cols-2">
       <li v-if="neighbours.previous">
-        <!--
-          A card per design system §11, and the reason the earlier boxed
-          version was reverted no longer applies: back then these sat
-          directly under the stage's control bar and read as two more
-          buttons competing with it. Each stage carries its own bar inside
-          its own panel now, so this column ends with the case copy and
-          nothing else -- there is nothing left for a card to compete with,
-          and a bordered surface is what says "this is somewhere to go"
-          rather than "this is one more line of text".
-
-          The lift on hover is 1px and the shadow is §16's small one. §15
-          asks for subtle and professional; anything more at this size
-          reads as a web-app affordance, not a reference.
-        -->
+        <!-- A card (§11). An earlier boxed version was reverted for
+             competing with the stage's control bar; each stage owns its
+             own bar now, so nothing here is left to compete with. -->
         <NuxtLink
           :to="`/${neighbours.previous.slug}`"
           class="group flex h-full flex-col rounded-card border border-border bg-surface p-4
@@ -90,10 +73,8 @@ const neighbours = computed<{ previous?: Case, next?: Case }>(() => {
         </NuxtLink>
       </li>
 
-      <!-- `@[30rem]:col-start-2` keeps "next" in the right-hand column when
-           there is no "previous" (the overview case), so the pair reads as
-           one strip in both states instead of the single card jumping to
-           the left edge. -->
+      <!-- Keeps "next" in the right-hand column when there is no
+           "previous" (the overview case). -->
       <li
         v-if="neighbours.next"
         :class="neighbours.previous ? '' : '@[30rem]:col-start-2'"

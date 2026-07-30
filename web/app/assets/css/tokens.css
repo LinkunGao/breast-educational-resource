@@ -1,31 +1,12 @@
 @import "tailwindcss";
 
-/* Tailwind 4 CSS-first config: variables in @theme also generate utilities.
-   For example --color-brand yields bg-brand / text-brand / border-brand.
+/* Tailwind 4 CSS-first config: variables in @theme also generate utilities
+   (--color-brand yields bg-brand / text-brand / border-brand).
 
-   ── Where these values come from ─────────────────────────────────────────
-   plan/reference/TE_UMA_Breast_Health_Explorer_Design_System.md, the
-   client's own design system. Its stated goal is "Apple Health meets
-   Scientific Visualization"; its stated anti-goal is "I am browsing a pink
-   cancer awareness website" -- which is what this palette had drifted into,
-   because one saturated magenta was doing every job in the interface at
-   once.
-
-   Two structural changes carry most of the difference:
-
-     1. The brand rose got softer AND was demoted from a text colour to an
-        accent colour, with Deep Burgundy taking over as its ink. See
-        --color-brand below.
-     2. The three case groups got their own colours -- blue for anatomy,
-        teal for benign, burgundy for cancer -- straight out of the design
-        system's semantic table (§4). The sidebar used to render all three
-        in the same grey under the same pink highlight; the colour is what
-        makes it read as a clinical taxonomy rather than as a list. */
+   Values come from plan/reference/TE_UMA_Breast_Health_Explorer_Design_
+   System.md; section marks below are its. */
 @theme {
-  /* ── Neutral layer ───────────────────────────────────────────────────
-     Design system §3's neutral palette. Slightly cooler than the greys it
-     replaces, which is what keeps a warm-toned anatomy render sitting ON
-     the page rather than dissolving into it. */
+  /* ── Neutral layer (§3) ──────────────────────── */
   --color-bg:             #F7F8FA;
   --color-surface-sunken: #F1F3F5;
   --color-border:         #E5E7EB;
@@ -34,56 +15,38 @@
   /* ── Card layer ──────────────────────────────── */
   --color-surface:        #FFFFFF;
 
-  /* ── Text ────────────────────────────────────── */
+  /* ── Text ─────────────────────────────────────────────────────────────
+     Both muted values are one step darker than §3's. Its #657080 measures
+     4.39:1 on surface-sunken and its #9AA3AF only 2.55:1 on white, i.e.
+     below even the 3:1 non-text floor. */
   --color-text:           #1B2430;
-  /* Design system §3 gives #657080 here. Darkened one step because that
-     value measures 4.39:1 on --color-surface-sunken -- under the AA body
-     floor on one of the three surfaces this app puts 14px secondary text
-     on. 5.42:1 on white, 4.88:1 on sunken. Pinned in test/tokens.test.ts. */
-  --color-text-muted:     #5F6B7A;
-  /* Likewise §3's #9AA3AF, which measures 2.55:1 on white -- below even the
-     3:1 non-text floor, so there is nothing it could legally be used for.
-     3.65:1: graphics, and text at >=18.66px only. */
-  --color-text-subtle:    #7C8794;
+  --color-text-muted:     #5F6B7A;  /* 5.42:1 white, 4.88:1 sunken */
+  --color-text-subtle:    #7C8794;  /* 3.65:1 — graphics, or >=18.66px */
 
-  /* ── Brand layer ─────────────────────────────────────────────────────
-     Design system §3: Breast Rose, for "Logo accent, Active navigation,
-     Cancer highlights, Primary CTA" -- and explicitly NOT for page
-     backgrounds or large panels.
-
-     #D94F70 measures 3.96:1 on white. That is over §11's 3:1 non-text
-     floor, so it is right for the focus ring, the active-nav indicator,
-     the focused card's border in three-up and the wordmark's dot; and it
-     is UNDER the 4.5:1 body floor, so it is not a text colour.
-     --color-brand-hover (Deep Burgundy, §3's secondary brand, 7.11:1) is
-     the ink that goes with it, and is what every brand-coloured piece of
-     TEXT in the app now uses. Both bands are pinned in
-     test/tokens.test.ts, so a later "just use brand for the label too"
-     fails the suite instead of shipping. */
+  /* ── Brand layer (§3) ─────────────────────────────────────────────────
+     Breast Rose is an ACCENT, not an ink: 3.96:1 on white clears §11's 3:1
+     non-text floor (focus ring, nav indicator, card border) and misses the
+     4.5:1 body floor. Deep Burgundy is the ink that goes with it. Both
+     bands pinned in test/tokens.test.ts. */
   --color-brand:          #D94F70;
   --color-brand-hover:    #8E3650;
   --color-brand-subtle:   #FCE8ED;  /* §14's cancer-tag background */
 
-  /* ── Case-group semantics (design system §4 and §7) ──────────────────
-     ANATOMY / BENIGN CONDITIONS / BREAST CANCER -- the same three groups
-     CaseSidebar renders. These match the corresponding modality inks below
-     on purpose: one palette addressed on two axes (what a case IS, and how
-     it was IMAGED), so a blue group heading and a blue anatomy tab are the
-     same blue rather than two blues that nearly agree. */
+  /* ── Case-group semantics (§4, §7) ────────────────────────────────────
+     Deliberately the same values as the modality inks below: one palette
+     on two axes, so a blue group heading and a blue anatomy tab are the
+     same blue rather than two that nearly agree. */
   --color-group-anatomy:  #285A7A;  /* Medical Blue            7.41:1 */
   --color-group-benign:   #26706D;  /* Supporting Teal, inked  5.80:1 */
   --color-group-cancer:   #8E3650;  /* Deep Burgundy           7.11:1 */
 
-  /* The dark "reading lightbox" tokens that used to live here are gone with
-     the treatment they served: every modality now sits on one background.
-     See CopperStage.client.vue. */
+  /* The dark "reading lightbox" tokens are gone with the treatment they
+     served -- every modality sits on one background now. */
 
-  /* ── Modality semantic colours ───────────────────────────────────────
-     Also §3/§4: blue for anatomy, a deeper blue for MRI (§3 gives Medical
-     Blue both jobs; two tabs cannot share one colour, so MRI takes the
-     darker end), teal for the benign workup's ultrasound, burgundy for
-     mammography. Every ink clears AA body on white AND on its own fill --
-     both pinned in test/tokens.test.ts. */
+  /* ── Modality semantic colours ────────────────────────────────────────
+     §3 gives Medical Blue to both anatomy and MRI; two tabs cannot share
+     one colour, so MRI takes the darker end. Every ink clears AA body on
+     white and on its own fill (test/tokens.test.ts). */
   --color-anatomy-ink:      #285A7A;
   --color-anatomy-fill:     #E7EFF4;
   --color-mammogram-ink:    #8E3650;
@@ -99,12 +62,9 @@
      platform UI faces rather than falling straight to a generic. */
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
-  /* Design system §5's scale. Its H1/H2/H3 land on --text-display/--text-h1/
-     --text-h2 here, because this app's one <h1> (the case heading) renders
-     at --text-h1 on narrow screens and --text-display at xl -- so the page
-     title is the design system's H1 exactly where there is room for it and
-     its H2 where there is not. --text-h3 sits below their scale and is this
-     app's own: the content panel's run-in subheads. */
+  /* §5's scale. Its H1/H2/H3 are --text-display/--text-h1/--text-h2: the
+     case heading renders at h1 when narrow and display at xl. --text-h3 is
+     this app's own, for the content panel's run-in subheads. */
   --text-display:      2.25rem;   /* 36 */
   --text-display--line-height: 2.75rem;  /* 44 */
   --text-h1:           1.75rem;   /* 28 */
@@ -125,10 +85,9 @@
   --radius-ctl:    10px;  /* their button: 40px tall, 10px radius */
   --radius-card:   16px;
 
-  /* ── Shadows (design system §16: "avoid heavy shadows") ──────────────
-     Neutral black at low alpha, not tinted toward the brand. A tinted
-     shadow is a fifth pink surface, and §1 lists "excessive pink usage"
-     first among the things to avoid. */
+  /* ── Shadows (§16) ───────────────────────────────
+     Neutral black, not tinted toward the brand: a tinted shadow is one
+     more pink surface. */
   --shadow-sm: 0 1px 3px rgb(0 0 0 / .08);
   --shadow-md: 0 8px 24px rgb(0 0 0 / .08);
   --shadow-lg: 0 16px 40px rgb(0 0 0 / .10);
@@ -143,50 +102,25 @@
   }
 
   /**
-   * ── Scrollbars ─────────────────────────────────────────────────────────
+   * Scrollbars, drawn rather than thinned. The platform bar is ~15px,
+   * opaque, and on Windows carries a stepper arrow at each end.
    *
-   * Fully drawn here, not merely thinned. The platform bar is ~15px, opaque,
-   * on a grey track, and on Windows it carries a stepper ARROW at each end;
-   * in a 240px sidebar that made it the heaviest thing in the column.
+   * `::-webkit-scrollbar` is the primary treatment, not a fallback: the
+   * standard properties cannot remove the arrows, set an exact width, or
+   * round the thumb -- and in Chromium a non-`auto` `scrollbar-width`
+   * makes the engine ignore every rule below. One mechanism has to win.
    *
-   * ## Why `scrollbar-width: thin` is not used on Chromium
-   *
-   * The standard properties (`scrollbar-width` / `scrollbar-color`) look
-   * like the modern answer and are the wrong tool here: they offer three
-   * widths and two colours and nothing else. They cannot remove the arrow
-   * buttons, cannot set an exact width, and cannot round the thumb. Worse,
-   * in Chromium setting `scrollbar-width` to anything but `auto` makes the
-   * engine IGNORE every `::-webkit-scrollbar` rule on that element -- so a
-   * first attempt that set both got Chromium's built-in "thin" bar,
-   * arrows included, and none of the styling below. The two mechanisms do
-   * not compose; one has to win.
-   *
-   * So: `::-webkit-scrollbar` is the primary treatment, since it is the one
-   * that can actually draw what this needs, and it covers Chrome, Edge and
-   * Safari -- every engine this app is used in.
-   *
-   * `-webkit-scrollbar-button` is the arrow, and `display: none` is what
-   * removes it. Zeroing the size as well is not redundant: some builds
-   * reserve the square even for a `display: none` button.
-   *
-   * The thumb is 4px of colour inside a 10px gutter -- `background-clip:
-   * padding-box` behind a transparent border, which is the only way to
-   * inset a scrollbar thumb (it has no padding of its own). The gutter has
-   * to be wide enough to be a comfortable drag target even though the mark
-   * inside it is hairline.
-   *
-   * Colour: `--color-border-strong`, the same hairline grey as the app's
-   * rules, going to `--color-text-subtle` under the pointer. Both are below
-   * the 3:1 non-text floor and allowed to be -- WCAG 1.4.11 exempts
-   * controls whose appearance the user agent determines, and no scroll
-   * container here is reachable only by dragging its bar.
+   * The thumb is 4px inside a 10px gutter; a transparent border plus
+   * padding-box clipping is the only way to inset it. Its grey is under
+   * the 3:1 floor, which WCAG 1.4.11 permits for UA-drawn controls.
    */
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
   }
 
-  /* The stepper arrows at each end. */
+  /* The stepper arrows. Zeroing the size too: some builds reserve the
+     square even for a `display: none` button. */
   ::-webkit-scrollbar-button {
     display: none;
     width: 0;
@@ -210,16 +144,9 @@
     background-color: var(--color-text-subtle);
   }
 
-  /**
-   * Firefox, which has no `::-webkit-scrollbar` at all.
-   *
-   * Scoped by feature detection rather than declared globally, because
-   * declaring it globally is exactly what disabled the block above on
-   * Chromium. `selector(::-webkit-scrollbar)` is true on Chromium and
-   * Safari and false on Firefox, so precisely one of the two treatments is
-   * ever live. Both properties are inherited, so :root reaches every scroll
-   * container in the app.
-   */
+  /* Firefox, which has no `::-webkit-scrollbar`. Feature-detected rather
+     than global, because global is what disabled the block above on
+     Chromium. Inherited, so :root reaches every scroll container. */
   @supports not selector(::-webkit-scrollbar) {
     :root {
       scrollbar-width: thin;

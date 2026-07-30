@@ -276,6 +276,50 @@ describe('useModalityScene', () => {
     expect(modalityScene.viewpoint.value).toEqual(DEFAULT_VIEWPOINT)
   })
 
+  /**
+   * Asserted as ORDERING, not presence: the broken version added the box
+   * too, just one microtask after `load()` had drawn its only frame, so
+   * it was invisible until the reader touched the canvas. Holding the
+   * box's promise open is the only shape that fails against that code.
+   */
+  it('does not finish the load until the volume bounding box is in the scene', async () => {
+    const scene = makeFakeScene()
+    const renderer = makeFakeRenderer(scene)
+    const stage = makeFakeStage(renderer)
+    const modalityScene = useModalityScene(stage)
+
+    let addBox!: () => void
+    const boxPending = new Promise<void>((resolve) => { addBox = resolve })
+    const realStub = (globalThis as unknown as Record<string, unknown>).addVolumeBoundingBox
+    vi.stubGlobal('addVolumeBoundingBox', vi.fn(() => boxPending))
+
+    try {
+      const load = modalityScene.load(
+        'density-a',
+        makeModality({ id: 'mri', asset: 'density-1/right/mri.nrrd' }),
+      )
+      const [, , , callback] = vi.mocked(scene.loadNrrd).mock.calls[0]!
+      callback(fakeVolume(), fakeMeshes(), { z: fakeSlice() })
+
+      let settled = false
+      void load.then(() => { settled = true })
+      // Microtasks, not timers: this suite runs on fake timers.
+      for (let i = 0; i < 20; i++) await Promise.resolve()
+
+      expect(settled, 'load() resolved while the bounding box was still pending').toBe(false)
+      expect(renderer.render, 'a frame was drawn before the box existed').not.toHaveBeenCalled()
+
+      addBox()
+      await load
+      expect(renderer.render).toHaveBeenCalled()
+    }
+    finally {
+      // afterEach's restoreAllMocks does not undo stubGlobal, and this one
+      // shadows test/setup.ts's file-wide stub.
+      vi.stubGlobal('addVolumeBoundingBox', realStub)
+    }
+  })
+
   it('reuses an existing scene instead of recreating it or re-downloading', async () => {
     const scene = makeFakeScene()
     const renderer = makeFakeRenderer(scene)

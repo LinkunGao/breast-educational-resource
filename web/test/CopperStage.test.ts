@@ -438,8 +438,8 @@ describe('CopperStage navigation choreography', () => {
    * keyed by asset rather than by slug, nothing to rebuild either.
    *
    * This used to build a second scene under a second name and decode the
-   * same file twice. The human caught it: "The Breast 页面和 density-A 页面
-   * 他们就是完全一样的内容，直接复用就行了，为何要反复渲染？！"
+   * same file twice. The human caught it: The Breast and density-A are
+   * exactly the same content, so just reuse it -- why render it twice?
    */
   it('reuses the one scene when two cases ship the same asset', async () => {
     const wrapper = mountStage({ slug: 'the-breast', group: 'overview' })

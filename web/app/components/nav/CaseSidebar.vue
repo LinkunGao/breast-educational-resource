@@ -2,10 +2,8 @@
 import { CASE_GROUP_LABEL, enabledCases } from '~~/content/cases'
 import { organisations } from '~~/content/team'
 import type { CaseGroup } from '~~/content/types'
-// Imported rather than left to Nuxt's `utils/` auto-import: the unit suite
-// runs on plain Vitest with the auto-imports stubbed (test/setup.ts), so an
-// implicit reference here would be `undefined` under test and a silent
-// missing class in the DOM.
+// Imported, not auto-imported: the unit suite runs on plain Vitest with
+// Nuxt's auto-imports stubbed out.
 import { GROUP_INK } from '~/utils/groupInk'
 
 const store = useViewerStore()
@@ -27,14 +25,6 @@ const { publicUrl } = useAssetUrl()
  *             off it (deliberately uneven -- 8 spikes at even 45° steps
  *             read as a sun/gear, not a spiculated mass; see below)
  */
-/*
- * The three group headings carry their group's own ink (utils/groupInk.ts).
- * Before this they were all the same grey, and the only colour in the whole
- * panel was the pink active highlight -- which is most of why the client
- * read the interface as a pink awareness site rather than a clinical tool.
- * All three clear AA body on white, so they are safe on a 12px caption.
- */
-
 const GROUP_ICON: Record<Exclude<CaseGroup, 'overview'>, string[]> = {
   density: ['M4 7h16', 'M4 12h16', 'M4 17h16', 'M8 12v5', 'M12 12v5', 'M16 12v5'],
   benign: ['M12 5.5c3.6 0 6.5 2.9 6.5 6.5s-2.9 6.5-6.5 6.5S5.5 15.6 5.5 12 8.4 5.5 12 5.5z'],
@@ -209,25 +199,10 @@ function onKeydown(event: KeyboardEvent) {
       </h2>
       <ul class="flex flex-col gap-0.5">
         <li v-for="c in g.items" :key="c.slug">
-          <!--
-            Design system §8's active state: an 8%-rose fill, a 4px rose
-            indicator down the left edge, and the label in the brand's ink
-            at 600.
-
-            The indicator replaces the small dot that used to sit before
-            every title. A dot present in both states carried the selection
-            only through its own colour, at 6px -- so from more than arm's
-            length the highlight fill was doing all the work on its own.
-            An edge marker is legible at any distance and is what the
-            design system actually specifies. `inset-y-1` insets it from
-            the fill's rounded corners so it reads as a marker on the row
-            rather than as a botched border.
-
-            `hover:bg-surface-sunken` is on the INACTIVE branch only: as a
-            static class it also matched the active row, and because
-            Tailwind emits hover variants after base utilities it won,
-            turning the selected row grey under the pointer.
-          -->
+          <!-- §8's active state: 8% rose fill, 4px rose edge indicator,
+               label in the brand ink. `hover:` sits on the inactive branch
+               only -- as a static class it also matched the active row and
+               won, turning the selected row grey under the pointer. -->
           <NuxtLink
             :to="`/${c.slug}`"
             class="relative flex min-h-11 items-center rounded-ctl pl-4 pr-2 text-body-sm"

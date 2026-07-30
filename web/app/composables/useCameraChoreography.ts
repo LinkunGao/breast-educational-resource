@@ -216,8 +216,9 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
   /*
    * §7.3's `flyTo` (inter-modality camera flight) and §7.4's `orbitIntro`
    * (entrance orbit) were built here and then DELETED at the human's
-   * explicit instruction: "去掉所有的模型和image上的旋转动画", and, asked
-   * separately about the flight, "一起去掉，瞬间切换". Both moved the camera
+   * explicit instruction: remove every rotation animation on the models
+   * and on the images -- and, asked separately about the flight, remove
+   * that as well and switch instantly. Both moved the camera
    * away from wherever the reader had put it, which is precisely what they
    * did not want. §7.2's camera push-in went with them (see
    * CopperStage's `onLocate`).

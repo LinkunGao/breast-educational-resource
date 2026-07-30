@@ -39,10 +39,9 @@ const DRY_RUN = process.argv.includes('--dry-run')
  *
  * An earlier version squared them (`fit: cover`) and the page then clipped
  * the square to a circle. Between the two, every portrait lost its edges and
- * several lost the top of the head: "能不能不要使用圆圈来裁剪，每个人的面貌
- * 都要完全显示出来". Nothing here discards pixels now; the page letterboxes
- * whatever is left over inside a fixed frame, which costs a little empty
- * space and keeps every face whole.
+ * several lost the top of the head; the human asked for no circular crop
+ * and for every face to be fully visible. Nothing here discards pixels
+ * now -- the page letterboxes what is left inside a fixed frame.
  *
  * 240px is 2x the ~120px the tiles render at.
  */
