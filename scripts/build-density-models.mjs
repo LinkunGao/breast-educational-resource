@@ -61,6 +61,13 @@ const { ALL_EXTENSIONS } = await import(`file:///${modules}/@gltf-transform/exte
 const SOURCE = join(root, 'assets-src/modelView/density-3/left/density75.glb')
 const LOBES = 'VH_F_mammary_lobes_L'
 const DUCTS = 'VH_F_main_lactiferous_ducts_L'
+const FAT = 'VH_F_fat_L'
+
+/**
+ * How far the fat-pocket test's box is shrunk about the removed lobe's
+ * centre. See its use below for why shrinking rather than a proximity test.
+ */
+
 
 /**
  * How close a lobe's nearest vertex must come to duct geometry to count as
@@ -407,6 +414,302 @@ function planDuplicates(candidates, prim, ductPoints) {
 }
 
 
+/**
+ * Rebuilds a primitive keeping only the triangles `keep` accepts, compacting
+ * the vertex buffers so nothing unreferenced survives.
+ *
+ * Shares the compaction with `rewriteLobes`; kept separate because that one
+ * also has to emit translated duplicates and this one never does.
+ */
+function filterTriangles(prim, keep) {
+  const idx = prim.getIndices().getArray()
+  const semantics = prim.listSemantics()
+  const src = Object.fromEntries(semantics.map(s => [s, prim.getAttribute(s).getArray()]))
+  const sizes = Object.fromEntries(semantics.map(s => [s, prim.getAttribute(s).getElementSize()]))
+
+  const remap = new Map()
+  const outVerts = Object.fromEntries(semantics.map(s => [s, []]))
+  const outIdx = []
+  let dropped = 0
+
+  for (let t = 0; t < idx.length; t += 3) {
+    if (!keep(t)) { dropped++; continue }
+    for (let k = 0; k < 3; k++) {
+      const v = idx[t + k]
+      let mapped = remap.get(v)
+      if (mapped === undefined) {
+        mapped = outVerts.POSITION.length / 3
+        for (const sem of semantics) {
+          const size = sizes[sem]
+          for (let c = 0; c < size; c++) outVerts[sem].push(src[sem][v * size + c])
+        }
+        remap.set(v, mapped)
+      }
+      outIdx.push(mapped)
+    }
+  }
+
+  for (const sem of semantics) prim.getAttribute(sem).setArray(new Float32Array(outVerts[sem]))
+  prim.getIndices().setArray(
+    outIdx.length > 65535 ? new Uint32Array(outIdx) : new Uint16Array(outIdx),
+  )
+  return dropped
+}
+
+/**
+ * Removes geometry that lived inside lobes which are no longer there.
+ *
+ * Applied to TWO meshes, and the second is the one that actually mattered.
+ *
+ * The fat shell is moulded around the lobes: it carries a lobe-shaped pocket
+ * at every lobe's position. While the lobe is there the pocket is filled and
+ * invisible. Delete the lobe and the empty pocket shows through the
+ * translucent shell as a pale, fat-coloured cluster -- which is what the
+ * human kept pointing at and calling a yellow lobe. Confirmed by tinting the
+ * fat layer green at runtime: those clusters turned green with it while the
+ * real lobes stayed pink. Three earlier rounds looked for bad GEOMETRY and
+ * found none, because the geometry was fine.
+ *
+ * The duct mesh gets the same treatment for the same reason: it carries a
+ * terminal blob inside each lobe, 255-1711 triangles apiece.
+ *
+ * Measured on density75: each of the fifteen real lobes hides 255-1711 duct
+ * triangles, 11,358 of 34,755 in total. The four debris shards hide none,
+ * which is one more piece of evidence that they are not lobes.
+ *
+ * The test is a triangle's centroid falling inside the removed lobe's own
+ * bounding box -- no tuned threshold, and it cannot reach geometry that was
+ * not already hidden by that lobe. It does take the last few millimetres of
+ * the duct that ran INTO the lobe, which is correct: a duct should not end
+ * in mid-air where its lobe used to be.
+ */
+/**
+ * Bounding-box variant, for the DUCT mesh.
+ *
+ * The duct mesh is all interior tubing -- it has no outer skin to punch a
+ * hole in -- so the cheap test is safe there, and it is the right one: what
+ * has to go is the terminal blob that filled the removed lobe's volume.
+ */
+function dropInsideBoxes(doc, removedLobes, meshPrefix, shrink = 1) {
+  if (!removedLobes.length) return 0
+  const mesh = doc.getRoot().listMeshes().find(m => m.getName().startsWith(meshPrefix))
+  const prim = mesh?.listPrimitives()[0]
+  if (!prim) return 0
+
+  const idx = prim.getIndices().getArray()
+  const pos = prim.getAttribute('POSITION').getArray()
+  const boxes = removedLobes.map((l) => {
+    const c = [0, 1, 2].map(a => (l.min[a] + l.max[a]) / 2)
+    const h = [0, 1, 2].map(a => ((l.max[a] - l.min[a]) / 2) * shrink)
+    return { min: [0, 1, 2].map(a => c[a] - h[a]), max: [0, 1, 2].map(a => c[a] + h[a]) }
+  })
+
+  return filterTriangles(prim, (t) => {
+    let x = 0; let y = 0; let z = 0
+    for (let k = 0; k < 3; k++) {
+      const v = idx[t + k] * 3
+      x += pos[v]; y += pos[v + 1]; z += pos[v + 2]
+    }
+    x /= 3; y /= 3; z /= 3
+    for (const b of boxes) {
+      if (x >= b.min[0] && x <= b.max[0]
+        && y >= b.min[1] && y <= b.max[1]
+        && z >= b.min[2] && z <= b.max[2]) return false
+    }
+    return true
+  })
+}
+
+function dropHiddenGeometry(doc, removedLobes, lobePrim, meshPrefix) {
+  if (!removedLobes.length) return 0
+  const mesh = doc.getRoot().listMeshes().find(m => m.getName().startsWith(meshPrefix))
+  const prim = mesh?.listPrimitives()[0]
+  if (!prim) return 0
+
+  // A spatial hash of the removed lobes' own surface points. Proximity to
+  // THAT -- not merely falling inside a bounding box -- is what identifies
+  // the pocket. The bounding-box version punched a visible hole through the
+  // outer skin, because a lobe near the surface has skin inside its box.
+  const lidx = lobePrim.getIndices().getArray()
+  const lpos = lobePrim.getAttribute('POSITION').getArray()
+  const CELL = 0.004
+  const grid = new Map()
+  const key = (a, b, c) => `${a},${b},${c}`
+  let reach = 0
+  for (const lobe of removedLobes) {
+    reach = Math.max(reach, lobe.size * POCKET_MARGIN)
+    for (const t of lobe.tris) {
+      for (let k = 0; k < 3; k++) {
+        const v = lidx[t + k] * 3
+        const kk = key(
+          Math.floor(lpos[v] / CELL),
+          Math.floor(lpos[v + 1] / CELL),
+          Math.floor(lpos[v + 2] / CELL),
+        )
+        let bucket = grid.get(kk)
+        if (!bucket) { bucket = []; grid.set(kk, bucket) }
+        bucket.push(v)
+      }
+    }
+  }
+
+  const span = Math.ceil(reach / CELL)
+  const idx = prim.getIndices().getArray()
+  const pos = prim.getAttribute('POSITION').getArray()
+
+  return filterTriangles(prim, (t) => {
+    let x = 0; let y = 0; let z = 0
+    for (let k = 0; k < 3; k++) {
+      const v = idx[t + k] * 3
+      x += pos[v]; y += pos[v + 1]; z += pos[v + 2]
+    }
+    x /= 3; y /= 3; z /= 3
+
+    const cx = Math.floor(x / CELL); const cy = Math.floor(y / CELL); const cz = Math.floor(z / CELL)
+    for (let a = cx - span; a <= cx + span; a++) {
+      for (let b = cy - span; b <= cy + span; b++) {
+        for (let c = cz - span; c <= cz + span; c++) {
+          for (const v of grid.get(key(a, b, c)) ?? []) {
+            if (Math.hypot(lpos[v] - x, lpos[v + 1] - y, lpos[v + 2] - z) <= reach) return false
+          }
+        }
+      }
+    }
+    return true
+  })
+}
+
+
+/**
+ * Closes every boundary loop in a mesh with a triangle fan.
+ *
+ * After cutting the fat pockets out, the shell has open edges -- and an open
+ * edge in a translucent shell is a hole you can see straight through. A
+ * boundary edge is one used by exactly a single triangle; chaining those
+ * gives the loops, and each loop is filled with a fan to its own centroid.
+ *
+ * A fan is flat, so it is only right for a roughly planar loop. That is what
+ * these are: the cut follows a bounding box through a smooth shell, so the
+ * openings it leaves are shallow. A loop that is not planar would show as a
+ * facet rather than a hole, which is the better failure of the two.
+ */
+function capHoles(doc, meshPrefix) {
+  const mesh = doc.getRoot().listMeshes().find(m => m.getName().startsWith(meshPrefix))
+  const prim = mesh?.listPrimitives()[0]
+  if (!prim) return 0
+
+  const idx = Array.from(prim.getIndices().getArray())
+  const semantics = prim.listSemantics()
+  const attrs = Object.fromEntries(semantics.map(s => [s, Array.from(prim.getAttribute(s).getArray())]))
+  const sizes = Object.fromEntries(semantics.map(s => [s, prim.getAttribute(s).getElementSize()]))
+  const pos = attrs.POSITION
+
+  // Weld by position so edges shared between duplicated corners are seen as
+  // shared. Without this every triangle looks like an island and every edge
+  // like a boundary.
+  const canon = new Map()
+  const key3 = i => `${Math.round(pos[i * 3] * 1e6)},${Math.round(pos[i * 3 + 1] * 1e6)},${Math.round(pos[i * 3 + 2] * 1e6)}`
+  const rep = new Int32Array(pos.length / 3)
+  for (let i = 0; i < rep.length; i++) {
+    const k = key3(i)
+    if (!canon.has(k)) canon.set(k, i)
+    rep[i] = canon.get(k)
+  }
+
+  const edgeCount = new Map()
+  const edgeKey = (a, b) => (a < b ? `${a}_${b}` : `${b}_${a}`)
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = rep[idx[t]]; const b = rep[idx[t + 1]]; const c = rep[idx[t + 2]]
+    for (const [u, v] of [[a, b], [b, c], [c, a]]) {
+      const k = edgeKey(u, v)
+      edgeCount.set(k, (edgeCount.get(k) ?? 0) + 1)
+    }
+  }
+
+  /**
+   * Directed boundary edges, as a multimap.
+   *
+   * A plain vertex->vertex map loses loops: a pinch point where two openings
+   * meet has two outgoing boundary edges, the second `set` overwrites the
+   * first, and one hole is never capped. That left a visible hole in the
+   * shell after the first attempt. Edges are consumed as they are walked, so
+   * every one ends up in exactly one loop.
+   */
+  const outgoing = new Map()
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = rep[idx[t]]; const b = rep[idx[t + 1]]; const c = rep[idx[t + 2]]
+    for (const [u, v] of [[a, b], [b, c], [c, a]]) {
+      if (edgeCount.get(edgeKey(u, v)) !== 1) continue
+      let list = outgoing.get(u)
+      if (!list) { list = []; outgoing.set(u, list) }
+      list.push(v)
+    }
+  }
+  if (!outgoing.size) return 0
+
+  let added = 0
+  for (const [start, list] of outgoing) {
+    while (list.length) {
+      const loop = [start]
+      let cur = list.pop()
+      // Bounded by the edge count: every step consumes one edge.
+      while (cur !== undefined && cur !== start && loop.length < edgeCount.size) {
+        loop.push(cur)
+        cur = outgoing.get(cur)?.pop()
+      }
+      if (loop.length < 3) continue
+
+      // One new vertex at the loop's centroid, attributes averaged so
+      // normals and UVs stay in family with their neighbours.
+      const centre = attrs.POSITION.length / 3
+      for (const sem of semantics) {
+        const size = sizes[sem]
+        for (let c = 0; c < size; c++) {
+          let sum = 0
+          for (const v of loop) sum += attrs[sem][v * size + c]
+          attrs[sem].push(sum / loop.length)
+        }
+      }
+      /**
+       * Wind the fan to agree with the surface it is patching.
+       *
+       * A fan built in whatever order the loop happened to be walked faces
+       * an arbitrary way, and a backwards-facing patch is culled -- so the
+       * hole is still a hole, which is exactly what the first capped build
+       * looked like. The loop's own vertex normals say which way is out.
+       */
+      const nrm = [0, 1, 2].map((c) => {
+        let sum = 0
+        for (const v of loop) sum += attrs.NORMAL?.[v * 3 + c] ?? 0
+        return sum / loop.length
+      })
+      const e1 = [0, 1, 2].map(c => attrs.POSITION[loop[1] * 3 + c] - attrs.POSITION[loop[0] * 3 + c])
+      const e2 = [0, 1, 2].map(c => attrs.POSITION[loop[2] * 3 + c] - attrs.POSITION[loop[0] * 3 + c])
+      const cross = [
+        e1[1] * e2[2] - e1[2] * e2[1],
+        e1[2] * e2[0] - e1[0] * e2[2],
+        e1[0] * e2[1] - e1[1] * e2[0],
+      ]
+      const flip = cross[0] * nrm[0] + cross[1] * nrm[1] + cross[2] * nrm[2] < 0
+
+      for (let i = 0; i < loop.length; i++) {
+        const a = loop[i]
+        const b = loop[(i + 1) % loop.length]
+        if (flip) idx.push(centre, b, a)
+        else idx.push(centre, a, b)
+        added++
+      }
+    }
+  }
+
+  for (const sem of semantics) prim.getAttribute(sem).setArray(new Float32Array(attrs[sem]))
+  prim.getIndices().setArray(
+    attrs.POSITION.length / 3 > 65535 ? new Uint32Array(idx) : new Uint16Array(idx),
+  )
+  return added
+}
+
+
 const baseline = await io.read(SOURCE)
 const baseLobes = baseline.getRoot().listMeshes().find(m => m.getName().startsWith(LOBES))
 if (!baseLobes) throw new Error(`No ${LOBES} mesh in ${SOURCE}`)
@@ -432,7 +735,7 @@ for (const target of TARGETS) {
   const prim = mesh.listPrimitives()[0]
   // Orphans go first, so every ratio below is a fraction of the REAL lobe
   // count rather than of a count inflated by debris.
-  const { attached: islands } = dropOrphans(
+  const { attached: islands, orphans } = dropOrphans(
     findIslands(prim), prim, buildDuctIndex(doc),
   )
 
@@ -456,7 +759,87 @@ for (const target of TARGETS) {
     )
   }
 
+  // Everything leaving the model: the lobes this density does not want, plus
+  // the debris the orphan filter rejected. Both were hiding duct geometry.
+  const removed = [...islands.filter(i => !kept.includes(i)), ...orphans]
+
+  // Diagnostic only: DEBUG_TINT=<mesh-prefix> repaints one mesh bright green
+  // so a render can attribute what is on screen to it. Never set in a real
+  // build; the flag exists because guessing which mesh a colour belongs to
+  // has already cost two wrong fixes.
+  if (process.env.DEBUG_TINT && !['atlas', 'nofat'].includes(process.env.DEBUG_TINT)) {
+    // Clone before tinting: several meshes share one material object here,
+    // so setting the colour in place recolours all of them and proves
+    // nothing. That mistake cost one whole diagnostic round.
+    for (const m of doc.getRoot().listMeshes()) {
+      if (!m.getName().startsWith(process.env.DEBUG_TINT)) continue
+      for (const pr of m.listPrimitives()) {
+        const clone = pr.getMaterial()?.clone()
+        if (!clone) continue
+        clone.setBaseColorFactor([0, 1, 0, 1])
+        pr.setMaterial(clone)
+      }
+    }
+  }
+  if (process.env.DEBUG_TINT === 'nofat') {
+    for (const node of doc.getRoot().listNodes()) {
+      if (node.getMesh()?.getName().startsWith('VH_F_fat_L')) node.dispose()
+    }
+  }
+  if (process.env.DEBUG_TINT === 'atlas') {
+    // One distinct colour per MESH, and each primitive gets its own material
+    // clone first -- several meshes here share `gland_mat`, so tinting in
+    // place recolours all of them at once and the test proves nothing. The
+    // fat shell is dropped so nothing is occluded.
+    const palette = [
+      [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0],
+      [1, 0, 1], [0, 1, 1], [1, 0.5, 0], [0.5, 0, 1],
+    ]
+    let i = 0
+    for (const m of doc.getRoot().listMeshes()) {
+      const colour = palette[i % palette.length]
+      console.log(`  atlas: ${m.getName()} -> rgb(${colour.map(v => Math.round(v * 255)).join(',')})`)
+      for (const pr of m.listPrimitives()) {
+        const clone = pr.getMaterial()?.clone()
+        if (!clone) continue
+        clone.setBaseColorFactor([...colour, 1])
+        pr.setMaterial(clone)
+      }
+      i++
+    }
+    for (const node of doc.getRoot().listNodes()) {
+      if (node.getMesh()?.getName().startsWith('VH_F_fat_L')) node.dispose()
+    }
+  }
+
   const tris = rewriteLobes(doc, prim, kept, duplicates)
+  // The duct terminal that sat inside each removed lobe. Safe by bounding
+  // box: the duct mesh is all interior tubing, with no outer skin to hole.
+  const ductDropped = dropInsideBoxes(doc, removed, DUCTS)
+
+  /**
+   * The fat shell's cavity around each removed lobe, cut out and CAPPED.
+   *
+   * The shell is moulded with a pocket at every lobe's position. Remove the
+   * lobe and the empty pocket shows through the translucent shell as a pale
+   * lobe-shaped ghost -- what the human kept reporting as "yellow lobes",
+   * confirmed by tinting the fat green at runtime and watching them turn
+   * green with it.
+   *
+   * Three cheaper ideas failed first, and the failures are the reason this
+   * one caps: cutting by the full bounding box removed every ghost but
+   * punched a hole clean through the outer skin; a surface-proximity margin
+   * small enough to spare the skin missed the pocket entirely; shrinking the
+   * box left speckled remnants at every factor tried. Recolouring the lobe
+   * as fat instead of deleting it changed nothing at all -- the recoloured
+   * lobe and the pocket it sits in are the same shape in the same place.
+   *
+   * So: cut by the full box, which is what actually clears the ghost, then
+   * close every boundary loop the cut opened. `capHoles` is what makes the
+   * cut safe.
+   */
+  const fatDropped = dropInsideBoxes(doc, removed, FAT)
+  const capped = fatDropped ? capHoles(doc, FAT) : 0
 
   /**
    * Post-condition, and the reason it exists: the previous version of the
@@ -480,7 +863,10 @@ for (const target of TARGETS) {
     `${target.dir}  ${String(Math.round(target.ratio * 100)).padStart(4)}%  `
     + `${String(kept.length + duplicates.length).padStart(2)} lobes `
     + `(${kept.length} kept${duplicates.length ? ` + ${duplicates.length} added` : ''}), `
-    + `${tris.toLocaleString()} triangles -> ${target.file}`,
+    + `${tris.toLocaleString()} triangles`
+    + (fatDropped ? `, fat: -${fatDropped.toLocaleString()} tris +${capped} cap tris` : '')
+    + (ductDropped ? `, duct: -${ductDropped.toLocaleString()} tris` : '')
+    + ` -> ${target.file}`,
   )
   if (DRY_RUN) continue
 
@@ -490,15 +876,35 @@ for (const target of TARGETS) {
 
   // Same compression the asset pipeline applies, so these files are
   // interchangeable with anything `yarn assets` produces.
-  // Byte-for-byte the same invocation optimize-assets.mjs:154 uses, so these
-  // files are indistinguishable from pipeline output. `--simplify false`
-  // matters: mesh simplification on anatomy is not ours to apply silently.
+  /**
+   * `--palette false` and `--join false` are the difference between the
+   * model looking right and looking wrong, and neither is a size decision.
+   *
+   * `palette` bakes every material's flat colour into one tiny atlas -- here
+   * a 32x4 image -- and rewrites the meshes to sample it, merging them onto a
+   * single material. `--texture-compress webp` then runs that atlas through a
+   * LOSSY encoder, and at four pixels tall a lossy encoder bleeds neighbouring
+   * cells into each other. The result: mammary lobes sampling the duct
+   * material's `#dec494` and rendering pale yellow among the pink ones. Three
+   * rounds of geometry analysis found nothing wrong with the geometry, because
+   * nothing was: the colour was destroyed in compression.
+   *
+   * `join` is disabled for a related reason. It merged the source's eight
+   * named meshes down to three, and `tintFatLayer` finds the fat shell by
+   * node name -- a merge that swept another mesh into `VH_F_fat_L` would paint
+   * it translucent amber with no error anywhere.
+   *
+   * Draco still does the real work: 13.7MB of geometry to ~780KB. The palette
+   * atlas it stops producing was 164 bytes.
+   */
   const cli = join(root, 'web/node_modules/@gltf-transform/cli/bin/cli.js')
   execFileSync(process.execPath, [
     cli, 'optimize', raw, out,
     '--compress', 'draco',
     '--texture-compress', 'webp',
     '--simplify', 'false',
+    '--palette', 'false',
+    '--join', 'false',
   ], { stdio: 'inherit' })
   execFileSync(process.execPath, ['-e', `require('fs').unlinkSync(${JSON.stringify(raw)})`])
 }

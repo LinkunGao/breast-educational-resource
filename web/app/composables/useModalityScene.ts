@@ -1046,6 +1046,20 @@ async function tintFatLayer(group: SceneObject): Promise<void> {
       transparent: true,
       opacity: 0.4,
       color: FAT_LAYER_COLOR,
+      /**
+       * LOAD-BEARING. A transparent surface that still writes depth occludes
+       * whatever is drawn behind it, and three draws the opaque lobes BEFORE
+       * the transparent shell -- so the shell's depth writes decided, per
+       * pixel and per draw order, which lobes composited correctly and which
+       * did not. The visible result was that some lobes read pink and others
+       * read a muddy yellow, with nothing in the geometry to explain it:
+       * removing the fat shell shows every lobe is the same pink `#bb6666`.
+       *
+       * `setFade` below already suppresses `depthWrite` for the crossfade and
+       * says why. The same reason applies to the shell's resting state, which
+       * is transparent all the time.
+       */
+      depthWrite: false,
     }) as unknown as SceneObjectChild['material']
   }
   // The GLB's own material (and its textures) are now unreferenced. copper3d
