@@ -99,18 +99,23 @@ const TARGETS = [
 ]
 
 /**
- * How far a duplicated lobe moves, as a fraction of the MEAN LOBE SIZE --
- * an absolute distance in model units, not a fraction of anything else.
+ * How far a duplicated lobe is moved ALONG THE DUCT TREE, as a fraction of
+ * its own size.
  *
- * A first version used 6% of the lobe's distance to the cloud centre, which
- * for a typical lobe worked out to ~0.0012 units: a twentieth of a lobe. The
- * copies landed essentially on top of their originals, adding no visible
- * density at all and inviting z-fighting. Half a lobe is roughly the offset
- * the model's own author used when they duplicated the whole lobes mesh
- * (~0.011 on nodes whose lobes span ~0.022), and it is far short of the
- * ~0.05 that would push one outside the fat layer.
+ * A duplicate is not translated freely. Two earlier versions were, and both
+ * were wrong in the same way. The first used 6% of the distance to the lobe
+ * cloud's centre -- about a twentieth of a lobe -- so copies landed on top
+ * of their originals and added no visible density. The second used half a
+ * lobe toward the centre, which was visible and produced exactly the defect
+ * the whole orphan filter exists to remove: a lobe hanging in the fat with
+ * no duct reaching it. The human found them immediately.
+ *
+ * A duplicate now slides to a different point on the SAME duct, so it is
+ * attached by construction -- two lobes on one duct, which is what a denser
+ * breast actually looks like. This is how far along, measured from the
+ * original's own contact point.
  */
-const DUPLICATE_NUDGE = 0.5
+const DUPLICATE_NUDGE = 0.8
 
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS)
 
@@ -189,7 +194,7 @@ function evenPicks(total, keep) {
  * `duplicates` extra copies, compacting the vertex buffers so nothing
  * unreferenced survives into the output.
  */
-function rewriteLobes(doc, prim, kept, duplicates, cloudCentre) {
+function rewriteLobes(doc, prim, kept, duplicates) {
   const idx = prim.getIndices().getArray()
   const semantics = prim.listSemantics()
   const src = Object.fromEntries(
@@ -229,14 +234,7 @@ function rewriteLobes(doc, prim, kept, duplicates, cloudCentre) {
 
   for (const island of kept) for (const t of island.tris) emit(t, null)
   duplicates.forEach((island, i) => {
-    // Fixed distance, aimed inward. Normalising the direction is what makes
-    // the offset a real displacement rather than a percentage of however far
-    // this particular lobe happens to sit from the centre.
-    const dir = [0, 1, 2].map(a => cloudCentre[a] - island.centroid[a])
-    const len = Math.hypot(...dir) || 1
-    const step = island.size * DUPLICATE_NUDGE
-    const delta = dir.map(d => (d / len) * step)
-    for (const t of island.tris) emit(t, { id: i, delta })
+    for (const t of island.tris) emit(t, { id: i, delta: island.duplicateDelta })
   })
 
   for (const s of semantics) {
@@ -255,6 +253,20 @@ function rewriteLobes(doc, prim, kept, duplicates, cloudCentre) {
  * as the best hit is closer than the shell being examined, so the common
  * case -- a lobe sitting right on its duct -- costs one bucket lookup.
  */
+function ductVertices(doc) {
+  const mesh = doc.getRoot().listMeshes().find(m => m.getName().startsWith(DUCTS))
+  const prim = mesh?.listPrimitives()[0]
+  if (!prim) throw new Error(`No ${DUCTS} mesh in ${SOURCE}`)
+  const pos = prim.getAttribute('POSITION').getArray()
+  const count = prim.getAttribute('POSITION').getCount()
+  // Every 6th vertex. The duct mesh is dense tubing; the planner only needs
+  // somewhere plausible to slide to, and the full set makes its O(n*m) scan
+  // needlessly slow.
+  const out = []
+  for (let i = 0; i < count; i += 6) out.push([pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]])
+  return out
+}
+
 function buildDuctIndex(doc) {
   const mesh = doc.getRoot().listMeshes().find(m => m.getName().startsWith(DUCTS))
   const prim = mesh?.listPrimitives()[0]
@@ -338,6 +350,63 @@ function dropOrphans(islands, prim, nearestDuct) {
 }
 
 
+/**
+ * Works out where each duplicated lobe goes.
+ *
+ * A duplicate slides ALONG the duct tree rather than translating freely
+ * through the fat, which is what makes it attached by construction. For each
+ * lobe: find where it touches a duct, then find another duct vertex roughly
+ * `DUPLICATE_NUDGE` lobe-widths away, and translate by the difference. The
+ * copy lands on the same duct at a different height -- two lobes on one
+ * duct, which is what a denser breast looks like.
+ *
+ * Returns only the duplicates it could place. A lobe whose duct has no room
+ * further along is skipped rather than dropped somewhere invalid, so the
+ * final count can come in under target; the caller reports what it got.
+ */
+function planDuplicates(candidates, prim, ductPoints) {
+  const idx = prim.getIndices().getArray()
+  const pos = prim.getAttribute('POSITION').getArray()
+  const placed = []
+
+  for (const island of candidates) {
+    // The lobe's own contact point on the duct tree, and the duct point it
+    // touches.
+    let best = Infinity
+    let contact = null
+    let anchor = null
+    for (const t of island.tris) {
+      for (let k = 0; k < 3; k++) {
+        const v = idx[t + k] * 3
+        const p = [pos[v], pos[v + 1], pos[v + 2]]
+        for (const q of ductPoints) {
+          const d = Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2])
+          if (d < best) { best = d; contact = p; anchor = q }
+        }
+      }
+    }
+    if (!contact || !anchor) continue
+
+    // Another point on the tree, about one lobe further along.
+    const want = island.size * DUPLICATE_NUDGE
+    let target = null
+    let closest = Infinity
+    for (const q of ductPoints) {
+      const d = Math.hypot(q[0] - anchor[0], q[1] - anchor[1], q[2] - anchor[2])
+      const err = Math.abs(d - want)
+      if (err < closest) { closest = err; target = q }
+    }
+    if (!target || closest > want) continue
+
+    placed.push({
+      ...island,
+      duplicateDelta: [0, 1, 2].map(a => target[a] - anchor[a]),
+    })
+  }
+  return placed
+}
+
+
 const baseline = await io.read(SOURCE)
 const baseLobes = baseline.getRoot().listMeshes().find(m => m.getName().startsWith(LOBES))
 if (!baseLobes) throw new Error(`No ${LOBES} mesh in ${SOURCE}`)
@@ -380,14 +449,31 @@ for (const target of TARGETS) {
   }
   else if (wanted > islands.length) {
     const extra = wanted - islands.length
-    duplicates = evenPicks(islands.length, extra).map(i => islands[i])
+    duplicates = planDuplicates(
+      evenPicks(islands.length, extra).map(i => islands[i]),
+      prim,
+      ductVertices(doc),
+    )
   }
 
-  const cloudCentre = islands
-    .reduce((acc, is) => [acc[0] + is.centroid[0], acc[1] + is.centroid[1], acc[2] + is.centroid[2]], [0, 0, 0])
-    .map(c => c / islands.length)
+  const tris = rewriteLobes(doc, prim, kept, duplicates)
 
-  const tris = rewriteLobes(doc, prim, kept, duplicates, cloudCentre)
+  /**
+   * Post-condition, and the reason it exists: the previous version of the
+   * duplication translated copies through the fat toward the lobe cloud's
+   * centre, which detached every one of them from its duct -- manufacturing
+   * exactly the defect the orphan filter above removes. Nothing caught it
+   * until a human looked at the render. Re-running the same filter over the
+   * FINISHED mesh is what would have.
+   */
+  const { orphans: leftover } = dropOrphans(findIslands(prim), prim, buildDuctIndex(doc))
+  if (leftover.length) {
+    throw new Error(
+      `${target.dir}: ${leftover.length} lobe(s) ended up detached from the duct tree `
+      + `(${leftover.map(o => o.ductDistance.toFixed(5)).join(', ')}). A duplicate was placed `
+      + 'somewhere no duct reaches.',
+    )
+  }
   const out = join(root, 'web/public/modelView', target.dir, 'left', target.file)
 
   console.log(
