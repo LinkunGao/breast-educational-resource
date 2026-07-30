@@ -65,29 +65,43 @@ const store = useViewerStore()
       </span>
     </NuxtLink>
 
-    <!-- Desktop-only (design doc §10.1): the content column's other half of
-         "collapse both panels for projection". Below xl the content pane
-         has no collapse concept (bottom sheet at tablet, inline at phone),
-         so there is nothing for this control to do there. -->
-    <button
-      type="button"
-      class="ml-auto hidden size-11 shrink-0 items-center justify-center rounded-ctl text-text-muted hover:bg-surface-sunken xl:flex"
-      :aria-expanded="store.contentOpen"
-      aria-controls="case-content-panel"
-      aria-label="Toggle content panel"
-      @click="store.contentOpen = !store.contentOpen"
-    >
-      <svg viewBox="0 0 24 24" class="size-5" aria-hidden="true">
-        <rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2" />
-        <line x1="15" y1="5" x2="15" y2="19" stroke="currentColor" stroke-width="2" />
-      </svg>
-    </button>
+    <!--
+      Right-hand header actions.
 
-    <NuxtLink
-      to="/about"
-      class="flex min-h-11 items-center rounded-ctl px-3 text-body-sm text-text-muted hover:bg-surface-sunken hover:text-text"
-    >
-      About
-    </NuxtLink>
+      `ml-auto` lives HERE and not on the first child, which is the fix for
+      client feedback item 10. It used to sit on the content-panel toggle
+      below, which is `hidden ... xl:flex`: below xl that button is
+      display:none and its auto margin goes with it, so the About link had
+      nothing pushing it right and rendered flush against the wordmark. An
+      iPad Air (1180px) shows this; a desktop never does, because there the
+      button exists. A wrapper that is present at every width cannot have
+      that failure mode.
+    -->
+    <div data-header-actions class="ml-auto flex items-center gap-1">
+      <!-- Desktop-only (design doc §10.1): the content column's other half of
+           "collapse both panels for projection". Below xl the content pane
+           has no collapse concept (bottom sheet at tablet, inline at phone),
+           so there is nothing for this control to do there. -->
+      <button
+        type="button"
+        class="hidden size-11 shrink-0 items-center justify-center rounded-ctl text-text-muted hover:bg-surface-sunken xl:flex"
+        :aria-expanded="store.contentOpen"
+        aria-controls="case-content-panel"
+        aria-label="Toggle content panel"
+        @click="store.contentOpen = !store.contentOpen"
+      >
+        <svg viewBox="0 0 24 24" class="size-5" aria-hidden="true">
+          <rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2" />
+          <line x1="15" y1="5" x2="15" y2="19" stroke="currentColor" stroke-width="2" />
+        </svg>
+      </button>
+
+      <NuxtLink
+        to="/about"
+        class="flex min-h-11 items-center rounded-ctl px-3 text-body-sm text-text-muted hover:bg-surface-sunken hover:text-text"
+      >
+        About
+      </NuxtLink>
+    </div>
   </header>
 </template>

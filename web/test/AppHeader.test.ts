@@ -154,4 +154,33 @@ describe('AppHeader', () => {
         .toBe(layout.get('#case-content-panel').attributes('id'))
     })
   })
+
+  describe('right-hand controls stay right-aligned at every width (client feedback item 10)', () => {
+    // The auto margin used to live on the content-panel toggle, which is
+    // `hidden ... xl:flex`. Below xl that button is display:none and takes
+    // its margin with it, so About collapsed back against the wordmark --
+    // visible on an iPad Air (1180px) and invisible on desktop. The margin
+    // has to live on something that is present at every width.
+    it('the auto margin is not on the xl-only content-panel toggle', () => {
+      const wrapper = mountHeader()
+      const toggle = wrapper.get('button[aria-label="Toggle content panel"]')
+      expect(toggle.classes()).not.toContain('ml-auto')
+    })
+
+    it('the auto margin is on a wrapper that renders at every width', () => {
+      const wrapper = mountHeader()
+      const group = wrapper.get('[data-header-actions]')
+      expect(group.classes()).toContain('ml-auto')
+      // Nothing may hide the wrapper itself at any tier -- that would
+      // reintroduce exactly the bug this block exists for.
+      expect(group.classes()).not.toContain('hidden')
+      expect(group.classes().some(c => c.endsWith(':hidden'))).toBe(false)
+    })
+
+    it('the About link is inside that wrapper', () => {
+      const wrapper = mountHeader()
+      const about = wrapper.get('[data-header-actions] a[href="/about"]')
+      expect(about.text()).toBe('About')
+    })
+  })
 })
