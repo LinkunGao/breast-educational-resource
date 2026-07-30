@@ -7,7 +7,8 @@
  * it depends on `sharp`, whose prebuilt native binary fails to load on
  * Node 24 / win32-x64 with ERR_DLOPEN_FAILED, reproducibly and after a
  * clean reinstall. `pngjs` is already a devDependency of `web/` (see
- * web/test/nrrd-gzip.test.ts), is pure JS, and has nothing native to fail.
+ * web/test-browser/stage.spec.ts:3), is pure JS, and has nothing native
+ * to fail.
  *
  * Bilinear resampling is also the correct choice for this input rather
  * than a concession: the source is 88x88 and every output but the 64px
@@ -34,9 +35,11 @@ const publicDir = join(repoRoot, 'web', 'public')
 // resolver only walks node_modules up from the importing file's own
 // directory, so a bare `import ... from 'pngjs'` cannot see
 // web/node_modules. web/ is the repo's only Node project and the root
-// has no package.json of its own (same root cause optimize-assets.mjs
-// documents for @gltf-transform/cli), so resolve the entry point
-// explicitly instead.
+// has no package.json of its own; scripts/build-density-models.mjs:59-60
+// and scripts/extract-team-photos.mjs:29-30 hit the same problem for
+// their own web/-only devDependencies and resolve by explicit path
+// rather than bare specifier, so this does the same (via
+// `pathToFileURL` rather than their manual `file:///` string-building).
 const { PNG } = await import(
   pathToFileURL(join(repoRoot, 'web', 'node_modules', 'pngjs', 'lib', 'png.js')).href
 )
@@ -142,11 +145,69 @@ function ico(entries) {
   return Buffer.concat([header, ...directory, ...entries.map(e => e.png)])
 }
 
+/**
+ * The mode colour of the source's one-pixel border ring, quantised so
+ * near-identical near-blacks count as one bucket.
+ *
+ * A single corner sample is NOT safe here: this source has a solid white
+ * strip across its entire top row (both (0,0) and (87,0) are pure white),
+ * while the mark's real surroundings -- most of the left, right and
+ * bottom edges -- are near-black (e.g. (0,10) = (13,14,14),
+ * (0,44) = (20,20,21), (87,87) = (8,9,10)). A corner sample lands on the
+ * white strip, which is a minority of the ring, and pads with a colour
+ * that visibly contrasts with the image it borders -- the exact "visible
+ * square behind it" this function exists to avoid.
+ *
+ * The border ring is 348 pixels for this 88x88 source: measured directly,
+ * ~181 of those are some shade of near-black and 137 are the white strip,
+ * with a long tail of a few greys. A per-channel mode at fine
+ * granularity still loses to white as a single bucket, because the
+ * near-black pixels form a gradient (roughly 8-30 per channel) that
+ * splits across many fine buckets. Quantising to 32-wide buckets merges
+ * that whole gradient into one bucket, which then clearly outnumbers the
+ * white strip's single bucket -- verified against this actual source.
+ */
+function borderMode(src) {
+  const { width, height, data } = src
+  const QUANT = 32
+  const buckets = new Map()
+  function sample(x, y) {
+    const i = (y * width + x) * 4
+    const r = data[i], g = data[i + 1], b = data[i + 2]
+    const key = [r, g, b].map(v => Math.floor(v / QUANT)).join(',')
+    const bucket = buckets.get(key)
+    if (bucket) {
+      bucket.count++
+      bucket.sum[0] += r
+      bucket.sum[1] += g
+      bucket.sum[2] += b
+    }
+    else {
+      buckets.set(key, { count: 1, sum: [r, g, b] })
+    }
+  }
+  for (let x = 0; x < width; x++) {
+    sample(x, 0)
+    sample(x, height - 1)
+  }
+  for (let y = 1; y < height - 1; y++) {
+    sample(0, y)
+    sample(width - 1, y)
+  }
+  let mode = null
+  for (const bucket of buckets.values()) {
+    if (!mode || bucket.count > mode.count) mode = bucket
+  }
+  return [
+    Math.round(mode.sum[0] / mode.count),
+    Math.round(mode.sum[1] / mode.count),
+    Math.round(mode.sum[2] / mode.count),
+    255,
+  ]
+}
+
 const source = PNG.sync.read(readFileSync(join(publicDir, 'icon.png')))
-/** The source has no alpha channel, so its corner pixel is a real colour
- *  and is what the mark was drawn against. Padding with anything else
- *  would put a visible square behind it. */
-const background = [source.data[0], source.data[1], source.data[2], 255]
+const background = borderMode(source)
 
 function write(name, png) {
   const buffer = PNG.sync.write(png)

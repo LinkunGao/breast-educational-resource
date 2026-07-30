@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { PNG } from 'pngjs'
 import { describe, expect, it } from 'vitest'
 
 /**
@@ -68,7 +69,6 @@ describe('generated PWA icons', () => {
     // Android crops a maskable icon to the centre 80%, so the mark must
     // not reach the edge. The generator pads it; this catches the padding
     // being dropped, which no dimension check would notice.
-    const { PNG } = require('pngjs') as typeof import('pngjs')
     const image = PNG.sync.read(png('maskable-icon-512x512.png'))
     const plain = PNG.sync.read(png('pwa-512x512.png'))
 
@@ -88,5 +88,32 @@ describe('generated PWA icons', () => {
     const edge = Math.floor(512 * 0.05)
     expect(maskableRow.slice(0, edge).every(v => v === corner)).toBe(true)
     expect(plainRow.slice(0, edge).every(v => v === corner)).toBe(false)
+  })
+
+  it('the maskable icon pads with the image\'s own background, not a foreign colour', () => {
+    // A solid, uniform padding colour is not enough on its own: the source
+    // has a solid white strip across its top row, so a naive corner sample
+    // once produced solid white padding around a predominantly near-black
+    // image -- uniform, and wrong. This compares the padding against the
+    // plain 512 icon's own background instead of merely checking
+    // uniformity.
+    const maskable = PNG.sync.read(png('maskable-icon-512x512.png'))
+    const plain = PNG.sync.read(png('pwa-512x512.png'))
+
+    // The plain 512 icon is a 1:1 resize of the source with no padding.
+    // Its top-left CORNER lands on the source's white strip, so that
+    // corner is not representative -- but the vertical midpoint of its
+    // left edge is clear of that strip and samples the mark's real
+    // background instead.
+    const midLeftY = Math.floor(plain.height / 2)
+    const interiorAt = (channel: number) => plain.data[(midLeftY * plain.width) * 4 + channel]!
+
+    // The maskable icon's own corner is solid padding: the resized
+    // content is inset well clear of it.
+    const paddingAt = (channel: number) => maskable.data[channel]!
+
+    for (let channel = 0; channel < 3; channel++) {
+      expect(Math.abs(paddingAt(channel) - interiorAt(channel))).toBeLessThanOrEqual(40)
+    }
   })
 })
