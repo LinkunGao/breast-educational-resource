@@ -165,8 +165,11 @@ function makeFakeCopperModule(): CopperModule {
   return {
     copperRendererOnDemond: vi.fn() as unknown as CopperModule['copperRendererOnDemond'],
     loading: vi.fn(() => makeLoadingBar()),
+    // A `function`, not an arrow: `installTrackballControls` calls this with
+    // `new`, and an arrow function is not a constructor. Returning an object
+    // from a constructor overrides `this`, so the double is what comes back.
     Copper3dTrackballControls: vi.fn(
-      () => makeTrackballDouble(),
+      function () { return makeTrackballDouble() },
     ) as unknown as CopperModule['Copper3dTrackballControls'],
     addBoxHelper: vi.fn(),
   }
@@ -749,14 +752,17 @@ describe('useModalityScene', () => {
     const stage = makeFakeStage(renderer)
     const modalityScene = useModalityScene(stage)
 
-    const fatMaterial = { dispose: vi.fn(), transparent: false, opacity: 1, depthWrite: true, color: { set: vi.fn() } }
+    const fatMaterial = { dispose: vi.fn(), transparent: false, opacity: 1, depthWrite: true, color: { set: vi.fn() }, map: { dispose: vi.fn() } }
     const otherMaterial = { dispose: vi.fn(), transparent: false, opacity: 1, depthWrite: true, color: { set: vi.fn() } }
+    // Stable child objects, not literals built inside `traverse`: the tint
+    // REPLACES `child.material`, and a literal would take the write and be
+    // thrown away, leaving the test asserting against a material production
+    // no longer uses.
+    const fatMesh = { isMesh: true, name: 'VH_F_fat_L', material: fatMaterial as unknown }
+    const glandMesh = { isMesh: true, name: 'VH_F_gland_L', material: otherMaterial as unknown }
     const group = {
       name: '',
-      traverse: (fn: (child: { isMesh: boolean, name: string, material: typeof fatMaterial }) => void) => {
-        fn({ isMesh: true, name: 'VH_F_fat_L', material: fatMaterial })
-        fn({ isMesh: true, name: 'VH_F_gland_L', material: otherMaterial })
-      },
+      traverse: (fn: (child: unknown) => void) => { fn(fatMesh); fn(glandMesh) },
     }
 
     vi.mocked(loadGltfModel).mockResolvedValueOnce({ group: group as never, size: 10 })
@@ -768,9 +774,25 @@ describe('useModalityScene', () => {
     // The new guarantee this app now owns instead of copper3d: without this
     // call the model would decode perfectly and simply never appear.
     expect(scene.scene.add).toHaveBeenCalledWith(group)
-    expect(fatMaterial.transparent).toBe(true)
-    expect(fatMaterial.opacity).toBe(0.4)
-    expect(fatMaterial.color.set).toHaveBeenCalledWith('#a3932a')
+
+    // The fat layer gets a NEW material, not a tweaked one. Tinting the
+    // GLB's own material multiplies the tint into its flesh-toned baseColour
+    // texture, which is what made the model read as mud; the legacy app
+    // replaced the material outright and so does this.
+    const tinted = fatMesh.material as { transparent: boolean, opacity: number, color: { getHexString: () => string } }
+    expect(tinted).not.toBe(fatMaterial)
+    expect(tinted.transparent).toBe(true)
+    expect(tinted.opacity).toBe(0.4)
+    expect(tinted.color.getHexString()).toBe('cb7830')
+
+    // ...and the material it displaced is disposed, texture included. The
+    // density morph swaps models repeatedly; leaking one per swap is the
+    // difference between a bounded and an unbounded texture footprint.
+    expect(fatMaterial.dispose).toHaveBeenCalledTimes(1)
+    expect(fatMaterial.map.dispose).toHaveBeenCalledTimes(1)
+
+    // Every other mesh is left exactly as the GLB authored it.
+    expect(glandMesh.material).toBe(otherMaterial)
     expect(otherMaterial.transparent).toBe(false)
     expect(otherMaterial.color.set).not.toHaveBeenCalled()
   })
@@ -953,7 +975,9 @@ describe('useModalityScene', () => {
 
       expect(next.fat.material.opacity).toBe(0.4)
       expect(next.fat.material.transparent).toBe(true)
-      expect(next.fat.material.color.set).toHaveBeenCalledWith('#a3932a')
+      // A real three material now (the tint replaces rather than mutates),
+      // so this reads the resulting colour instead of a spy call.
+      expect(next.fat.material.color.getHexString()).toBe('cb7830')
       expect(next.gland.material.opacity).toBe(1)
       expect(next.gland.material.transparent).toBe(false)
       expect(next.gland.material.depthWrite).toBe(true)
@@ -983,13 +1007,18 @@ describe('useModalityScene', () => {
       const next = makeAnatomyGroup()
       resolveGltf(next.group)
 
+      // Spied AFTER the load, because the load replaces the fat layer's
+      // material -- the double's own `dispose` mock belongs to a material
+      // that is no longer on the mesh.
+      const disposeFat = vi.spyOn(initial.fat.material as { dispose: () => void }, 'dispose')
+
       const morph = (await modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb')))!
       morph.commit()
       morph.commit()
 
       expect(scene.scene.remove).toHaveBeenCalledTimes(1)
       expect(initial.fat.geometry.dispose).toHaveBeenCalledTimes(1)
-      expect(initial.fat.material.dispose).toHaveBeenCalledTimes(1)
+      expect(disposeFat).toHaveBeenCalledTimes(1)
       expect(objects).toEqual([next.group])
     })
 

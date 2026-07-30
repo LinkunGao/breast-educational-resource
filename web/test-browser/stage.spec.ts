@@ -121,7 +121,7 @@ test.describe('3D stage', () => {
   })
 
   test('renders the anatomy GLB in a real WebGL context', async ({ page }) => {
-    await page.goto('/case/density-a')
+    await page.goto('/density-a')
     await waitForModality(page)
 
     const report = await webglReport(page)
@@ -140,7 +140,7 @@ test.describe('3D stage', () => {
   test('decodes and renders an NRRD volume', async ({ page }) => {
     // density-4 carries this catalogue's smallest volume (10.9MB) and is
     // still a full decode-and-upload of the real shipped asset.
-    await page.goto('/case/density-d/mammogram')
+    await page.goto('/density-d/mammogram')
     await waitForModality(page)
 
     const report = await webglReport(page)
@@ -155,7 +155,7 @@ test.describe('3D stage', () => {
     // Design doc §8.2 -- "switch the scene, not the renderer". A second
     // canvas here means the renderer was rebuilt, which is the leak
     // app.vue's page key exists to prevent.
-    await page.goto('/case/density-d')
+    await page.goto('/density-d')
     await waitForModality(page)
 
     await page.getByRole('link', { name: /3D Mammogram/i }).click()

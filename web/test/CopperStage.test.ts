@@ -151,7 +151,8 @@ vi.mock('copper3d', () => ({
   // Returns a plain object, so `new Copper3dTrackballControls(...)` yields it
   // (a constructor returning an object overrides `this`). Shaped as the
   // trackball, which is what production reads back off `scene.controls`.
-  Copper3dTrackballControls: vi.fn(() => ({
+  // A `function`, not an arrow: this is called with `new`.
+  Copper3dTrackballControls: vi.fn(function () { return ({
     rotateSpeed: 1,
     panSpeed: 0.3,
     noRotate: false,
@@ -163,7 +164,7 @@ vi.mock('copper3d', () => ({
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
     dispose: vi.fn(),
-  })),
+  }) }),
   addBoxHelper: vi.fn(),
 }))
 
@@ -329,18 +330,24 @@ describe('CopperStage navigation choreography', () => {
     await wrapper.setProps({ modality: MRI })
     await settle()
 
-    // Mid-load: nothing has aimed the camera at the incoming preset yet.
-    expect(mriScene.controls.target.x).toBe(0)
+    // Mid-load: the incoming scene has not been framed yet. `loadView` is
+    // what frames it, and it must not have run on a scene with no content.
+    expect(mriScene.loadView).not.toHaveBeenCalled()
 
     finishLoad()
     await settle()
 
-    // The flight landed on the preset -- and, controller correction C7 from
-    // Task 9, it synced `controls.target`, which `loadView` never does.
-    expect(mriScene.camera.position.z).toBeCloseTo(40, 6)
-    expect(mriScene.controls.target.x).toBeCloseTo(1, 6)
-    expect(mriScene.controls.target.y).toBeCloseTo(2, 6)
-    expect(mriScene.controls.target.z).toBeCloseTo(3, 6)
+    // The switch is a hard CUT now -- §7.3's inter-modality camera flight
+    // was deleted at the human's instruction, so this no longer checks a
+    // camera arc. What it still guarantees is the ordering the flight test
+    // was really built around: the modality's own view preset is applied
+    // only once its content has actually arrived. `loadView` writes the
+    // camera AND `controls.target` together (Scene/baseScene.js:88-98),
+    // which is the sync correction C7 called load-bearing.
+    expect(mriScene.loadView).toHaveBeenCalledTimes(1)
+    expect(mriScene.loadView).toHaveBeenCalledWith(
+      expect.objectContaining({ targetPosition: [1, 2, 3] }),
+    )
   })
 
   // Controller correction C12: `the-breast` and `density-a` ship the same

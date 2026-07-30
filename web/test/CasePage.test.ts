@@ -7,7 +7,7 @@ import { splitLede } from '../app/components/content/splitLede'
 import ModalityStepper from '../app/components/stage/ModalityStepper.vue'
 import StageControls from '../app/components/stage/StageControls.vue'
 import { getModality } from '../content/cases'
-import CasePage from '../app/pages/case/[slug]/[[modality]].vue'
+import CasePage from '../app/pages/[slug]/[[modality]].vue'
 
 // This page relies on several Nuxt auto-imports that plain Vitest doesn't
 // provide: useRoute, useHead, and the definePageMeta macro. test/setup.ts

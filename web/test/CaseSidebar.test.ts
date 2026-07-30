@@ -53,12 +53,17 @@ describe('CaseSidebar', () => {
 
   it('lists exactly the enabled cases, never the disabled one', () => {
     const wrapper = mountSidebar()
-    const links = wrapper.findAllComponents(NuxtLinkStub)
+    // Scoped to the case list. The sidebar also carries a partner-logo link
+    // to /about at its foot, which is not a case and must not be counted --
+    // an unscoped `findAllComponents` made this test fail the moment that
+    // link was added, for no defect.
+    const links = wrapper.findAll('li a')
+      .map(el => wrapper.findAllComponents(NuxtLinkStub).find(c => c.element === el.element)!)
     expect(links).toHaveLength(enabledCases().length)
     const hrefs = links.map(l => l.props('to'))
-    expect(hrefs).not.toContain('/case/benign-calcifications')
+    expect(hrefs).not.toContain('/benign-calcifications')
     for (const c of enabledCases()) {
-      expect(hrefs).toContain(`/case/${c.slug}`)
+      expect(hrefs).toContain(`/${c.slug}`)
     }
   })
 
@@ -75,18 +80,18 @@ describe('CaseSidebar', () => {
     const wrapper = mountSidebar()
     const current = wrapper.findAll('a[aria-current="page"]')
     expect(current).toHaveLength(1)
-    expect(current[0]!.attributes('href')).toBe('/case/density-c')
+    expect(current[0]!.attributes('href')).toBe('/density-c')
   })
 
   it('re-renders the active link when the store slug changes', async () => {
     const store = useViewerStore()
     store.caseSlug = 'the-breast'
     const wrapper = mountSidebar()
-    expect(wrapper.get('a[aria-current="page"]').attributes('href')).toBe('/case/the-breast')
+    expect(wrapper.get('a[aria-current="page"]').attributes('href')).toBe('/the-breast')
 
     store.caseSlug = 'cancer-dcis'
     await wrapper.vm.$nextTick()
-    expect(wrapper.get('a[aria-current="page"]').attributes('href')).toBe('/case/cancer-dcis')
+    expect(wrapper.get('a[aria-current="page"]').attributes('href')).toBe('/cancer-dcis')
   })
 
   describe('modal behaviour while it is the below-xl drawer', () => {

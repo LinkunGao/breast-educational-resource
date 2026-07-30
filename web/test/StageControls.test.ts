@@ -21,7 +21,6 @@ function mountBar(props: Partial<InstanceType<typeof StageControls>['$props']> =
       sliceMax: 0,
       settledSliceIndex: 0,
       lesionSliceIndex: 0,
-      film: false,
       ready: true,
       ...props,
     },
@@ -128,8 +127,10 @@ describe('StageControls', () => {
     }
   })
 
-  it('switches to the dark reading-lightbox palette for imaging modalities (§5.3)', () => {
-    expect(mountBar({ film: true }).classes()).toContain('bg-film-bg')
-    expect(mountBar({ film: false }).classes()).toContain('bg-surface')
+  it('has one appearance, not a per-modality palette', () => {
+    // §5.3's dark reading-lightbox variant is gone: every modality sits on
+    // the same background now, so the bar does too. This pins the absence,
+    // because a half-reverted `film` prop would otherwise be invisible.
+    expect(mountBar().classes()).toContain('bg-surface')
   })
 })

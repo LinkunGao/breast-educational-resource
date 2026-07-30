@@ -104,17 +104,14 @@ describe('ModalityStepper: inactive step ring and connector on white (non-text, 
  * Task 10 controller correction C10: the stage became focusable this task
  * (`tabindex="0"`, alongside the keyboard handlers Task 7 said to wait for),
  * so its focus indicator now has to meet §11's 3:1 non-text floor -- against
- * BOTH stage backgrounds, because the same element sits on the light
- * anatomy background and on the dark imaging lightbox depending on the
- * modality. `--color-brand` is the app's one focus colour (tokens.css's
+ * the stage background. There used to be two of them -- a dark "reading
+ * lightbox" for imaging modalities -- and that treatment is gone: every
+ * modality now sits on the light background checked below.
+ * `--color-brand` is the app's one focus colour (tokens.css's
  * `:focus-visible` rule), so a token change that quietly broke this would
  * otherwise only be visible to someone tabbing onto the canvas.
  */
-describe('CopperStage: focus ring on both stage backgrounds', () => {
-  it('the brand focus outline clears 3:1 on the dark imaging lightbox', () => {
-    expect(contrastRatio(t.brand!, t['film-bg']!)).toBeGreaterThanOrEqual(AA_LARGE)
-  })
-
+describe('CopperStage: focus ring on the stage background', () => {
   it('the brand focus outline clears 3:1 on the light anatomy background', () => {
     // The stage paints a gradient from surface-sunken to bg; the ring must
     // clear the floor against either end of it.

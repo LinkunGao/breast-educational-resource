@@ -40,18 +40,51 @@ function makeSliceState(overrides: Partial<{ index: number, max: number }> = {})
 
 /** `pickSpecifiedModel` is made to hit or miss on demand -- the one thing
  * standing between "this drag scrubs" and "this drag orbits". */
-function makeScene(hit: boolean, enableRotate = true): CopperScene {
+function makeScene(hit: boolean, canRotate = true): CopperScene {
   const controls = {
     rotateSpeed: 0,
     panSpeed: 0,
-    enableRotate,
-    enablePan: true,
+    // TrackballControls' locks, not OrbitControls'. Writing `enableRotate`
+    // on a trackball is a no-op, and a test double that accepted the wrong
+    // name is how the real thing shipped broken: one drag both scrubbed the
+    // slice and orbited the camera.
+    noRotate: !canRotate,
+    noPan: false,
+    staticMoving: true,
     enabled: true,
-  } as CopperControls
+    handleResize: vi.fn(),
+  } as unknown as CopperControls
   return {
     controls,
+    requestRenderIfNotRequested: vi.fn(),
     pickSpecifiedModel: vi.fn(() => ({ intersectedObject: hit ? { name: 'z' } : null })),
   } as unknown as CopperScene
+}
+
+/**
+ * A hand-driven `requestAnimationFrame`.
+ *
+ * A drag no longer repaints per pointermove -- it coalesces to one repaint
+ * per frame, because `repaint()` re-extracts the whole plane out of the
+ * volume in JS and doing that 100+ times a second is what made scrubbing
+ * stutter. So a test that dispatches moves and asserts immediately is
+ * asserting before any work has happened. `flushFrame()` is where the work
+ * happens, and having it explicit means the coalescing itself is testable.
+ */
+function makeFrameQueue() {
+  const queue: FrameRequestCallback[] = []
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+    queue.push(cb)
+    return queue.length
+  })
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => { delete queue[id - 1] })
+  return {
+    get pending() { return queue.filter(Boolean).length },
+    flushFrame() {
+      const due = queue.splice(0, queue.length)
+      for (const cb of due) cb?.(0)
+    },
+  }
 }
 
 /** The injected animation driver. `instant` resolves the whole animation in
@@ -138,21 +171,25 @@ describe('useSliceControl', () => {
   })
 
   it('starts a drag from the plane\'s real position, so the first pixel does not jump', () => {
+    const frames = makeFrameQueue()
     const state = makeSliceState({ index: 40, max: 175 })
     const { el } = mountControl(shallowRef(makeScene(true)), shallowRef(state), instantRun())
 
     el.dispatchEvent(pointer('pointerdown', { clientY: 0 }))
     el.dispatchEvent(pointer('pointermove', { clientY: 4 })) // +1 slice
+    frames.flushFrame()
 
     expect(state.raw.index).toBeCloseTo(41 * SPACING, 10)
   })
 
   it('converts a vertical drag into slice numbers and writes copper3d\'s world coordinate', () => {
+    const frames = makeFrameQueue()
     const state = makeSliceState({ index: 10 })
     const { api, el } = mountControl(shallowRef(makeScene(true)), shallowRef(state), instantRun())
 
     el.dispatchEvent(pointer('pointerdown', { clientY: 100 }))
     el.dispatchEvent(pointer('pointermove', { clientY: 140 })) // +40px
+    frames.flushFrame()
 
     // SENSITIVITY is 0.25 slices per pixel: 10 + 40*0.25 = 20 slices, and
     // `raw.index` is a WORLD coordinate, so 20 * spacing[2].
@@ -162,34 +199,61 @@ describe('useSliceControl', () => {
   })
 
   /**
-   * Regression test for the follower's accumulator. An earlier draft used
-   * the ROUNDED, displayed index as the follower's own current value, which
-   * quantised every step: four 1px moves (0.25 slices each) would have
-   * rounded away to nothing instead of summing to exactly one slice. The
-   * same defect also made the follower unable to converge at all once the
-   * remaining distance dropped below half a slice.
+   * The drag distance still accumulates across moves -- four 1px moves at
+   * 0.25 slices each are one whole slice, not nothing -- but the PAINTED
+   * index is always a whole slice, and only one repaint happens per frame
+   * however many moves arrived in it.
+   *
+   * Both halves are load-bearing and they used to be the other way round.
+   * The accumulator has to keep sub-slice precision or a slow drag rounds
+   * away to nothing. The paint has to round, because only whole slices
+   * exist: copper3d floors the value on the way in, so a fractional index
+   * costs a full `repaint()` -- a JS pass over the entire plane -- to
+   * display the picture that was already on screen.
    */
-  it('accumulates sub-slice drag distance instead of rounding it away', () => {
+  it('accumulates sub-slice drag distance but paints whole slices, once per frame', () => {
+    const frames = makeFrameQueue()
     const state = makeSliceState({ index: 0 })
     const { api, el } = mountControl(shallowRef(makeScene(true)), shallowRef(state), instantRun())
 
     el.dispatchEvent(pointer('pointerdown', { clientY: 0 }))
     for (let i = 1; i <= 4; i++) el.dispatchEvent(pointer('pointermove', { clientY: i }))
 
+    // Four moves, and not one repaint yet: they coalesced into one frame.
+    expect(state.raw.repaint).not.toHaveBeenCalled()
+    expect(frames.pending).toBe(1)
+
+    frames.flushFrame()
+    expect(state.raw.repaint).toHaveBeenCalledTimes(1)
     expect(state.raw.index).toBeCloseTo(1 * SPACING, 10)
     expect(api.index.value).toBe(1)
   })
 
+  it('does not repaint at all when a drag has not crossed into the next slice', () => {
+    const frames = makeFrameQueue()
+    const state = makeSliceState({ index: 10 })
+    const { el } = mountControl(shallowRef(makeScene(true)), shallowRef(state), instantRun())
+
+    el.dispatchEvent(pointer('pointerdown', { clientY: 0 }))
+    el.dispatchEvent(pointer('pointermove', { clientY: 1 })) // 0.25 of a slice
+    frames.flushFrame()
+
+    expect(state.raw.repaint).not.toHaveBeenCalled()
+  })
+
   it('clamps at both ends of the volume', () => {
+    const frames = makeFrameQueue()
     const state = makeSliceState({ index: 5, max: 20 })
     const { api, el } = mountControl(shallowRef(makeScene(true)), shallowRef(state), instantRun())
 
     el.dispatchEvent(pointer('pointerdown', { clientY: 0 }))
     el.dispatchEvent(pointer('pointermove', { clientY: 4000 }))
+    frames.flushFrame()
     expect(api.index.value).toBe(20)
     expect(state.raw.index).toBeCloseTo(20 * SPACING, 10)
 
     el.dispatchEvent(pointer('pointermove', { clientY: -4000 }))
+    frames.flushFrame()
     expect(api.index.value).toBe(0)
     expect(state.raw.index).toBeCloseTo(0, 10)
   })
@@ -198,15 +262,17 @@ describe('useSliceControl', () => {
   // Without a gate, one drag both scrubs and orbits, because OrbitControls
   // listens on the same canvas.
   it('ignores a drag that does not start on the slice plane, and leaves rotation alone', () => {
+    const frames = makeFrameQueue()
     const state = makeSliceState({ index: 10 })
     const scene = makeScene(false)
     const { api, el } = mountControl(shallowRef(scene), shallowRef(state), instantRun())
 
     el.dispatchEvent(pointer('pointerdown', { clientY: 100 }))
     el.dispatchEvent(pointer('pointermove', { clientY: 300 }))
+    frames.flushFrame()
 
     expect(api.index.value).toBe(10)
-    expect(scene.controls.enableRotate).toBe(true)
+    expect(scene.controls.noRotate).toBe(false)
   })
 
   it('suppresses camera rotation for the duration of a scrub and restores it afterwards', () => {
@@ -215,10 +281,10 @@ describe('useSliceControl', () => {
     const { el } = mountControl(shallowRef(scene), shallowRef(state), instantRun())
 
     el.dispatchEvent(pointer('pointerdown', { clientY: 0 }))
-    expect(scene.controls.enableRotate).toBe(false)
+    expect(scene.controls.noRotate).toBe(true)
 
     el.dispatchEvent(pointer('pointerup', { clientY: 0 }))
-    expect(scene.controls.enableRotate).toBe(true)
+    expect(scene.controls.noRotate).toBe(false)
   })
 
   // The 2D ultrasound modality ships with rotation already off
@@ -232,7 +298,7 @@ describe('useSliceControl', () => {
     el.dispatchEvent(pointer('pointerdown', { clientY: 0 }))
     el.dispatchEvent(pointer('pointerup', { clientY: 0 }))
 
-    expect(scene.controls.enableRotate).toBe(false)
+    expect(scene.controls.noRotate).toBe(true)
   })
 
   it('restores rotation on pointercancel too, so a cancelled gesture cannot leave the camera locked', () => {
@@ -243,7 +309,7 @@ describe('useSliceControl', () => {
     el.dispatchEvent(pointer('pointerdown', { clientY: 0 }))
     el.dispatchEvent(pointer('pointercancel', { clientY: 0 }))
 
-    expect(scene.controls.enableRotate).toBe(true)
+    expect(scene.controls.noRotate).toBe(false)
   })
 
   it('steps one slice per [ and ] (design doc §11)', () => {
@@ -269,57 +335,75 @@ describe('useSliceControl', () => {
   })
 
   /**
-   * Controller correction C11. The visible number moves every frame; the
-   * announced one must not, or a screen reader queues an utterance per
-   * frame and the app becomes unusable with one on.
+   * Controller correction C11. The visible number moves every frame of a
+   * drag; the announced one must not, or a screen reader queues an utterance
+   * per frame and the app becomes unusable with one on.
+   *
+   * This used to be checked through the injected animation driver, because a
+   * drag used to go through it. It no longer does -- the plane tracks the
+   * pointer directly -- so the invariant is checked against the thing that
+   * actually drives it now: coalesced frames during the drag, one
+   * announcement at pointer-up.
    */
-  it('does not publish the announced index until the scrub actually comes to rest', async () => {
+  it('does not publish the announced index until the scrub actually comes to rest', () => {
+    const frames = makeFrameQueue()
     const state = makeSliceState({ index: 0 })
-    const { run, frames } = steppedRun()
-    const { api, el } = mountControl(shallowRef(makeScene(true)), shallowRef(state), run)
-
-    el.dispatchEvent(pointer('pointerdown', { clientY: 0 }))
-    el.dispatchEvent(pointer('pointermove', { clientY: 40 }))
-
-    // Mid-animation: the eye sees the number move, the screen reader does not.
-    frames[0]!.onFrame(0.5)
-    expect(api.index.value).toBe(5)
-    expect(api.settledIndex.value).toBe(0)
-
-    frames[0]!.onFrame(1)
-    frames[0]!.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
-
-    expect(api.index.value).toBe(10)
-    expect(api.settledIndex.value).toBe(10)
-  })
-
-  /** A superseded follow's own promise still resolves; it must not announce
-   * over the top of the follow that replaced it. */
-  it('announces once for a run of drag updates, not once per update', async () => {
-    const state = makeSliceState({ index: 0 })
-    const { run, frames } = steppedRun()
-    const { api, el } = mountControl(shallowRef(makeScene(true)), shallowRef(state), run)
+    const { api, el } = mountControl(shallowRef(makeScene(true)), shallowRef(state), instantRun())
 
     el.dispatchEvent(pointer('pointerdown', { clientY: 0 }))
     el.dispatchEvent(pointer('pointermove', { clientY: 20 }))
-    el.dispatchEvent(pointer('pointermove', { clientY: 40 }))
+    frames.flushFrame()
 
-    // The first (superseded) follow resolves late, as an interrupted
-    // animation does.
-    frames[0]!.onFrame(0.4)
-    frames[0]!.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
+    // The eye sees the number move; the screen reader does not.
+    expect(api.index.value).toBe(5)
     expect(api.settledIndex.value).toBe(0)
 
-    frames[1]!.onFrame(1)
-    frames[1]!.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(api.settledIndex.value).toBe(api.index.value)
+    el.dispatchEvent(pointer('pointermove', { clientY: 40 }))
+    frames.flushFrame()
+    expect(api.index.value).toBe(10)
+    expect(api.settledIndex.value).toBe(0)
+
+    el.dispatchEvent(pointer('pointerup', { clientY: 40 }))
+    expect(api.settledIndex.value).toBe(10)
   })
+
+  it('announces once for a whole drag, not once per update', () => {
+    const frames = makeFrameQueue()
+    const state = makeSliceState({ index: 0 })
+    const { api, el } = mountControl(shallowRef(makeScene(true)), shallowRef(state), instantRun())
+
+    el.dispatchEvent(pointer('pointerdown', { clientY: 0 }))
+    // Four separate painted frames, each moving the visible number.
+    const seen: number[] = []
+    for (const y of [10, 20, 30, 40]) {
+      el.dispatchEvent(pointer('pointermove', { clientY: y }))
+      frames.flushFrame()
+      seen.push(api.index.value)
+      // Sampled rather than watched: the announcement must not have moved
+      // even once during the gesture.
+      expect(api.settledIndex.value).toBe(0)
+    }
+    expect(seen).toEqual([2.5, 5, 7.5, 10].map(Math.round))
+
+    el.dispatchEvent(pointer('pointerup', { clientY: 40 }))
+    expect(api.settledIndex.value).toBe(10)
+  })
+
+  it('announces the frame the pointer-up beat, so the number read out is the one on screen', () => {
+    const frames = makeFrameQueue()
+    const state = makeSliceState({ index: 0 })
+    const { api, el } = mountControl(shallowRef(makeScene(true)), shallowRef(state), instantRun())
+
+    el.dispatchEvent(pointer('pointerdown', { clientY: 0 }))
+    el.dispatchEvent(pointer('pointermove', { clientY: 40 }))
+    // No flush: the gesture ends before the coalesced frame ran.
+    el.dispatchEvent(pointer('pointerup', { clientY: 40 }))
+
+    expect(api.index.value).toBe(10)
+    expect(api.settledIndex.value).toBe(10)
+    expect(frames.pending).toBe(0)
+  })
+
 
   it('syncFromRaw follows a slice another animation is driving, without announcing it', () => {
     const state = makeSliceState({ index: 0 })

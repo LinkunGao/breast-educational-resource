@@ -63,19 +63,15 @@ describe('default layout', () => {
     expect(positions).toEqual([...positions].sort((a, b) => a - b))
   })
 
-  it('falls back to a clearly-marked Task 6/7 placeholder for every region the page has not filled yet', () => {
-    // Only stage/content are filled (as the real case page does today);
-    // heading/stepper/controls/prevnext should still render something,
-    // named for whichever future task owns it, in the correct position.
+  it('renders nothing at all for a region the page has not filled', () => {
+    // These slots used to carry "Placeholder: case heading (Task 6)" text as
+    // their fallback, and that text shipped to production and was the first
+    // thing the human asked about. An unfilled slot is now empty; the test
+    // that pinned the placeholders is gone with them, replaced by one that
+    // pins their absence.
     const wrapper = mountLayout()
-    for (const [slotName, owner] of [
-      ['case heading', 'Task 6'],
-      ['modality stepper', 'Task 6'],
-      ['control bar', 'Task 7'],
-      ['prev/next case navigation', 'Task 6'],
-    ] as const) {
-      expect(wrapper.text()).toMatch(new RegExp(`Placeholder: ${slotName} \\(${owner}\\)`))
-    }
+    expect(wrapper.text()).not.toMatch(/Placeholder/i)
+    expect(wrapper.text()).not.toMatch(/Task \d/)
   })
 
   it('starts with the drawer closed, so a narrow first load is not covered by it', () => {

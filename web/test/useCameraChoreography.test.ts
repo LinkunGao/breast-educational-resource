@@ -116,6 +116,16 @@ describe('useCameraChoreography', () => {
 
   beforeEach(() => {
     clock = makeFakeClock()
+    // Re-stubbed every test, because `afterEach` deliberately does NOT call
+    // `unstubAllGlobals` (it would wipe setup.ts's lifecycle stubs) and the
+    // reduced-motion test below installs a `matches: true` version that
+    // would otherwise leak forward and silently collapse every later
+    // animation to a single instant frame.
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })))
     vi.stubGlobal('requestAnimationFrame', clock.raf)
     vi.stubGlobal('cancelAnimationFrame', clock.caf)
     vi.spyOn(performance, 'now').mockImplementation(() => clock.now())
@@ -130,383 +140,141 @@ describe('useCameraChoreography', () => {
     // for each test regardless.
   })
 
-  const target: Pose = { position: [10, 0, 0], up: [0, 1, 0], target: [0, 0, 0] }
+  /**
+   * What is left of this composable is the app's single animation DRIVER.
+   *
+   * The camera choreography it was named for -- `flyTo`, `orbitIntro`,
+   * `locateLesion`, and the `captureOrientation`/`applyOrientation` pair
+   * that stitched a flight across two scenes -- was deleted at the human's
+   * instruction; nothing moves the camera on its own initiative any more.
+   * The tests for those went with them.
+   *
+   * These do not: the driver still runs the §7.1 density crossfade and the
+   * slice follower, and every invariant below is one of those two would
+   * silently lose. They drive `animate` directly rather than through a
+   * camera move, which is what they were really testing all along.
+   */
+  const frames: number[] = []
+  const record = (t: number) => { frames.push(t) }
 
-  it('flyTo arcs the camera and reaches the target pose exactly at completion', async () => {
+  beforeEach(() => { frames.length = 0 })
+
+  it('runs to exactly t=1 and resolves', async () => {
     const scene = shallowRef(makeFakeScene([0, 0, 10]))
-    const stage = makeFakeStage()
-    const { camera } = mountChoreography(stage, scene)
+    const { camera } = mountChoreography(makeFakeStage(), scene)
 
-    const flight = camera.flyTo(target, 1000)
+    const run = camera.animate(1000, record)
     clock.advance(500)
     clock.advance(500)
-    await flight
+    await run
 
-    const cam = scene.value!.camera
-    expect(cam.position.x).toBeCloseTo(10, 5)
-    expect(cam.position.y).toBeCloseTo(0, 5)
-    expect(cam.position.z).toBeCloseTo(0, 5)
-    expect(cam.updateProjectionMatrix).toHaveBeenCalled()
+    expect(frames.length).toBeGreaterThan(1)
+    expect(frames[frames.length - 1]).toBe(1)
   })
 
-  // Controller correction C7 -- explicitly called "load-bearing": without
-  // this, the next OrbitControls drag re-aims the camera at whatever
-  // `controls.target` was still holding and undoes the flight.
-  it('syncs controls.target to the flight destination, not just the camera', async () => {
+  it('leases and releases continuous rendering exactly once for a completed animation', async () => {
     const scene = shallowRef(makeFakeScene([0, 0, 10]))
     const stage = makeFakeStage()
     const { camera } = mountChoreography(stage, scene)
 
-    const flight = camera.flyTo({ ...target, target: [3, 1, -2] }, 1000)
-    clock.advance(1000)
-    await flight
-
-    const controlsTarget = scene.value!.controls.target!
-    expect(controlsTarget.x).toBeCloseTo(3, 5)
-    expect(controlsTarget.y).toBeCloseTo(1, 5)
-    expect(controlsTarget.z).toBeCloseTo(-2, 5)
-  })
-
-  it('leases and releases continuous rendering exactly once for a completed flight', async () => {
-    const scene = shallowRef(makeFakeScene([0, 0, 10]))
-    const stage = makeFakeStage()
-    const { camera } = mountChoreography(stage, scene)
-
-    const flight = camera.flyTo(target, 1000)
+    const run = camera.animate(1000, record)
     clock.advance(500)
     clock.advance(500)
-    await flight
+    await run
 
     expect(stage.requestContinuous).toHaveBeenCalledTimes(1)
     expect(stage.releaseContinuous).toHaveBeenCalledTimes(1)
   })
 
-  // Controller correction C3: interrupting must stop the camera exactly
-  // where the last completed frame left it, never snap it to either
-  // endpoint (the original brief's `onFrame(1)` defect).
-  it('interrupt() stops the camera in place, not at the flight\'s start or end pose', async () => {
+  // Controller correction C3: interrupting must stop where the last
+  // completed frame left it, never snap to either endpoint (the original
+  // brief's `onFrame(1)` defect).
+  it('interrupt() stops mid-animation without a final t=1 frame', async () => {
     const scene = shallowRef(makeFakeScene([0, 0, 10]))
     const stage = makeFakeStage()
     const { camera } = mountChoreography(stage, scene)
 
-    const flight = camera.flyTo(target, 1000)
-    clock.advance(300) // partway through -- eased(0.3) != 0 and != 1
-    const cam = scene.value!.camera
-    const midX = cam.position.x
-    const midZ = cam.position.z
+    const run = camera.animate(1000, record)
+    clock.advance(300)
+    const atInterrupt = frames[frames.length - 1]!
+    expect(atInterrupt).toBeGreaterThan(0)
+    expect(atInterrupt).toBeLessThan(1)
 
     camera.interrupt()
-    await flight
+    await run
 
-    expect(midX).toBeGreaterThan(0) // moved off the start pose (0,0,10)...
-    expect(midZ).toBeLessThan(10) // ...toward, but not reaching, the target
-    expect(cam.position.x).toBeCloseTo(midX, 10) // interrupt did not move it further
-    expect(cam.position.z).toBeCloseTo(midZ, 10)
-    expect(stage.releaseContinuous).toHaveBeenCalledTimes(1) // no leaked lease
+    expect(frames[frames.length - 1]).toBe(atInterrupt)
+    expect(stage.releaseContinuous).toHaveBeenCalledTimes(1)
   })
 
-  it('starting a new flyTo mid-flight interpolates from the interrupted pose, not the original start', async () => {
+  it('starting a second animation takes ownership of the first', async () => {
     const scene = shallowRef(makeFakeScene([0, 0, 10]))
     const stage = makeFakeStage()
     const { camera } = mountChoreography(stage, scene)
 
-    void camera.flyTo(target, 1000)
-    clock.advance(500)
-    const cam = scene.value!.camera
-    const interruptedX = cam.position.x
+    const first = camera.animate(1000, record)
+    clock.advance(300)
+    const beforeSecond = frames.length
 
-    const second = camera.flyTo({ position: [0, 0, -10], up: [0, 1, 0], target: [0, 0, 0] }, 1000)
-    // The very first frame of the new flight (t=0, eased=0) should reproduce
-    // exactly the interrupted pose, since `flyTo` reads `currentPose()`
-    // fresh rather than remembering the first flight's original start.
-    clock.advance(0)
-    expect(cam.position.x).toBeCloseTo(interruptedX, 5)
-
+    const second: number[] = []
+    const secondRun = camera.animate(1000, t => second.push(t))
     clock.advance(1000)
-    await second
+    await Promise.all([first, secondRun])
+
+    // The first driver stopped feeding frames the moment the second started.
+    expect(frames.length).toBe(beforeSecond)
+    expect(second[second.length - 1]).toBe(1)
+    // One lease per animation, both released.
+    expect(stage.requestContinuous).toHaveBeenCalledTimes(2)
+    expect(stage.releaseContinuous).toHaveBeenCalledTimes(2)
   })
 
-  // Review round 1, I-3: onScopeDispose only removed the matchMedia
-  // listener before this fix -- a component unmounting mid-animation (e.g.
-  // the user navigates to another case while the 3s entrance orbit is still
-  // running) left the rAF chain rescheduling against a torn-down scope for
-  // as long as the animation had left to run.
-  it('unmounting mid-animation interrupts in place and releases the continuous-render lease immediately', async () => {
+  it('unmounting mid-animation stops it and releases the lease immediately', async () => {
     const scene = shallowRef(makeFakeScene([0, 0, 10]))
     const stage = makeFakeStage()
     const { wrapper, camera } = mountChoreography(stage, scene)
 
-    void camera.flyTo(target, 1000)
+    const run = camera.animate(1000, record)
     clock.advance(300)
-    const cam = scene.value!.camera
-    const midX = cam.position.x
-    const midZ = cam.position.z
+    const atUnmount = frames.length
 
     wrapper.unmount()
+    await run
 
     expect(stage.releaseContinuous).toHaveBeenCalledTimes(1)
-
-    // The cancelled rAF must not still be queued -- advancing the clock
-    // further must not move the camera (or throw against a torn-down scope).
-    expect(() => clock.advance(700)).not.toThrow()
-    expect(cam.position.x).toBeCloseTo(midX, 10)
-    expect(cam.position.z).toBeCloseTo(midZ, 10)
+    clock.advance(1000)
+    expect(frames.length).toBe(atUnmount)
   })
 
-  // Review round 1, M-9: a throwing frame callback used to call `finish()`
-  // (which resolves) and then rethrow into the rAF dispatch, where nothing
-  // downstream could catch it -- an `await camera.flyTo(pose);
-  // showHighlight()` caller would proceed as though the flight had landed.
-  // It must REJECT instead, so a caller genuinely learns the flight failed.
-  it('a frame callback that throws rejects the flight and still releases the continuous-render lease', async () => {
+  // Task 9's M-9: a throwing frame callback must not strand the lease. It is
+  // the whole reason the release lives in a `finally`.
+  it('a frame callback that throws rejects the animation and still releases the lease', async () => {
     const scene = shallowRef(makeFakeScene([0, 0, 10]))
     const stage = makeFakeStage()
     const { camera } = mountChoreography(stage, scene)
-    vi.mocked(scene.value!.camera.lookAt).mockImplementationOnce(() => { throw new Error('boom') })
 
-    const flight = camera.flyTo(target, 1000)
-    // Suppress the unhandled-rejection warning race: the assertion below
-    // attaches its own rejection handler, but do it eagerly too so nothing
-    // depends on ordering.
-    flight.catch(() => {})
-    clock.advance(500)
+    const run = camera.animate(1000, () => { throw new Error('frame blew up') })
+    clock.advance(100)
 
-    await expect(flight).rejects.toThrow('boom')
+    await expect(run).rejects.toThrow('frame blew up')
     expect(stage.releaseContinuous).toHaveBeenCalledTimes(1)
   })
 
-  it('reduced motion collapses flyTo to a single instant jump, with no continuous-render lease taken at all', async () => {
+  it('reduced motion collapses an animation to one instant t=1 frame, with no lease', async () => {
     const scene = shallowRef(makeFakeScene([0, 0, 10]))
     const stage = makeFakeStage()
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })))
     const { camera } = mountChoreography(stage, scene)
-    camera.prefersReducedMotion.value = true
 
-    await camera.flyTo(target, 1000)
+    await camera.animate(1000, record)
 
-    const cam = scene.value!.camera
-    expect(cam.position.x).toBeCloseTo(10, 5)
-    expect(cam.position.z).toBeCloseTo(0, 5)
+    expect(frames).toEqual([1])
     expect(stage.requestContinuous).not.toHaveBeenCalled()
     expect(stage.releaseContinuous).not.toHaveBeenCalled()
-    expect(stage.renderer.value?.render).toHaveBeenCalledTimes(1)
-    expect(clock.raf).not.toHaveBeenCalled()
-  })
-
-  // Review round 2 deleted a test that stood here, "the instant path also
-  // rejects (never hangs) when its frame callback throws" (M-8). It passed
-  // identically with or without the try/catch M-8 added: `onFrame(1)` sits
-  // directly in the `new Promise((resolve, reject) => { ... })` executor's
-  // own synchronous call frame, and a synchronous throw from a Promise
-  // executor auto-rejects per spec, with or without an explicit
-  // `reject()`. The test restated a language guarantee, not this file's own
-  // code, and would pass against a version of `animate()` with the
-  // try/catch stripped back out -- exactly the "would pass whether or not
-  // the code works" case this task's brief asks to delete rather than keep.
-  // The try/catch itself stays: it is a legitimate guard against a future
-  // `await` being introduced above `onFrame(1)`, which WOULD reintroduce a
-  // real hang. Just don't re-add a test for it that can't fail.
-
-  // Review round 1, I-4: every entry to `animate()` -- including the
-  // instant/reduced-motion path, not only the animated one -- must cancel
-  // whatever animation was already running, or the running one's own
-  // still-queued next frame fires right after and undoes the instant jump.
-  it('the instant path takes ownership of a running animation instead of letting it keep going', async () => {
-    const scene = shallowRef(makeFakeScene([0, 0, 10]))
-    const stage = makeFakeStage()
-    const { camera } = mountChoreography(stage, scene)
-
-    const orbit = camera.orbitIntro(1000, 0.6) // long-running animated path, lease held
-    clock.advance(500) // orbit mid-swing
-
-    await camera.flyTo(target, 0) // instant path: durationMs<=0
-
-    const cam = scene.value!.camera
-    expect(cam.position.x).toBeCloseTo(10, 5) // snapped straight to the flight's destination
-    expect(cam.position.z).toBeCloseTo(0, 5)
-
-    // The orbit's own rAF must no longer be queued -- advancing the clock
-    // further (to the orbit's own original t=1) must NOT move the camera
-    // back toward the orbit's start pose.
-    clock.advance(500)
-    expect(cam.position.x).toBeCloseTo(10, 5)
-    expect(cam.position.z).toBeCloseTo(0, 5)
-
-    expect(stage.requestContinuous).toHaveBeenCalledTimes(1) // only the orbit ever leased
-    expect(stage.releaseContinuous).toHaveBeenCalledTimes(1) // released when interrupted, not leaked
-
-    await orbit // the superseded orbit's own promise still resolves
-  })
-
-  // Controller correction C6: orbitIntro is pure decoration with no
-  // end-state difference, so reduced motion skips it entirely rather than
-  // jumping to some "end" pose (there is no motion to shorten or complete).
-  it('reduced motion skips orbitIntro entirely -- no camera writes, no render, no continuous lease', async () => {
-    const scene = shallowRef(makeFakeScene([0, 0, 10]))
-    const stage = makeFakeStage()
-    const { camera } = mountChoreography(stage, scene)
-    camera.prefersReducedMotion.value = true
-
-    await camera.orbitIntro()
-
-    const cam = scene.value!.camera
-    expect(cam.position.x).toBe(0)
-    expect(cam.position.z).toBe(10)
-    expect(cam.lookAt).not.toHaveBeenCalled()
-    expect(stage.requestContinuous).not.toHaveBeenCalled()
-    expect(stage.renderer.value?.render).not.toHaveBeenCalled()
-  })
-
-  // Controller correction C4: orbitIntro's net rotation is zero by
-  // construction (a swing out and back), so it must land back on exactly
-  // the pose it started from.
-  it('orbitIntro swings out and returns to exactly its starting pose', async () => {
-    const scene = shallowRef(makeFakeScene([0, 0, 10]))
-    const stage = makeFakeStage()
-    const { camera } = mountChoreography(stage, scene)
-
-    const intro = camera.orbitIntro(1000, 0.6)
-    clock.advance(500) // mid-swing: should have moved away from the start
-    const cam = scene.value!.camera
-    expect(cam.position.x).not.toBeCloseTo(0, 3)
-
-    clock.advance(500) // back to t=1 -> net rotation 0
-    await intro
-
-    expect(cam.position.x).toBeCloseTo(0, 4)
-    expect(cam.position.y).toBeCloseTo(0, 4)
-    expect(cam.position.z).toBeCloseTo(10, 4)
-    expect(stage.requestContinuous).toHaveBeenCalledTimes(1)
-    expect(stage.releaseContinuous).toHaveBeenCalledTimes(1)
-  })
-
-  it('locateLesion glides the slice index toward the target and calls repaint every frame', async () => {
-    const scene = shallowRef(makeFakeScene([0, 0, 10]))
-    const stage = makeFakeStage()
-    const { camera } = mountChoreography(stage, scene)
-    const repaint = vi.fn()
-    const raw = { index: 0, MaxIndex: 100, volume: { spacing: [1, 1, 2] }, repaint }
-
-    const glide = camera.locateLesion(raw, 50, { durationMs: 1000 })
-    clock.advance(1000)
-    await glide
-
-    expect(raw.index).toBeCloseTo(100, 5) // 50 slices * spacing 2
-    expect(repaint).toHaveBeenCalled()
-  })
-
-  /**
-   * Fix round 1, Critical. `lesionSliceIndex` is an MRI slice number
-   * (legacy `rightBoundingBoxIndex`, frontend/plugins/data.js:41), but every
-   * lesion case's mammogram volume is far shallower: cancer-dcis is 90 on a
-   * volume whose z dimension is 39 (`sizes: 517 1018 39` in its own NRRD
-   * header), i.e. MaxIndex 38.
-   *
-   * copper3d does no bounds checking of its own:
-   * `VolumeSlice.repaint` -> `Volume.extractPerpendicularPlane`
-   * (bundle.esm.js:60796, :61153) sets the plane mesh's position from the
-   * requested index unconditionally, so an out-of-range index physically
-   * translates the slice plane outside the volume and samples past the end
-   * of `volume.data`. The gate that stops the button appearing on the
-   * mammogram at all is a separate fix (content/cases.ts); this clamp is a
-   * property of the driver, so that NO caller can drive a slice plane out
-   * of its own volume.
-   */
-  it('locateLesion cannot drive the slice plane past the end of its own volume', async () => {
-    const scene = shallowRef(makeFakeScene([0, 0, 10]))
-    const stage = makeFakeStage()
-    const { camera } = mountChoreography(stage, scene)
-    const raw = { index: 0, MaxIndex: 38, volume: { spacing: [1, 1, 2] }, repaint: vi.fn() }
-    const seen: number[] = []
-
-    const locate = camera.locateLesion(raw, 90, { durationMs: 1000, onIndex: n => seen.push(n) })
-    clock.advance(500)
-    clock.advance(500)
-    await locate
-
-    expect(raw.index).toBeCloseTo(38 * 2, 5)
-    // Not just the endpoint: no intermediate frame may overshoot either.
-    expect(Math.max(...seen)).toBeLessThanOrEqual(38)
-  })
-
-  it('locateLesion cannot drive the slice plane below zero', async () => {
-    const scene = shallowRef(makeFakeScene([0, 0, 10]))
-    const stage = makeFakeStage()
-    const { camera } = mountChoreography(stage, scene)
-    const raw = { index: 20, MaxIndex: 38, volume: { spacing: [1, 1, 1] }, repaint: vi.fn() }
-
-    const locate = camera.locateLesion(raw, -5, { durationMs: 1000 })
-    clock.advance(1000)
-    await locate
-
-    expect(raw.index).toBeCloseTo(0, 5)
-  })
-
-  /**
-   * Task 10 controller correction C9 -- explicitly called out as a
-   * collision: this composable has ONE `cancelCurrent` slot, so a camera
-   * dolly started as its own `animate()` call alongside the slice glide
-   * would cancel it (or be cancelled by it). Exactly one lease is proof
-   * that exactly one animation ran.
-   */
-  it('locateLesion drives the camera dolly and the slice glide from a single animation, not two', async () => {
-    const scene = shallowRef(makeFakeScene([0, 0, 20]))
-    const stage = makeFakeStage()
-    const { camera } = mountChoreography(stage, scene)
-    const raw = { index: 0, MaxIndex: 100, volume: { spacing: [1, 1, 2] }, repaint: vi.fn() }
-
-    const locate = camera.locateLesion(raw, 40, { durationMs: 1000, dollyTo: 8 })
-    clock.advance(500)
-    // Both halves have moved together at the halfway point -- neither is
-    // sitting at its start value waiting for the other to finish.
-    const cam = scene.value!.camera
-    expect(raw.index).toBeGreaterThan(0)
-    expect(raw.index).toBeLessThan(80)
-    expect(cam.position.z).toBeLessThan(20)
-    expect(cam.position.z).toBeGreaterThan(8)
-
-    clock.advance(500)
-    await locate
-
-    expect(raw.index).toBeCloseTo(80, 5) // 40 slices * spacing 2
-    expect(cam.position.z).toBeCloseTo(8, 5)
-    expect(stage.requestContinuous).toHaveBeenCalledTimes(1)
-    expect(stage.releaseContinuous).toHaveBeenCalledTimes(1)
-  })
-
-  // "Push in" must never push out. A user who has already zoomed past the
-  // dolly distance would otherwise see the locator pull the camera back.
-  it('locateLesion leaves the camera alone when it is already closer than the dolly distance', async () => {
-    const scene = shallowRef(makeFakeScene([0, 0, 3]))
-    const stage = makeFakeStage()
-    const { camera } = mountChoreography(stage, scene)
-    const raw = { index: 0, MaxIndex: 100, volume: { spacing: [1, 1, 1] }, repaint: vi.fn() }
-
-    const locate = camera.locateLesion(raw, 10, { durationMs: 1000, dollyTo: 8 })
-    clock.advance(1000)
-    await locate
-
-    expect(scene.value!.camera.position.z).toBeCloseTo(3, 10)
-    expect(raw.index).toBeCloseTo(10, 5)
-  })
-
-  it('locateLesion reports the fractional slice number every frame, so a readout can follow it', async () => {
-    const scene = shallowRef(makeFakeScene([0, 0, 10]))
-    const stage = makeFakeStage()
-    const { camera } = mountChoreography(stage, scene)
-    const raw = { index: 0, MaxIndex: 100, volume: { spacing: [1, 1, 2] }, repaint: vi.fn() }
-    const seen: number[] = []
-
-    const locate = camera.locateLesion(raw, 60, { durationMs: 1000, onIndex: n => seen.push(n) })
-    clock.advance(400)
-    clock.advance(600)
-    await locate
-
-    expect(seen.length).toBeGreaterThan(1)
-    expect(seen[seen.length - 1]).toBeCloseTo(60, 5)
-    // Intermediate values, not just the endpoint -- a readout that only
-    // learns the answer at the end sits still and then jumps.
-    expect(seen[0]).toBeGreaterThan(0)
-    expect(seen[0]).toBeLessThan(60)
   })
 
   describe('keyboard camera steps (design doc §11)', () => {
@@ -546,7 +314,10 @@ describe('useCameraChoreography', () => {
       const stage = makeFakeStage()
       const { camera } = mountChoreography(stage, scene)
 
-      void camera.orbitIntro(1000, 0.6)
+      // Any running animation will do -- this used to be `orbitIntro`,
+      // which no longer exists. What is under test is that a key press takes
+      // the driver's single cancel slot, not what the animation was.
+      void camera.animate(1000, () => {})
       clock.advance(300)
       camera.nudgeOrbit(0.2, 0)
       const cam = scene.value!.camera
@@ -556,53 +327,6 @@ describe('useCameraChoreography', () => {
       expect(cam.position.x).toBeCloseTo(afterStepX, 10)
       expect(stage.releaseContinuous).toHaveBeenCalledTimes(1) // no leaked lease
     })
-  })
-
-  // Review round 2, item 1: captureOrientation/applyOrientation had zero
-  // tests, so S1 (the finding correction C7 called "load-bearing") and I-2's
-  // pivot consistency were code-read-verified only. `makeFakeScene` already
-  // builds a `controls.target` -- moving it off the origin and asserting
-  // against it is what these two were missing.
-  it('captureOrientation measures direction relative to controls.target, not a hardcoded origin', () => {
-    const scene = shallowRef(makeFakeScene([5, 0, 13]))
-    const stage = makeFakeStage()
-    const { camera } = mountChoreography(stage, scene)
-
-    // Simulates a scene revisited after an earlier flight had already
-    // re-aimed controls.target away from the origin -- the exact scenario
-    // I-2 covers.
-    scene.value!.controls.target!.set(5, 0, 3)
-
-    // Camera at (5,0,13), pivot at (5,0,3) -> offset (0,0,10), unit dir (0,0,1).
-    const captured = camera.captureOrientation()!
-    expect(captured.dir[0]).toBeCloseTo(0, 10)
-    expect(captured.dir[1]).toBeCloseTo(0, 10)
-    expect(captured.dir[2]).toBeCloseTo(1, 10)
-  })
-
-  // The direct regression test for S1: applyOrientation must aim
-  // `cam.lookAt` at wherever `controls.target` actually is, not an
-  // unconditional (0, 0, 0) -- otherwise the camera ends up looking one
-  // place while `controls.target` still holds another, and the user's next
-  // drag (`controls.update()`) silently re-aims the camera back at the
-  // stale target.
-  it('applyOrientation aims cam.lookAt at controls.target, not a hardcoded origin (S1)', () => {
-    const scene = shallowRef(makeFakeScene([0, 0, 10]))
-    const stage = makeFakeStage()
-    const { camera } = mountChoreography(stage, scene)
-
-    scene.value!.controls.target!.set(5, 2, -3)
-
-    camera.applyOrientation({ dir: [0, 0, 1], up: [0, 1, 0] }, 20)
-
-    const cam = scene.value!.camera
-    // Position is pivot + dir*distance, not just dir*distance from the origin.
-    expect(cam.position.x).toBeCloseTo(5, 10)
-    expect(cam.position.y).toBeCloseTo(2, 10)
-    expect(cam.position.z).toBeCloseTo(17, 10) // -3 + 20
-    // The load-bearing check: lookAt must target the SAME point
-    // controls.target already holds, not (0, 0, 0).
-    expect(cam.lookAt).toHaveBeenCalledWith(5, 2, -3)
   })
 
   it('reads the media query on mount and updates prefersReducedMotion when it changes', () => {

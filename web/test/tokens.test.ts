@@ -35,7 +35,6 @@ const REQUIRED = [
   'bg', 'surface', 'surface-sunken', 'border', 'border-strong',
   'text', 'text-muted', 'text-subtle',
   'brand', 'brand-hover', 'brand-subtle', 'accent-plum', 'accent-hot',
-  'film-bg', 'film-bg-2', 'film-border',
   'anatomy-ink', 'anatomy-fill',
   'mammogram-ink', 'mammogram-fill',
   'ultrasound-ink', 'ultrasound-fill',
@@ -89,10 +88,14 @@ describe('documented exceptions stay in the graphics-only band', () => {
   }
 })
 
-describe('the dark reading panel is readable', () => {
-  for (const film of ['film-bg', 'film-bg-2'] as const) {
-    it(`--color-surface on --color-${film}`, () => {
-      expect(contrastRatio(t.surface!, t[film]!)).toBeGreaterThanOrEqual(AA_BODY)
+describe('the dark reading panel is gone', () => {
+  // §5.3's imaging "reading lightbox" was removed -- every modality sits on
+  // the one light background now. Pinning the ABSENCE of the tokens, because
+  // a half-revert that restored them without restoring the treatment would
+  // otherwise leave three dead custom properties nobody would notice.
+  for (const dead of ['film-bg', 'film-bg-2', 'film-border']) {
+    it(`does not define --color-${dead}`, () => {
+      expect(t[dead]).toBeUndefined()
     })
   }
 })

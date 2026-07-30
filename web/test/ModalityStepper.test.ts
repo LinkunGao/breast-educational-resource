@@ -21,52 +21,60 @@ function mountStepper(active: ModalityId) {
 
 describe('ModalityStepper', () => {
   /**
-   * Regression test for a real bug: the active step's number chip used to
-   * be `bg-current text-surface` on the *same* element. `bg-current`
-   * resolves against that element's own `color`, which `text-surface` had
-   * just set to white -- a 1.00:1 white-on-white chip, on exactly the step
-   * that matters. A `class` string assertion on the old markup would still
-   * have read as "has a background, has white text" and passed; this
-   * asserts there is no `bg-current` at all, and that the chip instead
-   * carries an explicit, modality-specific ink background (whose contrast
-   * against white is separately pinned in nav-contrast.test.ts).
+   * The numbered chips are gone. They existed to carry the step number, and
+   * the step order is now conveyed by the `<ol>` and by arrangement instead
+   * -- see the component's own comment on why four marks per step was three
+   * too many.
+   *
+   * What replaced the chip's job of marking the active step is the ink
+   * colour plus an underline rule, so that is what gets pinned. The old
+   * chip's real bug -- `bg-current text-surface` on one element, resolving
+   * to white-on-white at 1.00:1 -- is unrepresentable now: no element in
+   * this component sets both a background and a foreground.
    */
-  it('the active step\'s number chip never uses bg-current, and pairs an explicit ink background with white text', () => {
+  it('marks the active step with the modality ink and an underline rule, not a chip', () => {
     const wrapper = mountStepper('anatomy')
     const activeLink = wrapper.get('a[aria-current="step"]')
-    const chip = activeLink.find('span')
 
-    expect(chip.classes()).not.toContain('bg-current')
-    expect(chip.classes()).toContain('bg-anatomy-ink')
-    expect(chip.classes()).toContain('text-surface')
-    // The chip is the only element carrying `text-surface`/`bg-*-ink` for
-    // this step -- no leftover nested span duplicating the colour class.
-    expect(activeLink.findAll('span.text-surface')).toHaveLength(1)
+    expect(activeLink.classes()).toContain('text-anatomy-ink')
+    expect(activeLink.classes()).toContain('after:opacity-100')
+    expect(activeLink.classes()).not.toContain('bg-current')
+    expect(wrapper.findAll('.bg-current')).toHaveLength(0)
   })
 
-  it('picks the right ink background per modality, not just for anatomy', () => {
+  it('picks the right ink per modality, not just for anatomy', () => {
     const wrapper = mountStepper('mri')
-    const chip = wrapper.get('a[aria-current="step"]').find('span')
-    expect(chip.classes()).toContain('bg-mri-ink')
-    expect(chip.classes()).not.toContain('bg-anatomy-ink')
+    const activeLink = wrapper.get('a[aria-current="step"]')
+    expect(activeLink.classes()).toContain('text-mri-ink')
+    expect(activeLink.classes()).not.toContain('text-anatomy-ink')
   })
 
-  it('inactive steps ring and connect with text-muted, not the sub-3:1 border-strong', () => {
+  it('gives every step an icon whose paths differ per modality', () => {
+    // The previous icons were abstract geometry with no relationship to the
+    // modality. Nothing here can check that a path LOOKS like a transducer,
+    // but it can check that four distinct drawings exist rather than one
+    // shape recoloured -- which is the failure mode a copy-paste would
+    // produce.
+    const wrapper = mountStepper('anatomy')
+    const drawings = wrapper.findAll('svg').map(
+      svg => svg.findAll('path').map(p => p.attributes('d')).join('|'),
+    )
+    expect(drawings.length).toBeGreaterThan(1)
+    expect(new Set(drawings).size).toBe(drawings.length)
+    for (const d of drawings) expect(d.length).toBeGreaterThan(0)
+  })
+
+  it('inactive steps use text-muted, not the sub-3:1 border-strong', () => {
     const wrapper = mountStepper('anatomy')
     const inactiveLinks = wrapper.findAll('a').filter(a => a.attributes('aria-current') === undefined)
     expect(inactiveLinks.length).toBeGreaterThan(0)
 
     for (const link of inactiveLinks) {
-      const chip = link.find('span')
-      expect(chip.classes()).toContain('border-text-muted')
-      expect(chip.classes()).not.toContain('border-border-strong')
-    }
-
-    const connectors = wrapper.findAll('li > span[aria-hidden="true"].mx-1')
-    expect(connectors.length).toBeGreaterThan(0)
-    for (const connector of connectors) {
-      expect(connector.classes()).toContain('bg-text-muted')
-      expect(connector.classes()).not.toContain('bg-border-strong')
+      expect(link.classes()).toContain('text-text-muted')
+      expect(link.classes()).not.toContain('text-border-strong')
+      // The underline rule exists on every step and is faded out on the
+      // inactive ones, so the active marker cannot shift layout on hover.
+      expect(link.classes()).toContain('after:opacity-0')
     }
   })
 
