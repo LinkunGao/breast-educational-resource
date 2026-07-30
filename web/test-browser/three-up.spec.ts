@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { focusedPanel, panel, waitForModality } from './helpers'
+import { focusedPanel, panel, waitForAllPanels, waitForModality } from './helpers'
 
 /**
  * Client feedback item 6: three panels side by side when there is room, the
@@ -89,18 +89,20 @@ test.describe('three-up', () => {
 
     await page.setViewportSize(WIDE)
     await page.goto('/cancer-ductal')
-    await waitForModality(page)
-    await page.waitForTimeout(3000)
+    // All three, not just the focused one: at three-up the other two are
+    // still downloading when `waitForModality` returns, and their
+    // responses would land inside the count sampled below.
+    await waitForAllPanels(page)
     expect(assets.length).toBeGreaterThan(0)
 
     // Scoped to the sidebar: the prev/next cards carry the same case names.
     const sidebar = page.locator('#case-sidebar')
     await sidebar.getByRole('link', { name: 'Lobular' }).click()
-    await waitForModality(page)
+    await waitForAllPanels(page)
     const beforeReturn = assets.length
 
     await sidebar.getByRole('link', { name: 'Ductal' }).click()
-    await waitForModality(page)
+    await waitForAllPanels(page)
     await page.waitForTimeout(2000)
 
     expect(assets.length, `re-fetched: ${assets.slice(beforeReturn).join(', ')}`)

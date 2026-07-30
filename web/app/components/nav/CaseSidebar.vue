@@ -72,7 +72,6 @@ const groups = computed(() => {
     label: CASE_GROUP_LABEL[group],
     icon: GROUP_ICON[group],
     ink: GROUP_INK[group],
-
     items: enabledCases().filter(c => c.group === group),
   })).filter(g => g.items.length > 0)
 })

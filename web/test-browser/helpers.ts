@@ -47,8 +47,16 @@ export async function waitForModality(page: Page) {
   await expect(stage.getByRole('alert')).toHaveCount(0)
 }
 
-/** Waits for every visible panel, for the tests that assert across all
- *  three (three-up, and the no-404 sweep). */
+/**
+ * Waits for ALL THREE panels, which is what any test sampling network
+ * activity at three-up has to do: `waitForModality` returns while the other
+ * two are still in flight, and their responses then land inside whatever
+ * the test was measuring.
+ *
+ * A hidden panel's spinner is `display: none` and so is not exposed to the
+ * role query at all, which is why counting live spinners works at both
+ * widths.
+ */
 export async function waitForAllPanels(page: Page) {
   await expect(page.locator('[data-panel] canvas')).toHaveCount(3, { timeout: 60_000 })
   await expect(page.getByRole('status').filter({ hasText: /^Loading/ }))

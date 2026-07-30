@@ -123,11 +123,14 @@ function onKeydown(event: KeyboardEvent) {
              after:bg-current after:transition-opacity"
       :class="t.panel.id === props.activePanel
         ? [STYLE[t.current.id].ink, 'font-bold after:opacity-100']
-        : 'text-text-muted after:opacity-0'"
+        // `hover:` on the inactive branch only. As a static class on the
+        // link it also matched the active tab, so hovering it dropped its
+        // modality ink back to plain text.
+        : 'text-text-muted hover:text-text after:opacity-0'"
     >
       <NuxtLink
         :to="`/${props.case.slug}/${t.current.id}`"
-        class="flex min-h-12 items-center gap-2 px-3 text-body-sm hover:text-text"
+        class="flex min-h-12 items-center gap-2 px-3 text-body-sm"
         :aria-current="t.panel.id === props.activePanel ? 'step' : undefined"
       >
         <svg
