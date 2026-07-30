@@ -1,6 +1,15 @@
 import tailwindcss from '@tailwindcss/vite'
+import { publicUrl } from './app/composables/assetUrl'
 import { enabledCases } from './content/cases'
 import { LEGACY_ROUTES } from './content/legacyRoutes'
+
+// Mirrors @nuxt/schema's own default resolution for `app.baseURL` (it reads
+// this same env var with this same fallback). Needed at config-eval time
+// because `app.head.link` entries are rendered as literal strings -- Nuxt
+// does NOT rewrite them against `app.baseURL` the way it does page assets --
+// so the apple-touch-icon link below has to be made subpath-aware by hand,
+// same trap `assetBase` documents above.
+const appBaseURL = process.env.NUXT_APP_BASE_URL || '/'
 
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-28',
@@ -84,14 +93,6 @@ export default defineNuxtConfig({
       // of globIgnores: a future asset added outside modelView/ that is
       // genuinely too large should be skipped, not silently bloat sw.js.
       maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-      navigateFallback: undefined,
-    },
-    devOptions: {
-      // The service worker is off in `nuxi dev` by default. Enabling it
-      // here is what lets test-browser/pwa.spec.ts run against the dev
-      // server like every other browser test in this repo.
-      enabled: true,
-      type: 'module',
     },
   },
 
@@ -161,7 +162,14 @@ export default defineNuxtConfig({
            */
           href: 'https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,400&display=swap',
         },
-        { rel: 'apple-touch-icon', href: '/apple-touch-icon-180x180.png' },
+        {
+          rel: 'apple-touch-icon',
+          // Absolute-from-root and baseURL-prefixed, not a bare relative
+          // filename: case pages are nested (`/te-uma/density-c/anatomy/`),
+          // and a relative href resolves against the *document* URL, not
+          // the site root, so it would break at that depth.
+          href: publicUrl('apple-touch-icon-180x180.png', appBaseURL),
+        },
       ],
       meta: [
         { charset: 'utf-8' },

@@ -32,6 +32,13 @@ import { expect, test } from '@playwright/test'
  * SKIPPED when there is no build, rather than failing: `yarn test:browser`
  * has to stay runnable without a 90-second `yarn generate` in front of it.
  * Run `yarn generate` first to include these.
+ *
+ * Also carries the PWA checks (client feedback item 1). They started in
+ * their own `test-browser/pwa.spec.ts` against `yarn dev`, which turned out
+ * to prove nothing: `nuxi dev` never emits a real service worker or manifest
+ * unless `devOptions` forces one, and a dev-only worker is not the artefact
+ * that ships. A PWA is a production artefact, so it belongs in the file that
+ * already tests production artefacts.
  */
 
 const PUBLIC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../.output/public')
@@ -165,5 +172,70 @@ test.describe('§12 acceptance, against the generated site', () => {
       .toBeHidden({ timeout: 150_000 })
     await expect(page.getByRole('alert')).toHaveCount(0)
     await expect(page.getByRole('button', { name: /reset/i })).toBeEnabled({ timeout: 60_000 })
+  })
+
+  /**
+   * Client feedback item 1, against the real build. `test/pwa.test.ts`
+   * asserts the `nuxt.config.ts` `pwa` object; these assert what actually
+   * shipped -- see this file's header for why that has to be here rather
+   * than against `yarn dev`.
+   *
+   * Dropped from the original design (moved from `test-browser/pwa.spec.ts`):
+   * a `navigator.serviceWorker.register()` round-trip inside the page. That
+   * is a meaningful check against the real GitHub Pages origin, but this
+   * static server has none of the quirks (HTTPS, header mismatches) that a
+   * live registration would catch beyond what fetching `sw.js` directly
+   * already proves. The failure mode that actually matters here -- imaging
+   * assets leaking into the precache -- is fully covered by reading `sw.js`'s
+   * own text below, so that is what is asserted instead.
+   */
+  test('the manifest is served with the fields the client\'s old app had', async ({ page }) => {
+    await page.goto(`${base}/the-breast`)
+
+    const href = await page.locator('link[rel="manifest"]').getAttribute('href')
+    expect(href).toBeTruthy()
+
+    const response = await page.request.get(new URL(href!, base).href)
+    expect(response.ok()).toBe(true)
+
+    const manifest = await response.json()
+    expect(manifest.name).toBe('Breast Educational Resource')
+    expect(manifest.short_name).toBe('Breast Education App')
+    expect(manifest.icons.map((i: { sizes: string }) => i.sizes)).toContain('512x512')
+  })
+
+  test('every icon the manifest declares actually resolves', async ({ page }) => {
+    await page.goto(`${base}/the-breast`)
+    const href = (await page.locator('link[rel="manifest"]').getAttribute('href'))!
+    const manifestUrl = new URL(href, base).href
+    const manifest = await (await page.request.get(manifestUrl)).json()
+
+    for (const icon of manifest.icons as { src: string }[]) {
+      const url = new URL(icon.src, manifestUrl).href
+      const response = await page.request.get(url)
+      expect(response.ok(), `${icon.src} -> ${response.status()}`).toBe(true)
+    }
+  })
+
+  test('the service worker script is served and the HTML references the manifest', async ({ page }) => {
+    await page.goto(`${base}/the-breast`)
+    await expect(page.locator('link[rel="manifest"]')).toHaveCount(1)
+
+    // vite-plugin-pwa's default `filename` -- also where a manual check
+    // against this exact build found it: .output/public/sw.js, 10,342 B.
+    const response = await page.request.get(`${base}/sw.js`)
+    expect(response.ok()).toBe(true)
+  })
+
+  /**
+   * The load-bearing assertion of this file's PWA coverage. ~355MB of NRRD
+   * and GLB must never enter the precache manifest -- see nuxt.config.ts's
+   * `pwa` comment.
+   */
+  test('no imaging asset is precached', async ({ page }) => {
+    const source = await (await page.request.get(`${base}/sw.js`)).text()
+    expect(source).not.toMatch(/\.nrrd/)
+    expect(source).not.toMatch(/\.glb/)
+    expect(source).not.toMatch(/modelView/)
   })
 })
