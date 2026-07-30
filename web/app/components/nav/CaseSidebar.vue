@@ -6,19 +6,57 @@ import type { CaseGroup } from '~~/content/types'
 const store = useViewerStore()
 const { publicUrl } = useAssetUrl()
 
-const GROUP_LABEL: Record<CaseGroup, string> = {
-  overview: '',
+const GROUP_LABEL: Record<Exclude<CaseGroup, 'overview'>, string> = {
   density: 'Breast Density',
   benign: 'Benign Conditions',
   cancer: 'Breast Cancer',
 }
 
-/** Grouped by `group`, preserving cases.ts's declaration order. */
+/**
+ * Per-group icon paths (client feedback item 9), drawn stroke-only at
+ * 24×24 so they read at 16px and inherit the heading's own colour.
+ *
+ * Icons are on the home row and the three group headings ONLY, never on
+ * the nine case rows. Nine glyphs that distinguish A/B/C/D, Cyst from
+ * Fibroadenoma, and DCIS from Lobular from Ductal cannot be drawn legibly
+ * at this size -- see ModalityStepper.vue's header for what happened the
+ * last time abstract geometry was tried in this app.
+ *
+ *   density   three horizontal bands, increasingly dense
+ *   benign    a smooth closed ellipse -- a well-circumscribed lesion
+ *   cancer    a lobulated outline with spiculations off it
+ */
+const GROUP_ICON: Record<Exclude<CaseGroup, 'overview'>, string[]> = {
+  density: ['M4 7h16', 'M4 12h16', 'M4 17h16', 'M8 12v5', 'M12 12v5', 'M16 12v5'],
+  benign: ['M12 5.5c3.6 0 6.5 2.9 6.5 6.5s-2.9 6.5-6.5 6.5S5.5 15.6 5.5 12 8.4 5.5 12 5.5z'],
+  cancer: [
+    'M12 7.5c2.5 0 4.5 2 4.5 4.5S14.5 16.5 12 16.5 7.5 14.5 7.5 12 9.5 7.5 12 7.5z',
+    'M12 7.5V4', 'M16.5 12H20', 'M12 16.5V20', 'M7.5 12H4',
+    'M15.2 8.8 17.7 6.3', 'M15.2 15.2l2.5 2.5', 'M8.8 15.2l-2.5 2.5', 'M8.8 8.8 6.3 6.3',
+  ],
+}
+
+/** The home row's own icon: a breast in profile against the chest wall,
+ *  the same mark ModalityStepper uses for the anatomy step, so the two
+ *  places that mean "the model" agree. */
+const HOME_ICON = ['M4.5 3.5v17', 'M4.5 5.5a6.5 6.5 0 0 1 0 13', 'M11 12h3.5']
+
+/**
+ * `the-breast` is pulled OUT of the grouped lists (client feedback item 8).
+ * It is already `/`'s redirect target, so it is the home page; rendering it
+ * as an unlabelled bullet above the first group heading made it read as
+ * just another case.
+ */
+const home = computed(() => enabledCases().find(c => c.slug === 'the-breast'))
+
+/** Grouped by `group`, preserving cases.ts's declaration order. `overview`
+ *  is absent by construction: its one member is the home row above. */
 const groups = computed(() => {
-  const order: CaseGroup[] = ['overview', 'density', 'benign', 'cancer']
+  const order = ['density', 'benign', 'cancer'] as const
   return order.map(group => ({
     group,
     label: GROUP_LABEL[group],
+    icon: GROUP_ICON[group],
     items: enabledCases().filter(c => c.group === group),
   })).filter(g => g.items.length > 0)
 })
@@ -93,11 +131,47 @@ function onKeydown(event: KeyboardEvent) {
     class="flex w-60 shrink-0 flex-col gap-6 overflow-y-auto border-r border-border bg-surface p-4"
     @keydown="onKeydown"
   >
+    <NuxtLink
+      v-if="home"
+      data-home-row
+      :to="`/${home.slug}`"
+      class="-mt-1 flex min-h-11 items-center gap-2.5 rounded-ctl border-b border-border px-2 pb-3 text-body font-bold"
+      :class="home.slug === store.caseSlug
+        ? 'text-anatomy-ink'
+        : 'text-text hover:bg-surface-sunken'"
+      :aria-current="home.slug === store.caseSlug ? 'page' : undefined"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        class="size-5 shrink-0"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path v-for="d in HOME_ICON" :key="d" :d="d" />
+      </svg>
+      {{ home.title }}
+    </NuxtLink>
+
     <div v-for="g in groups" :key="g.group">
       <h2
-        v-if="g.label"
-        class="mb-2 px-2 text-caption font-bold uppercase tracking-wide text-text-muted"
+        class="mb-2 flex items-center gap-1.5 px-2 text-caption font-bold uppercase tracking-wide text-text-muted"
       >
+        <svg
+          viewBox="0 0 24 24"
+          class="size-4 shrink-0"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path v-for="d in g.icon" :key="d" :d="d" />
+        </svg>
         {{ g.label }}
       </h2>
       <ul class="flex flex-col gap-0.5">

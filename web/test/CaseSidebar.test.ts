@@ -54,24 +54,88 @@ describe('CaseSidebar', () => {
   it('lists exactly the enabled cases, never the disabled one', () => {
     const wrapper = mountSidebar()
     // Scoped to the case list. The sidebar also carries a partner-logo link
-    // to /about at its foot, which is not a case and must not be counted --
-    // an unscoped `findAllComponents` made this test fail the moment that
-    // link was added, for no defect.
+    // to /about at its foot and (since client feedback item 8) a dedicated
+    // home row above the groups -- neither is a case bullet and neither may
+    // be counted here.
     const links = wrapper.findAll('li a')
       .map(el => wrapper.findAllComponents(NuxtLinkStub).find(c => c.element === el.element)!)
-    expect(links).toHaveLength(enabledCases().length)
+    const grouped = enabledCases().filter(c => c.slug !== 'the-breast')
+    expect(links).toHaveLength(grouped.length)
     const hrefs = links.map(l => l.props('to'))
     expect(hrefs).not.toContain('/benign-calcifications')
-    for (const c of enabledCases()) {
+    expect(hrefs).not.toContain('/the-breast')
+    for (const c of grouped) {
       expect(hrefs).toContain(`/${c.slug}`)
     }
   })
 
-  it('does not render a group heading for the label-less overview group', () => {
-    const wrapper = mountSidebar()
-    const headings = wrapper.findAll('h2').map(h => h.text())
-    expect(headings).not.toContain('')
-    expect(headings).toEqual(['Breast Density', 'Benign Conditions', 'Breast Cancer'])
+  /**
+   * Client feedback item 8: "starts with The breast heading under a bullet
+   * point when seems it should be a section on it's own". It is already the
+   * target of `/`'s redirect, so it is the home page; it just did not look
+   * like one.
+   */
+  describe('the-breast is the home row, not a case bullet', () => {
+    it('renders outside the group lists', () => {
+      const wrapper = mountSidebar()
+      const groupHrefs = wrapper.findAll('li a').map(a => a.attributes('href'))
+      expect(groupHrefs).not.toContain('/the-breast')
+    })
+
+    it('still links to /the-breast, from a dedicated home row', () => {
+      const wrapper = mountSidebar()
+      const home = wrapper.get('[data-home-row]')
+      expect(home.attributes('href')).toBe('/the-breast')
+      expect(home.text()).toContain('The Breast')
+    })
+
+    it('marks the home row as current when it is the active case', () => {
+      const store = useViewerStore()
+      store.caseSlug = 'the-breast'
+      const wrapper = mountSidebar()
+      expect(wrapper.get('[data-home-row]').attributes('aria-current')).toBe('page')
+      expect(wrapper.findAll('a[aria-current="page"]')).toHaveLength(1)
+    })
+
+    it('does not mark the home row as current on another case', () => {
+      const store = useViewerStore()
+      store.caseSlug = 'density-c'
+      const wrapper = mountSidebar()
+      expect(wrapper.get('[data-home-row]').attributes('aria-current')).toBeUndefined()
+    })
+
+    it('renders exactly the three real group headings and no empty one', () => {
+      const wrapper = mountSidebar()
+      expect(wrapper.findAll('h2').map(h => h.text()))
+        .toEqual(['Breast Density', 'Benign Conditions', 'Breast Cancer'])
+    })
+  })
+
+  /** Client feedback item 9. Icons on the home row and the three group
+   *  headings only -- deliberately not one per case, see the component. */
+  describe('icons', () => {
+    it('the home row has one', () => {
+      const wrapper = mountSidebar()
+      expect(wrapper.get('[data-home-row]').findAll('svg')).toHaveLength(1)
+    })
+
+    it('each group heading has one, marked decorative', () => {
+      const wrapper = mountSidebar()
+      const headings = wrapper.findAll('h2')
+      expect(headings).toHaveLength(3)
+      for (const h of headings) {
+        const icons = h.findAll('svg')
+        expect(icons).toHaveLength(1)
+        expect(icons[0]!.attributes('aria-hidden')).toBe('true')
+      }
+    })
+
+    it('case rows keep their dot and gain no icon', () => {
+      const wrapper = mountSidebar()
+      for (const row of wrapper.findAll('li a')) {
+        expect(row.findAll('svg')).toHaveLength(0)
+      }
+    })
   })
 
   it('marks the case matching store.caseSlug as current, and only that one', () => {
