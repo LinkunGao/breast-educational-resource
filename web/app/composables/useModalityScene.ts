@@ -903,8 +903,25 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
             void installFastSliceRepaint(slices.z)
             slices.z.repaint.call(slices.z)
 
-            const [rx, ry, rz] = volume.RASDimensions
-            boundsByScene.set(name, { width: rx ?? 0, height: ry ?? 0, depth: rz ?? 0 })
+            const [rx, ry] = volume.RASDimensions
+            // Depth is deliberately 0, NOT `rz`, even though `fitDistance`
+            // (fitToView.ts) adds `bounds.depth / 2` to clear a box's near
+            // face. That term is unchanged and still correct for
+            // `loadAnatomy`'s real 3D meshes -- readers genuinely orbit
+            // those. It is wrong here: what is actually visible is the
+            // single rendered slice plane, not the NRRD volume it was cut
+            // from. `addVolumeBoundingBox` below draws a wireframe cage at
+            // the volume's full RAS depth to give that plane spatial
+            // context, exactly like the legacy app, but verified (task-3
+            // fix report, 2026-07-31) to never appear on screen -- a
+            // dead-on view foreshortens the cage to the same silhouette as
+            // the plane it surrounds, and a pixel-level scan of a rendered
+            // frame found zero pixels in the cage's tint colour. Framing
+            // for a depth nobody sees left the slice at ~62% of the panel
+            // height instead of ~92%. Using 0 here fits the plane itself;
+            // `fitDistance`'s existing `+ depth/2` unit tests are still
+            // valid, they just now always see `depth: 0` for imaging scenes.
+            boundsByScene.set(name, { width: rx ?? 0, height: ry ?? 0, depth: 0 })
 
             if (flat) {
               // The same two properties the legacy 2D views set
