@@ -113,9 +113,12 @@ describe('case page', () => {
     expect(wrapper.find('.heading-slot h1').text()).toBe('DCIS')
     expect(wrapper.find('.stepper-slot a[aria-current="step"]').text()).toContain('3D MRI')
     expect(wrapper.find('.stage-slot .copper-stage-stub').text()).toBe('mri')
-    // cancer-dcis has no anatomy modality (design doc §3.1's asset audit) --
-    // the stepper must never hard-code the modality sequence.
-    expect(wrapper.find('.stepper-slot').text()).not.toContain('Anatomy')
+    // Client feedback item 2 (three-up-viewer Task 1) gave every lesion case
+    // an anatomy modality, so cancer-dcis's stepper now lists it too --
+    // confirming the stepper reads the case's own modality list rather than
+    // a hard-coded sequence, and that the explicit `mri` param still wins
+    // over the first (anatomy) entry.
+    expect(wrapper.find('.stepper-slot').text()).toContain('Anatomy')
   })
 
   it('renders the frozen medical copy for the resolved modality, byte for byte', () => {

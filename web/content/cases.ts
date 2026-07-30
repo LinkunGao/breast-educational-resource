@@ -1,5 +1,5 @@
 import { anatomyText, mammogramText, mriText } from './copy.generated'
-import type { Case, CaseGroup, Modality, ModalityId } from './types'
+import type { Case, CaseGroup, Modality, ModalityId, Panel, PanelId } from './types'
 
 /** Build a modality entry, always with an empty keyFacts (global constraint). */
 function modality(
@@ -20,9 +20,29 @@ function modality(
 // audit in design doc §3.1):
 //   · m2d.nrrd  4 files = 2 images, density A and D identical -> all dropped
 //   · u2d.nrrd  5 files = 1 image, originally made for Cyst -> Cyst only
-//   · GLBs exist only for density-1..4 -> benign/cancer have no anatomy
+//   · GLBs exist only for density-1..4 -> every other case borrows one
+//     (the five lesion cases all borrow density-3's, client feedback item 2)
 
-/** Shared builder for the density series: three modalities, one directory layout. */
+/** The anatomy model every case without one of its own borrows. The client
+ *  named it: "复用 density-3/left/density75.glb". */
+const SHARED_ANATOMY_GLB = 'density-3/left/density75.glb'
+/** One preset for every anatomy slot -- there is only one in the catalogue. */
+const ANATOMY_VIEW_PRESET = 'left_breast_view.json'
+
+/** Build a slot. */
+function panel(id: PanelId, label: string, modalities: Modality[]): Panel {
+  return { id, label, modalities }
+}
+
+/**
+ * Flattens `panels` into `modalities` so the two can never be written
+ * separately and drift. Every case literal below goes through this.
+ */
+function buildCase(c: Omit<Case, 'modalities'>): Case {
+  return { ...c, modalities: c.panels.flatMap(p => p.modalities) }
+}
+
+/** Shared builder for the density series: three slots, one directory layout. */
 function densityCase(
   slug: string,
   dir: string,
@@ -31,17 +51,23 @@ function densityCase(
   heading: string,
   legacyKey: keyof typeof anatomyText,
 ): Case {
-  return {
+  return buildCase({
     slug,
     group: 'density',
     title,
     heading,
-    modalities: [
-      modality('anatomy', 'Anatomy', `${dir}/left/${glb}`, 'left_breast_view.json', anatomyText[legacyKey]),
-      modality('mammogram', '3D Mammogram', `${dir}/middle/m3d.nrrd`, `${dir}/middle/m_view.json`, mammogramText[legacyKey]),
-      modality('mri', '3D MRI', `${dir}/right/mri.nrrd`, `${dir}/right/mri_view.json`, mriText[legacyKey]),
+    panels: [
+      panel('anatomy', 'Anatomy', [
+        modality('anatomy', 'Anatomy', `${dir}/left/${glb}`, ANATOMY_VIEW_PRESET, anatomyText[legacyKey]),
+      ]),
+      panel('mammogram', 'Mammogram', [
+        modality('mammogram', '3D Mammogram', `${dir}/middle/m3d.nrrd`, `${dir}/middle/m_view.json`, mammogramText[legacyKey]),
+      ]),
+      panel('mri', 'MRI', [
+        modality('mri', '3D MRI', `${dir}/right/mri.nrrd`, `${dir}/right/mri_view.json`, mriText[legacyKey]),
+      ]),
     ],
-  }
+  })
 }
 
 /**
@@ -63,7 +89,16 @@ export const CASE_GROUP_LABEL: Record<CaseGroup, string> = {
   cancer: 'Breast Cancer',
 }
 
-/** benign/cancer series: no anatomy, two or three imaging modalities. */
+/**
+ * benign/cancer series.
+ *
+ * These now carry an anatomy slot (client feedback item 2: "The anatomy
+ * section is missing from a few of the sections"). They have no GLB of
+ * their own, so all five borrow density-3's -- the model the client
+ * specified. Their anatomy copy is NOT new: `anatomyText` has carried
+ * these five keys since the extraction, because the legacy app's left
+ * panel displayed exactly this text on exactly these pages.
+ */
 function lesionCase(
   slug: string,
   group: 'benign' | 'cancer',
@@ -74,33 +109,54 @@ function lesionCase(
   legacyKey: keyof typeof mammogramText,
   withUltrasound = false,
 ): Case {
-  const modalities: Modality[] = [
+  const middle: Modality[] = [
     modality('mammogram', '3D Mammogram', `${dir}/middle/m3d.nrrd`, `${dir}/middle/m_view.json`, mammogramText[legacyKey]),
   ]
   if (withUltrasound) {
-    modalities.push(
+    // Second variant of the SAME slot, not a slot of its own: the reader
+    // switches between them, 3D first. Only benign-cyst has a u2d.nrrd
+    // (design doc §3.1's md5 audit).
+    middle.push(
       modality('ultrasound', '2D Ultrasound', `${dir}/middle/u2d.nrrd`, `${dir}/middle/u_view.json`, mammogramText[legacyKey]),
     )
   }
-  modalities.push(
-    modality('mri', '3D MRI', `${dir}/right/mri.nrrd`, `${dir}/right/mri_view.json`, mriText[legacyKey]),
-  )
-  return { slug, group, title, heading, lesionSliceIndex, modalities }
+  return buildCase({
+    slug,
+    group,
+    title,
+    heading,
+    lesionSliceIndex,
+    panels: [
+      panel('anatomy', 'Anatomy', [
+        modality('anatomy', 'Anatomy', SHARED_ANATOMY_GLB, ANATOMY_VIEW_PRESET, anatomyText[legacyKey]),
+      ]),
+      panel('mammogram', 'Mammogram', middle),
+      panel('mri', 'MRI', [
+        modality('mri', '3D MRI', `${dir}/right/mri.nrrd`, `${dir}/right/mri_view.json`, mriText[legacyKey]),
+      ]),
+    ],
+  })
 }
 
 export const cases: Case[] = [
-  {
+  buildCase({
     slug: 'the-breast',
     group: 'overview',
     title: 'The Breast',
     heading: 'The Breast',
     // Has no assets of its own; borrows density-1 throughout (design doc §4.4)
-    modalities: [
-      modality('anatomy', 'Anatomy', 'density-1/left/density25.glb', 'left_breast_view.json', anatomyText.normal),
-      modality('mammogram', '3D Mammogram', 'density-1/middle/m3d.nrrd', 'density-1/middle/m_view.json', mammogramText.normal),
-      modality('mri', '3D MRI', 'density-1/right/mri.nrrd', 'density-1/right/mri_view.json', mriText.normal),
+    panels: [
+      panel('anatomy', 'Anatomy', [
+        modality('anatomy', 'Anatomy', 'density-1/left/density25.glb', ANATOMY_VIEW_PRESET, anatomyText.normal),
+      ]),
+      panel('mammogram', 'Mammogram', [
+        modality('mammogram', '3D Mammogram', 'density-1/middle/m3d.nrrd', 'density-1/middle/m_view.json', mammogramText.normal),
+      ]),
+      panel('mri', 'MRI', [
+        modality('mri', '3D MRI', 'density-1/right/mri.nrrd', 'density-1/right/mri_view.json', mriText.normal),
+      ]),
     ],
-  },
+  }),
 
   densityCase('density-a', 'density-1', 'density25.glb', 'Density A', 'Almost entirely fat', 'density_1'),
   densityCase('density-b', 'density-2', 'density50.glb', 'Density B', 'Scattered fibroglandular densities', 'density_2'),
@@ -114,7 +170,7 @@ export const cases: Case[] = [
   lesionCase('cancer-lobular', 'cancer', 'cancer-lobular', 'Lobular', 'Lobular', 80, 'cancer_lobular'),
   lesionCase('cancer-ductal', 'cancer', 'cancer-ductal', 'Ductal', 'Ductal', 27, 'cancer_ductal'),
 
-  {
+  buildCase({
     // Copy and lesion index are both present, but there are no imaging
     // assets at all (design doc §4.4). Kept so the copy is not lost;
     // generates no route and no nav entry.
@@ -124,8 +180,8 @@ export const cases: Case[] = [
     heading: 'Calcifications',
     lesionSliceIndex: 0,
     disabled: true,
-    modalities: [],
-  },
+    panels: [],
+  }),
 ]
 
 export function enabledCases(): Case[] {
@@ -138,6 +194,20 @@ export function getCase(slug: string): Case | undefined {
 
 export function getModality(slug: string, id: ModalityId): Modality | undefined {
   return getCase(slug)?.modalities.find(m => m.id === id)
+}
+
+/** The slot with this id, if the case has it. */
+export function getPanel(c: Case, id: PanelId): Panel | undefined {
+  return c.panels.find(p => p.id === id)
+}
+
+/**
+ * Which slot holds `modalityId`, or undefined if this case has no such
+ * modality. The URL carries a modality; the layout reasons in slots, and
+ * this is the one place that translates.
+ */
+export function panelIdOf(c: Case, modalityId: ModalityId): PanelId | undefined {
+  return c.panels.find(p => p.modalities.some(m => m.id === modalityId))?.id
 }
 
 /**

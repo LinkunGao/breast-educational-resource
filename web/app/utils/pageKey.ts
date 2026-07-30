@@ -35,10 +35,11 @@ import { getCase, isMorphFamilyGroup } from '~~/content/cases'
  * either way: a morph loads its model into the EXISTING scene and creates
  * no new one.
  *
- * Lesion cases keep a key of their own. They cannot morph (they have no
- * anatomy modality at all), and they hold this catalogue's largest volumes
- * (`cancer-lobular/right/mri.nrrd` alone is 53MB), so there is nothing to
- * buy and a lot to pay by sharing an instance across them.
+ * Lesion cases keep a key of their own. `isMorphFamilyGroup` never includes
+ * their group ('benign' / 'cancer'), so they cannot morph regardless of
+ * which modalities they carry -- and they hold this catalogue's largest
+ * volumes (`cancer-lobular/right/mri.nrrd` alone is 53MB), so there is
+ * nothing to buy and a lot to pay by sharing an instance across them.
  */
 export function casePageKey(slug: string | undefined): string | undefined {
   if (typeof slug !== 'string') return undefined
