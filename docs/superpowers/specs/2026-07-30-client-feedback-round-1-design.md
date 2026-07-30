@@ -334,6 +334,8 @@ git show main:frontend/static/icon.png
 
 由它生成 192×192、512×512、512×512 maskable、apple-touch-icon（180×180），以及替换现有的 `public/favicon.ico`。
 
+**待向甲方提出**：`main:frontend/static/icon.png` 只有 88×88（8-bit RGB，无 alpha）。由它放大出的 512×512 maskable 图标在主屏上明显发虚。仓库与其历史中没有更高分辨率的副本。若甲方能提供矢量图或 ≥512px 的位图，放到 `web/public/icon.png` 后重跑 `yarn icons` 即可，无需改代码。
+
 ### 9.2 manifest
 
 沿用旧版字段（[`legacy/nuxt.config.js`](../../../legacy/nuxt.config.js)）：
