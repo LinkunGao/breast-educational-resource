@@ -39,11 +39,11 @@
 | `web/test/CaseSidebar.test.ts` | Modify — home row is not a group item; icons present | 3 |
 | `web/public/icon.png` | Create — the legacy source mark, recovered from git | 4 |
 | `web/public/pwa-*.png`, `apple-touch-icon-180x180.png`, `maskable-icon-512x512.png`, `favicon.ico` | Create — generated icon set | 4 |
-| `web/package.json` | Modify — add `@vite-pwa/nuxt`, `@vite-pwa/assets-generator`, an `icons` script | 4, 5 |
-| `web/pwa-assets.config.ts` | Create — icon generation preset | 4 |
+| `scripts/generate-pwa-icons.mjs` | Create — hand-rolled `pngjs` generator (see Task 4's "Why not `@vite-pwa/assets-generator`") | 4 |
+| `web/package.json` | Modify — add `@vite-pwa/nuxt` and an `icons` script (`pngjs` was already a devDependency) | 4, 5 |
 | `web/nuxt.config.ts` | Modify — register the PWA module, manifest, workbox rules, head links | 5 |
 | `web/test/pwa.test.ts` | Create — manifest fields and the `modelView` exclusion | 5 |
-| `web/test-browser/pwa.spec.ts` | Create — manifest reachable, SW registers, no volumes precached | 5 |
+| `web/test-browser/production.spec.ts` | Modify — fold in the PWA checks (manifest reachable, icons resolve, no volumes precached) against the real build, not `pwa.spec.ts` against `yarn dev` (see Task 5) | 5 |
 
 ---
 
@@ -796,175 +796,26 @@ Expected output: `wrote .../web/public/icon.png: 15214 bytes, 88x88`. If the byt
 
 Bilinear is also the *right* filter for this input, not merely the available one: the source is 88px and every output but one is an upscale, where a sharpening resampler like Lanczos rings on the edges instead of adding detail that is not there.
 
-Create `scripts/generate-pwa-icons.mjs`:
+Create `scripts/generate-pwa-icons.mjs`. Its header comment explains the same
+"why hand-rolled" and "source's known limitation" reasoning as above; the
+implementation is not reproduced here (source of truth: the committed
+file) because an earlier draft of this plan step embedded a full copy that
+went stale mid-branch and stayed wrong. Specifically:
 
-```js
-/**
- * Generates the PWA icon set from `web/public/icon.png`.
- *
- * ## Why this is hand-rolled
- *
- * `@vite-pwa/assets-generator` is the obvious tool and does not work here:
- * it depends on `sharp`, whose prebuilt native binary fails to load on
- * Node 24 / win32-x64 with ERR_DLOPEN_FAILED, reproducibly and after a
- * clean reinstall. `pngjs` is already a devDependency of `web/` (see
- * web/test/nrrd-gzip.test.ts), is pure JS, and has nothing native to fail.
- *
- * Bilinear resampling is also the correct choice for this input rather
- * than a concession: the source is 88x88 and every output but the 64px
- * one is an UPSCALE, where a sharpening filter rings on edges instead of
- * inventing detail.
- *
- * ## The source's known limitation
- *
- * `web/public/icon.png` is 88x88, recovered verbatim from the legacy app
- * (scripts/recover-legacy-icon.mjs). The 512px outputs are therefore soft.
- * No higher-resolution copy exists in this repository or its history.
- * Replacing the source with a vector render or a >=512px raster and
- * re-running this script is the entire fix, with no code change.
- */
-import { readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { PNG } from 'pngjs'
-
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const publicDir = join(repoRoot, 'web', 'public')
-
-/** Fraction of a maskable icon's width that must survive an aggressive
- *  platform crop. Android's maskable safe zone is the centre 80%. */
-const MASKABLE_CONTENT = 0.8
-/** Apple crops the corners of a touch icon into a squircle, so the mark
- *  gets a little breathing room there too -- less than maskable's, since
- *  the crop is much gentler. */
-const APPLE_CONTENT = 0.9
-
-/** Bilinear resample. `src` and the result are both RGBA PNG instances. */
-function resize(src, size) {
-  const out = new PNG({ width: size, height: size })
-  const { width: sw, height: sh, data: sd } = src
-
-  for (let y = 0; y < size; y++) {
-    // Sample at pixel CENTRES (+0.5 / -0.5), otherwise the output is
-    // shifted half a destination pixel up and left.
-    const sy = ((y + 0.5) * sh) / size - 0.5
-    const y0 = Math.max(0, Math.floor(sy))
-    const y1 = Math.min(sh - 1, y0 + 1)
-    const fy = Math.min(1, Math.max(0, sy - y0))
-
-    for (let x = 0; x < size; x++) {
-      const sx = ((x + 0.5) * sw) / size - 0.5
-      const x0 = Math.max(0, Math.floor(sx))
-      const x1 = Math.min(sw - 1, x0 + 1)
-      const fx = Math.min(1, Math.max(0, sx - x0))
-
-      const at = (y * size + x) * 4
-      for (let c = 0; c < 4; c++) {
-        const p00 = sd[(y0 * sw + x0) * 4 + c]
-        const p01 = sd[(y0 * sw + x1) * 4 + c]
-        const p10 = sd[(y1 * sw + x0) * 4 + c]
-        const p11 = sd[(y1 * sw + x1) * 4 + c]
-        const top = p00 + (p01 - p00) * fx
-        const bottom = p10 + (p11 - p10) * fx
-        out.data[at + c] = Math.round(top + (bottom - top) * fy)
-      }
-    }
-  }
-  return out
-}
-
-/** Centres `content` on a `size`x`size` canvas filled with `bg` (RGBA). */
-function onCanvas(content, size, bg) {
-  const out = new PNG({ width: size, height: size })
-  for (let i = 0; i < out.data.length; i += 4) {
-    out.data[i] = bg[0]
-    out.data[i + 1] = bg[1]
-    out.data[i + 2] = bg[2]
-    out.data[i + 3] = bg[3]
-  }
-  const offset = Math.round((size - content.width) / 2)
-  for (let y = 0; y < content.height; y++) {
-    for (let x = 0; x < content.width; x++) {
-      const from = (y * content.width + x) * 4
-      const to = ((y + offset) * size + (x + offset)) * 4
-      // Source over, so a transparent source pixel keeps the background.
-      const alpha = content.data[from + 3] / 255
-      for (let c = 0; c < 3; c++) {
-        out.data[to + c] = Math.round(
-          content.data[from + c] * alpha + out.data[to + c] * (1 - alpha),
-        )
-      }
-      out.data[to + 3] = Math.max(out.data[to + 3], content.data[from + 3])
-    }
-  }
-  return out
-}
-
-/**
- * A Vista-style ICO: the directory entries point at whole PNG payloads
- * rather than at BMP bitmaps. Every browser this app targets reads it,
- * and it avoids hand-writing a BMP encoder with its bottom-up rows and
- * AND-mask padding.
- */
-function ico(entries) {
-  const header = Buffer.alloc(6)
-  header.writeUInt16LE(0, 0) // reserved
-  header.writeUInt16LE(1, 2) // type: icon
-  header.writeUInt16LE(entries.length, 4)
-
-  const directory = []
-  let offset = 6 + entries.length * 16
-  for (const { size, png } of entries) {
-    const entry = Buffer.alloc(16)
-    // 0 means 256 in this field; nothing here is that large, but the
-    // encoding is the spec's and writing it out documents the limit.
-    entry[0] = size >= 256 ? 0 : size
-    entry[1] = size >= 256 ? 0 : size
-    entry[2] = 0 // palette size: none, this is truecolour
-    entry[3] = 0 // reserved
-    entry.writeUInt16LE(1, 4) // colour planes
-    entry.writeUInt16LE(32, 6) // bits per pixel
-    entry.writeUInt32LE(png.length, 8)
-    entry.writeUInt32LE(offset, 12)
-    directory.push(entry)
-    offset += png.length
-  }
-  return Buffer.concat([header, ...directory, ...entries.map(e => e.png)])
-}
-
-const source = PNG.sync.read(readFileSync(join(publicDir, 'icon.png')))
-/** The source has no alpha channel, so its corner pixel is a real colour
- *  and is what the mark was drawn against. Padding with anything else
- *  would put a visible square behind it. */
-const background = [source.data[0], source.data[1], source.data[2], 255]
-
-function write(name, png) {
-  const buffer = PNG.sync.write(png)
-  writeFileSync(join(publicDir, name), buffer)
-  console.log(`${name}  ${png.width}x${png.height}  ${buffer.length}B`)
-  return buffer
-}
-
-for (const size of [64, 192, 512]) {
-  write(`pwa-${size}x${size}.png`, resize(source, size))
-}
-
-write(
-  'maskable-icon-512x512.png',
-  onCanvas(resize(source, Math.round(512 * MASKABLE_CONTENT)), 512, background),
-)
-
-write(
-  'apple-touch-icon-180x180.png',
-  onCanvas(resize(source, Math.round(180 * APPLE_CONTENT)), 180, background),
-)
-
-writeFileSync(
-  join(publicDir, 'favicon.ico'),
-  ico([32, 48].map(size => ({ size, png: PNG.sync.write(resize(source, size)) }))),
-)
-console.log('favicon.ico  32 + 48')
-```
+- **Do not pad with a single corner-pixel sample.** A first version of the
+  generator did `background = [source.data[0], source.data[1],
+  source.data[2], 255]` on the reasoning that "the source has no alpha
+  channel, so its corner pixel is a real colour". That reasoning does not
+  hold for this actual source: `web/public/icon.png` has a solid white
+  strip across its entire top row, so the corner sample lands on white and
+  pads a predominantly near-black mark with a visibly contrasting square --
+  the exact defect the padding exists to avoid. Commit `c7f7743` replaced
+  it with `borderMode()`, which samples the whole one-pixel border ring and
+  takes the modal colour in quantised RGB buckets, so the minority white
+  strip cannot outvote the majority near-black ring.
+- The `resize()` (bilinear, sampling at pixel centres), `onCanvas()`
+  (source-over compositing) and `ico()` (Vista-style PNG-payload ICO)
+  functions are otherwise as described above and have not changed.
 
 - [ ] **Step 4: Add the script and generate**
 
@@ -1142,7 +993,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Modify: `web/package.json`
 - Modify: `web/nuxt.config.ts:5-21` (modules), `:68-116` (head)
 - Create: `web/test/pwa.test.ts`
-- Create: `web/test-browser/pwa.spec.ts`
+- Modify: `web/test-browser/production.spec.ts` (PWA checks folded in here, not into a new `pwa.spec.ts` — see Step 6)
 
 **Interfaces:**
 - Consumes: the six icon files from Task 4, at exactly those paths.
@@ -1157,14 +1008,30 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 Create `web/test/pwa.test.ts`:
 
 ```ts
-import { describe, expect, it } from 'vitest'
-import config from '../nuxt.config'
+import { defineNuxtConfig } from 'nuxt/config'
+import { describe, expect, it, vi } from 'vitest'
+
+// This file imports nuxt.config.ts directly, so it needs `defineNuxtConfig`
+// stubbed onto globalThis the same way test/setup.ts stubs Nuxt's other
+// auto-imports for every other unit test -- except this stub is scoped to
+// THIS file rather than added to setup.ts. It exists for this one file's
+// benefit and no other; putting it in setup.ts would make all ~400 other
+// unit tests load Nuxt's config package for nothing.
+//
+// The stub must be set BEFORE nuxt.config.ts is evaluated. A static
+// `import config from '../nuxt.config'` does not allow that -- ESM
+// resolves all of a module's static imports, in declaration order, before
+// any of the module's own top-level statements run, so a `vi.stubGlobal`
+// placed after such an import still runs too late. Use a dynamic
+// `import()` instead, which is an ordinary expression evaluated in place.
+vi.stubGlobal('defineNuxtConfig', defineNuxtConfig)
+const config = (await import('../nuxt.config')).default as Record<string, any>
 
 /**
  * Client feedback item 1. Asserts the CONFIGURATION rather than a built
  * service worker: a real build takes minutes and pulls 355MB of public
  * assets through the prerenderer, which no unit run should do. The
- * built-artefact side is covered in test-browser/pwa.spec.ts.
+ * built-artefact side is covered in test-browser/production.spec.ts.
  */
 const pwa = (config as Record<string, any>).pwa
 
@@ -1288,21 +1155,35 @@ and add a top-level `pwa` block (place it directly after `runtimeConfig`, before
       maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
       navigateFallback: undefined,
     },
-    devOptions: {
-      // The service worker is off in `nuxi dev` by default. Enabling it
-      // here is what lets test-browser/pwa.spec.ts run against the dev
-      // server like every other browser test in this repo.
-      enabled: true,
-      type: 'module',
-    },
   },
 ```
 
-Add the Apple touch icon to `app.head.link` (Android reads the manifest; iOS reads this tag), appending to the existing `link` array:
+Do **not** add a `devOptions: { enabled: true }` block. An earlier version of
+this plan step included one, on the reasoning that `test-browser/pwa.spec.ts`
+would need it to see a real service worker under `nuxi dev`. That file and
+that reasoning are both gone (see the note at the top of Step 6): forcing a
+dev-only worker into existence does not prove anything about the one that
+actually ships, and the PWA checks now run against the real `nuxi generate`
+artefact instead, where no `devOptions` flag is involved. The shipped config
+has no `devOptions` key; `test-browser/production.spec.ts`'s file header
+explains why at length.
+
+Add the Apple touch icon and the favicon to `app.head.link` (Android reads
+the manifest for its icon; iOS reads the `apple-touch-icon` tag; every
+browser falls back to `/favicon.ico` at the *origin* root for `rel="icon"`
+if it is missing, which 404s under a subpath deploy), appending to the
+existing `link` array:
 
 ```ts
-        { rel: 'apple-touch-icon', href: '/apple-touch-icon-180x180.png' },
+        { rel: 'apple-touch-icon', href: publicUrl('apple-touch-icon-180x180.png', appBaseURL) },
+        { rel: 'icon', href: publicUrl('favicon.ico', appBaseURL) },
 ```
+
+Both go through `publicUrl(..., appBaseURL)`, not a bare relative filename:
+case pages are nested (`/te-uma/density-c/anatomy/`), and a relative href
+resolves against the *document* URL, not the site root, so it would break
+at that depth. See `nuxt.config.ts`'s comment on the existing
+`apple-touch-icon` entry for the full explanation, which now covers both.
 
 - [ ] **Step 5: Run the config test**
 
@@ -1316,27 +1197,28 @@ Expected: PASS.
 
 - [ ] **Step 6: Write the browser test**
 
-Create `web/test-browser/pwa.spec.ts`:
+**This plan originally called for a new `web/test-browser/pwa.spec.ts`,
+run against `yarn dev`.** That turned out to prove nothing and was folded
+into `web/test-browser/production.spec.ts` instead — do not create
+`pwa.spec.ts`; extend `production.spec.ts`. The reason: `nuxi dev` never
+emits a real service worker or manifest unless `devOptions` forces one
+into existence, and a dev-only worker conjured by a test-only flag is not
+the artefact that ships. A PWA is a production artefact, so its checks
+belong in the file that already serves `.output/public` — the real
+`nuxi generate` output — over a static server modelled on GitHub Pages,
+and asserts against that.
+
+Add to `web/test-browser/production.spec.ts`, inside its
+`test.describe('§12 acceptance, against the generated site', ...)` block:
 
 ```ts
-import { expect, test } from '@playwright/test'
-
-/**
- * Client feedback item 1, against a real browser.
- *
- * test/pwa.test.ts asserts the configuration object; this asserts what the
- * browser actually receives -- a reachable manifest, a service worker that
- * registers, and (the one that matters) a precache manifest with no
- * imaging assets in it.
- */
-
 test('the manifest is served with the fields the client\'s old app had', async ({ page }) => {
-  await page.goto('/the-breast')
+  await page.goto(`${base}/the-breast`)
 
   const href = await page.locator('link[rel="manifest"]').getAttribute('href')
   expect(href).toBeTruthy()
 
-  const response = await page.request.get(href!)
+  const response = await page.request.get(new URL(href!, base).href)
   expect(response.ok()).toBe(true)
 
   const manifest = await response.json()
@@ -1346,57 +1228,57 @@ test('the manifest is served with the fields the client\'s old app had', async (
 })
 
 test('every icon the manifest declares actually resolves', async ({ page }) => {
-  await page.goto('/the-breast')
+  await page.goto(`${base}/the-breast`)
   const href = (await page.locator('link[rel="manifest"]').getAttribute('href'))!
-  const manifest = await (await page.request.get(href)).json()
+  const manifestUrl = new URL(href, base).href
+  const manifest = await (await page.request.get(manifestUrl)).json()
 
   for (const icon of manifest.icons as { src: string }[]) {
-    const url = new URL(icon.src, new URL(href, page.url())).href
+    const url = new URL(icon.src, manifestUrl).href
     const response = await page.request.get(url)
     expect(response.ok(), `${icon.src} -> ${response.status()}`).toBe(true)
   }
 })
 
-test('the service worker registers', async ({ page }) => {
-  await page.goto('/the-breast')
-  await page.waitForFunction(
-    async () => (await navigator.serviceWorker.getRegistrations()).length > 0,
-    null,
-    { timeout: 30_000 },
-  )
+test('the service worker script is served and the HTML references the manifest', async ({ page }) => {
+  await page.goto(`${base}/the-breast`)
+  await expect(page.locator('link[rel="manifest"]')).toHaveCount(1)
+  const response = await page.request.get(`${base}/sw.js`)
+  expect(response.ok()).toBe(true)
 })
 
 /**
- * The load-bearing assertion of this file. ~355MB of NRRD and GLB must
- * never enter the precache manifest -- see nuxt.config.ts's `pwa` comment.
+ * The load-bearing assertion. ~355MB of NRRD and GLB must never enter the
+ * precache manifest -- see nuxt.config.ts's `pwa` comment.
  */
 test('no imaging asset is precached', async ({ page }) => {
-  await page.goto('/the-breast')
-
-  const swUrl = await page.evaluate(async () => {
-    const registrations = await navigator.serviceWorker.getRegistrations()
-    return registrations[0]?.active?.scriptURL
-      ?? registrations[0]?.installing?.scriptURL
-      ?? null
-  })
-  expect(swUrl, 'no service worker script URL').toBeTruthy()
-
-  const source = await (await page.request.get(swUrl!)).text()
+  const source = await (await page.request.get(`${base}/sw.js`)).text()
   expect(source).not.toMatch(/\.nrrd/)
   expect(source).not.toMatch(/\.glb/)
   expect(source).not.toMatch(/modelView/)
 })
 ```
 
+There is deliberately no `navigator.serviceWorker.register()` round-trip
+here (an earlier draft of this plan had one): that is a meaningful check
+against the real GitHub Pages origin, but this static server has none of
+the quirks (HTTPS, header mismatches) that a live registration would catch
+beyond what fetching `sw.js` directly already proves. Reading `sw.js`'s own
+text, as above, is what actually matters.
+
 - [ ] **Step 7: Run the browser test**
 
 Run from `web/`:
 
 ```
-yarn test:browser test-browser/pwa.spec.ts
+yarn generate
+yarn test:browser test-browser/production.spec.ts
 ```
 
-Expected: PASS. If the service worker never registers, check that `pwa.devOptions.enabled` is `true` — without it `@vite-pwa/nuxt` does not emit a worker under `nuxi dev` and every test here fails for a reason unrelated to the app.
+Expected: PASS. These tests are `test.skip`ped without a `.output/public`
+build present (see the file's header), so `yarn generate` has to run
+first — there is no `devOptions` flag to check if something looks wrong;
+the whole point of this file is that it needs no dev-server special-casing.
 
 - [ ] **Step 8: Verify the static build, including the GitHub Pages subpath**
 
@@ -1439,7 +1321,7 @@ Expected: PASS. `test-browser/production.spec.ts`'s "the-breast first screen tra
 - [ ] **Step 10: Commit**
 
 ```bash
-git add web/nuxt.config.ts web/package.json web/yarn.lock web/test/pwa.test.ts web/test-browser/pwa.spec.ts
+git add web/nuxt.config.ts web/package.json web/yarn.lock web/test/pwa.test.ts web/test-browser/production.spec.ts
 git commit -m "feat(pwa): installable app shell, imaging assets excluded
 
 Client feedback item 1, second half. @vite-pwa/nuxt replaces the Nuxt 2
