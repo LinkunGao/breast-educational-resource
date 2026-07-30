@@ -17,36 +17,14 @@ const GROUP_LABEL = {
       {{ GROUP_LABEL[props.case.group] }}
     </p>
 
-    <div class="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-      <h1 class="text-h1 font-bold text-text xl:text-display">
-        {{ props.case.heading }}
-      </h1>
-      <span
-        v-if="props.case.biRads"
-        class="rounded-chip bg-brand-subtle px-2 py-0.5 text-caption font-bold text-brand-hover"
-      >
-        BI-RADS {{ props.case.biRads }}
-      </span>
-    </div>
-
     <!--
-      Design doc §4.3: these cases have no anatomy model of their own and
-      borrow the density series' model. The previous implementation hid
-      this reuse; here it is stated explicitly.
+      No BI-RADS badge and no "Reference density background: grade X" line.
+      Both are gone at the client's instruction (feedback item 3, "I think we
+      can remove BIRADS"). The density series carries the grade in its nav
+      title instead -- see content/cases.ts.
     -->
-    <p
-      v-if="props.case.referenceDensity"
-      class="mt-2 flex items-start gap-1.5 text-body-sm text-text-muted"
-    >
-      <svg viewBox="0 0 24 24" class="mt-0.5 size-4 shrink-0" aria-hidden="true">
-        <path
-          fill="currentColor"
-          d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9a10 10 0 1 0 0 20a10 10 0 0 0 0-20"
-        />
-      </svg>
-      <span>
-        Reference density background: grade {{ props.case.referenceDensity }}
-      </span>
-    </p>
+    <h1 class="mt-1 text-h1 font-bold text-text xl:text-display">
+      {{ props.case.heading }}
+    </h1>
   </header>
 </template>

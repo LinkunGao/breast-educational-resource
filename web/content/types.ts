@@ -1,6 +1,5 @@
 export type ModalityId = 'anatomy' | 'mammogram' | 'ultrasound' | 'mri'
 export type CaseGroup = 'overview' | 'density' | 'benign' | 'cancer'
-export type BiRads = 'A' | 'B' | 'C' | 'D'
 
 export interface Modality {
   id: ModalityId
@@ -23,9 +22,6 @@ export interface Case {
   title: string
   /** Case heading */
   heading: string
-  biRads?: BiRads
-  /** Stated explicitly when the case borrows another case's anatomy model */
-  referenceDensity?: BiRads
   /**
    * Slice index holding the lesion, **in this case's MRI volume**. 0 or
    * absent means no specific lesion.

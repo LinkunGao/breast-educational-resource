@@ -125,7 +125,7 @@ const sheetExpanded = ref(false)
           data-stage-column
           class="flex min-h-0 min-w-0 flex-1 flex-col bg-bg max-md:flex-none"
         >
-          <!-- Case heading (title + BI-RADS badge). -->
+          <!-- Case heading (group label + title). -->
           <slot name="heading" />
 
           <!-- Modality stepper, horizontally scrollable. -->

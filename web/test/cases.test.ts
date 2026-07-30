@@ -107,9 +107,35 @@ describe('no benign or cancer case claims an anatomy modality', () => {
   }
 })
 
-describe('borrowed anatomy models are declared', () => {
-  it('the-breast declares it borrows density A assets', () => {
-    expect(getCase('the-breast')?.referenceDensity).toBe('A')
+/**
+ * Client feedback item 3: "I think we can remove BIRADS".
+ *
+ * Removing only the header badge would leave the sidebar showing four bare
+ * letters, which ARE the BI-RADS grades and say nothing without the label.
+ * The nav titles carry the word instead. `heading` is untouched -- it was
+ * never a BI-RADS string.
+ */
+describe('BI-RADS is gone from the content model', () => {
+  it('no case carries a biRads or referenceDensity field', () => {
+    for (const c of cases) {
+      expect(c).not.toHaveProperty('biRads')
+      expect(c).not.toHaveProperty('referenceDensity')
+    }
+  })
+
+  it('the density series is titled Density A..D in navigation', () => {
+    expect(['density-a', 'density-b', 'density-c', 'density-d'].map(s => getCase(s)!.title))
+      .toEqual(['Density A', 'Density B', 'Density C', 'Density D'])
+  })
+
+  it('the density headings are untouched', () => {
+    expect(['density-a', 'density-b', 'density-c', 'density-d'].map(s => getCase(s)!.heading))
+      .toEqual([
+        'Almost entirely fat',
+        'Scattered fibroglandular densities',
+        'Heterogeneously dense',
+        'Extremely dense',
+      ])
   })
 })
 

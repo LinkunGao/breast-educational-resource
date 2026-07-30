@@ -1,5 +1,5 @@
 import { anatomyText, mammogramText, mriText } from './copy.generated'
-import type { BiRads, Case, CaseGroup, Modality, ModalityId } from './types'
+import type { Case, CaseGroup, Modality, ModalityId } from './types'
 
 /** Build a modality entry, always with an empty keyFacts (global constraint). */
 function modality(
@@ -29,7 +29,6 @@ function densityCase(
   glb: string,
   title: string,
   heading: string,
-  biRads: BiRads,
   legacyKey: keyof typeof anatomyText,
 ): Case {
   return {
@@ -37,7 +36,6 @@ function densityCase(
     group: 'density',
     title,
     heading,
-    biRads,
     modalities: [
       modality('anatomy', 'Anatomy', `${dir}/left/${glb}`, 'left_breast_view.json', anatomyText[legacyKey]),
       modality('mammogram', '3D Mammogram', `${dir}/middle/m3d.nrrd`, `${dir}/middle/m_view.json`, mammogramText[legacyKey]),
@@ -68,7 +66,7 @@ function lesionCase(
   modalities.push(
     modality('mri', '3D MRI', `${dir}/right/mri.nrrd`, `${dir}/right/mri_view.json`, mriText[legacyKey]),
   )
-  return { slug, group, title, heading, lesionSliceIndex, referenceDensity: 'C', modalities }
+  return { slug, group, title, heading, lesionSliceIndex, modalities }
 }
 
 export const cases: Case[] = [
@@ -78,7 +76,6 @@ export const cases: Case[] = [
     title: 'The Breast',
     heading: 'The Breast',
     // Has no assets of its own; borrows density-1 throughout (design doc §4.4)
-    referenceDensity: 'A',
     modalities: [
       modality('anatomy', 'Anatomy', 'density-1/left/density25.glb', 'left_breast_view.json', anatomyText.normal),
       modality('mammogram', '3D Mammogram', 'density-1/middle/m3d.nrrd', 'density-1/middle/m_view.json', mammogramText.normal),
@@ -86,10 +83,10 @@ export const cases: Case[] = [
     ],
   },
 
-  densityCase('density-a', 'density-1', 'density25.glb', 'A', 'Almost entirely fat', 'A', 'density_1'),
-  densityCase('density-b', 'density-2', 'density50.glb', 'B', 'Scattered fibroglandular densities', 'B', 'density_2'),
-  densityCase('density-c', 'density-3', 'density75.glb', 'C', 'Heterogeneously dense', 'C', 'density_3'),
-  densityCase('density-d', 'density-4', 'density100.glb', 'D', 'Extremely dense', 'D', 'density_4'),
+  densityCase('density-a', 'density-1', 'density25.glb', 'Density A', 'Almost entirely fat', 'density_1'),
+  densityCase('density-b', 'density-2', 'density50.glb', 'Density B', 'Scattered fibroglandular densities', 'density_2'),
+  densityCase('density-c', 'density-3', 'density75.glb', 'Density C', 'Heterogeneously dense', 'density_3'),
+  densityCase('density-d', 'density-4', 'density100.glb', 'Density D', 'Extremely dense', 'density_4'),
 
   lesionCase('benign-cyst', 'benign', 'benign-cyst', 'Cyst', 'Cyst', 58, 'benign_cyst', true),
   lesionCase('benign-fibroadenoma', 'benign', 'benign-fib', 'Fibroadenoma', 'Fibroadenoma', 68, 'benign_fibroadenoma'),
