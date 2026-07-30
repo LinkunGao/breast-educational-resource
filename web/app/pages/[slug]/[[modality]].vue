@@ -63,21 +63,20 @@ const stageControls = provideStageControls()
  */
 const lesionSliceIndex = computed(() => lesionSliceIndexFor(current.value!, modalityId.value))
 
-/**
- * §9.2's prefetch, mounted HERE rather than inside CopperStage (controller
- * correction C2): it needs the case's modality LIST to know what comes next,
- * and the stage is deliberately not given the whole `Case`.
+/*
+ * There is deliberately NO next-modality prefetch here.
  *
- * Gated on the control bar becoming ready, which is this app's signal that
- * the modality on screen has finished loading -- warming the next asset
- * before that would have the two downloads competing over one connection,
- * and the one the reader is waiting for would lose.
+ * Design doc §9.2 asked for one, and it was built and measured. It cannot
+ * work for this catalogue: Chromium refuses to store a response above a few
+ * megabytes in its HTTP cache, so the warm-up's bytes are thrown away and the
+ * real load pays for them again. Measured on the generated site served with
+ * GitHub Pages' own headers -- 10,972,779 bytes warmed, 10,972,779 bytes
+ * downloaded again, `fromDiskCache: false`. Fifteen of the sixteen assets a
+ * prefetch could target here are 7.7-50.8MB. See §9.2's measured correction.
+ *
+ * Per-modality lazy loading -- one modality on screen, one download -- is the
+ * part of §9.2 that does hold, and it is what CopperStage already does.
  */
-usePrefetchNextModality(
-  current,
-  modalityId,
-  computed(() => Boolean(stageControls.actions.value)),
-)
 </script>
 
 <template>

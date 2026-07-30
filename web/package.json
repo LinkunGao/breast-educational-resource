@@ -23,6 +23,7 @@
     "vue-router": "^5.2.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@gltf-transform/cli": "^4.4.2",
     "@nuxt/test-utils": "^4",
     "@playwright/test": "^1.62.0",

@@ -12,9 +12,17 @@ import { PNG } from 'pngjs'
  * still live.
  */
 
-/** The stage host: a `role="img"` div copper3d appends its canvas into. */
+/**
+ * The stage host: the focusable div copper3d appends its canvas into.
+ *
+ * `application`, not `img`. It was `img` until the a11y pass, and this
+ * locator was not updated with it -- so two of the three tests below spent a
+ * commit resolving to nothing and failing on the screenshot call. Matching
+ * the role by name rather than by a `[data-*]` hook is deliberate: it means
+ * a change to the stage's exposed semantics cannot pass silently again.
+ */
 function stage(page: Page): Locator {
-  return page.getByRole('img', { name: /viewer$/ })
+  return page.getByRole('application', { name: /viewer$/ })
 }
 
 /**
