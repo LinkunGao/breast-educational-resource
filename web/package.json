@@ -29,6 +29,7 @@
     "@nuxt/test-utils": "^4",
     "@playwright/test": "^1.62.0",
     "@tailwindcss/vite": "^4.3.3",
+    "@vite-pwa/nuxt": "^1.1.1",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.4.11",
     "happy-dom": "^20.11.1",

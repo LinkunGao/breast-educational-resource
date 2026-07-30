@@ -6,7 +6,7 @@ export default defineNuxtConfig({
   compatibilityDate: '2026-07-28',
   devtools: { enabled: true },
 
-  modules: ['@pinia/nuxt'],
+  modules: ['@pinia/nuxt', '@vite-pwa/nuxt'],
 
   // Nuxt's default component scanning prefixes nested-folder components with
   // the folder name (components/nav/AppHeader.vue -> <NavAppHeader>). Task 5's
@@ -34,6 +34,64 @@ export default defineNuxtConfig({
       // live somewhere else entirely, in which case give an absolute URL
       // (e.g. `https://cdn.example/modelView/`), which is used verbatim.
       assetBase: '/modelView/',
+    },
+  },
+
+  /**
+   * Installable app shell (client feedback item 1). The legacy app had this
+   * via `@nuxtjs/pwa` (legacy/nuxt.config.js) and the rebuild dropped it
+   * along with the icon; the manifest fields below are that config's,
+   * verbatim.
+   *
+   * APP SHELL ONLY. `globIgnores` keeps `modelView/**` out of the precache
+   * manifest, and that is load-bearing rather than tidy: those assets total
+   * ~355MB, and Chromium refuses to store responses of that size in its
+   * HTTP cache at all -- measured on this exact catalogue, see the §9.2
+   * correction in pages/[slug]/[[modality]].vue. Listing them would produce
+   * a service worker that either fails to install or silently drops them,
+   * and would inflate sw.js with thousands of useless entries. The volumes
+   * and models go over the network, as they do today.
+   *
+   * `registerType: 'autoUpdate'` because this is a reference resource with
+   * no user state: there is nothing to lose by taking the new version, and
+   * a stale shell pinned behind a prompt nobody clicks is worse.
+   */
+  pwa: {
+    registerType: 'autoUpdate',
+    manifest: {
+      name: 'Breast Educational Resource',
+      short_name: 'Breast Education App',
+      description: 'An ABI Education App for Breast Cancer.',
+      theme_color: '#ffffff',
+      background_color: '#FBF7F8',
+      display: 'standalone',
+      icons: [
+        { src: 'pwa-64x64.png', sizes: '64x64', type: 'image/png' },
+        { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+        { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png' },
+        {
+          src: 'maskable-icon-512x512.png',
+          sizes: '512x512',
+          type: 'image/png',
+          purpose: 'maskable',
+        },
+      ],
+    },
+    workbox: {
+      globPatterns: ['**/*.{js,css,html,ico,png,svg,webp,woff2}'],
+      globIgnores: ['**/modelView/**', '**/draco/**'],
+      // A 5MB ceiling on any single precached file. Belt and braces on top
+      // of globIgnores: a future asset added outside modelView/ that is
+      // genuinely too large should be skipped, not silently bloat sw.js.
+      maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+      navigateFallback: undefined,
+    },
+    devOptions: {
+      // The service worker is off in `nuxi dev` by default. Enabling it
+      // here is what lets test-browser/pwa.spec.ts run against the dev
+      // server like every other browser test in this repo.
+      enabled: true,
+      type: 'module',
     },
   },
 
@@ -103,6 +161,7 @@ export default defineNuxtConfig({
            */
           href: 'https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,400&display=swap',
         },
+        { rel: 'apple-touch-icon', href: '/apple-touch-icon-180x180.png' },
       ],
       meta: [
         { charset: 'utf-8' },
