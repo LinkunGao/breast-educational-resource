@@ -143,22 +143,45 @@ describe('scrollbars are the app\'s own, not the platform default', () => {
     'utf8',
   )
 
-  // Declared on :root and inherited from there, which is the whole reason
-  // no scroll container in the app needs a class for this. A regression
-  // that moved these onto one component would leave the others on the
-  // 15px platform bar, and nothing else in the suite would notice.
-  it('sets the standard scrollbar properties on :root, where they inherit from', () => {
-    const root = css.match(/:root\s*\{([\s\S]*?)\n {2}\}/)
-    expect(root, 'no :root block found in tokens.css').not.toBeNull()
-    expect(root![1]!).toMatch(/scrollbar-width:\s*thin/)
-    expect(root![1]!).toMatch(/scrollbar-color:\s*var\(--color-border-strong\)\s+transparent/)
+  it('draws the bar itself, at an explicit width, with a rounded thumb', () => {
+    expect(css).toMatch(/::-webkit-scrollbar\s*\{[^}]*width:\s*10px/)
+    expect(css).toMatch(/::-webkit-scrollbar-thumb\s*\{[^}]*border-radius:\s*9999px/)
+    // A transparent border plus padding-box clipping is the only way to
+    // inset a thumb inside its gutter; a thumb has no padding of its own.
+    expect(css).toMatch(/::-webkit-scrollbar-thumb\s*\{[^}]*background-clip:\s*padding-box/)
   })
 
-  // Safari has neither standard property. Chromium ignores these once
-  // scrollbar-width is set, so the two blocks never both apply.
-  it('keeps the -webkit- fallback for engines without those properties', () => {
-    expect(css).toMatch(/::-webkit-scrollbar\s*\{/)
-    expect(css).toMatch(/::-webkit-scrollbar-thumb\s*\{/)
+  it('removes the stepper arrows', () => {
+    // The two buttons at the ends of a Windows scrollbar. Reported
+    // directly: "上下的那两个箭头不允许存在".
+    expect(css).toMatch(/::-webkit-scrollbar-button\s*\{[^}]*display:\s*none/)
+  })
+
+  /**
+   * The regression this file exists to prevent, and it has already
+   * happened once.
+   *
+   * In Chromium, `scrollbar-width` set to anything but `auto` makes the
+   * engine ignore every `::-webkit-scrollbar` rule for that element. A
+   * global `:root { scrollbar-width: thin }` therefore does not merely
+   * fail to help -- it silently switches off the whole treatment above and
+   * hands back the engine's own bar, arrows and all. The standard
+   * properties are allowed here only inside the @supports block that
+   * excludes the engines which honour the pseudo-elements.
+   */
+  it('never sets scrollbar-width outside the Firefox-only @supports block', () => {
+    const firefoxOnly = css.match(
+      /@supports not selector\(::-webkit-scrollbar\)\s*\{([\s\S]*?)\n {2}\}/,
+    )
+    expect(firefoxOnly, 'no @supports not selector(::-webkit-scrollbar) block').not.toBeNull()
+    expect(firefoxOnly![1]!).toMatch(/scrollbar-width:\s*thin/)
+    expect(firefoxOnly![1]!).toMatch(/scrollbar-color:/)
+
+    // Comments stripped first: the block above this rule explains the trap
+    // in prose and names the property while doing so, which would match.
+    const elsewhere = css.replace(firefoxOnly![0]!, '').replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(elsewhere).not.toMatch(/scrollbar-width:/)
+    expect(elsewhere).not.toMatch(/scrollbar-color:/)
   })
 })
 

@@ -140,53 +140,61 @@
 @layer base {
   :root {
     color-scheme: light;
-
-    /**
-     * Scrollbars, app-wide.
-     *
-     * The platform default is a ~15px opaque bar with a grey track, and on
-     * the case sidebar it sat right against the nav rows -- heavier than
-     * anything else in the panel, and the widest single element in a
-     * 240px column. §16's "avoid heavy shadows" and §1's "over-decoration"
-     * are about the same instinct: nothing structural should shout.
-     *
-     * Both properties are INHERITED, so declaring them once on :root
-     * reaches every scroll container in the app -- the sidebar, the
-     * content panel, `main`, and the tab strip's horizontal overflow --
-     * without a utility class on each. `thin` is ~8px with a transparent
-     * track, so the bar reads as a thumb floating on the surface rather
-     * than as a second column beside it.
-     *
-     * The thumb is --color-border-strong: 1.48:1 on white, which is
-     * deliberately below the 3:1 non-text floor and is allowed to be.
-     * WCAG 1.4.11 exempts controls whose appearance is determined by the
-     * user agent, and the scrollbar is never the only way to reach
-     * anything here -- every scroll container is keyboard- and
-     * wheel-scrollable, and the sidebar's links are all in the tab order
-     * whether or not the bar is visible.
-     */
-    scrollbar-width: thin;
-    scrollbar-color: var(--color-border-strong) transparent;
   }
 
   /**
-   * Safari, which has no `scrollbar-width`/`scrollbar-color`.
+   * ── Scrollbars ─────────────────────────────────────────────────────────
    *
-   * Chromium ignores these pseudo-elements entirely once `scrollbar-width`
-   * is set to anything but `auto` (the standard property wins), so this
-   * block is not a duplicate treatment fighting the one above -- it is the
-   * only one of the two that any given engine applies.
+   * Fully drawn here, not merely thinned. The platform bar is ~15px, opaque,
+   * on a grey track, and on Windows it carries a stepper ARROW at each end;
+   * in a 240px sidebar that made it the heaviest thing in the column.
    *
-   * The transparent border plus `background-clip: padding-box` is what
-   * insets a 4px thumb inside an 8px gutter; a plain 8px thumb touches the
-   * content it is scrolling.
+   * ## Why `scrollbar-width: thin` is not used on Chromium
+   *
+   * The standard properties (`scrollbar-width` / `scrollbar-color`) look
+   * like the modern answer and are the wrong tool here: they offer three
+   * widths and two colours and nothing else. They cannot remove the arrow
+   * buttons, cannot set an exact width, and cannot round the thumb. Worse,
+   * in Chromium setting `scrollbar-width` to anything but `auto` makes the
+   * engine IGNORE every `::-webkit-scrollbar` rule on that element -- so a
+   * first attempt that set both got Chromium's built-in "thin" bar,
+   * arrows included, and none of the styling below. The two mechanisms do
+   * not compose; one has to win.
+   *
+   * So: `::-webkit-scrollbar` is the primary treatment, since it is the one
+   * that can actually draw what this needs, and it covers Chrome, Edge and
+   * Safari -- every engine this app is used in.
+   *
+   * `-webkit-scrollbar-button` is the arrow, and `display: none` is what
+   * removes it. Zeroing the size as well is not redundant: some builds
+   * reserve the square even for a `display: none` button.
+   *
+   * The thumb is 4px of colour inside a 10px gutter -- `background-clip:
+   * padding-box` behind a transparent border, which is the only way to
+   * inset a scrollbar thumb (it has no padding of its own). The gutter has
+   * to be wide enough to be a comfortable drag target even though the mark
+   * inside it is hairline.
+   *
+   * Colour: `--color-border-strong`, the same hairline grey as the app's
+   * rules, going to `--color-text-subtle` under the pointer. Both are below
+   * the 3:1 non-text floor and allowed to be -- WCAG 1.4.11 exempts
+   * controls whose appearance the user agent determines, and no scroll
+   * container here is reachable only by dragging its bar.
    */
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
+  }
+
+  /* The stepper arrows at each end. */
+  ::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
   }
 
   ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-track-piece,
   ::-webkit-scrollbar-corner {
     background: transparent;
   }
@@ -194,12 +202,29 @@
   ::-webkit-scrollbar-thumb {
     background-color: var(--color-border-strong);
     background-clip: padding-box;
-    border: 2px solid transparent;
+    border: 3px solid transparent;
     border-radius: 9999px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
     background-color: var(--color-text-subtle);
+  }
+
+  /**
+   * Firefox, which has no `::-webkit-scrollbar` at all.
+   *
+   * Scoped by feature detection rather than declared globally, because
+   * declaring it globally is exactly what disabled the block above on
+   * Chromium. `selector(::-webkit-scrollbar)` is true on Chromium and
+   * Safari and false on Firefox, so precisely one of the two treatments is
+   * ever live. Both properties are inherited, so :root reaches every scroll
+   * container in the app.
+   */
+  @supports not selector(::-webkit-scrollbar) {
+    :root {
+      scrollbar-width: thin;
+      scrollbar-color: var(--color-border-strong) transparent;
+    }
   }
 
   body {
