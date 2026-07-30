@@ -31,7 +31,6 @@ function mountLayout(slots: Record<string, string> = {}) {
 function mountLayoutWithAllRegions() {
   return mountLayout({
     heading: '<div class="heading-marker">heading</div>',
-    stepper: '<div class="stepper-marker">stepper</div>',
     stage: '<div class="stage-marker">stage</div>',
     content: '<div class="content-marker">content</div>',
     prevnext: '<div class="prevnext-marker">prevnext</div>',
@@ -49,18 +48,19 @@ describe('default layout', () => {
     expect(wrapper.find('.content-marker').exists()).toBe(true)
   })
 
-  it('lays out the five regions in the phone order: heading, stepper, stage, content, prev/next', () => {
+  it('lays out the four regions in the phone order: heading, stage, content, prev/next', () => {
     // This is the order a single (phone-tier) column stacks in DOM order,
     // and also the order xl+'s flex-row split reads within each of its two
     // columns -- one nesting produces the right order at every tier, with
     // no CSS `order` reshuffling to separately verify.
     //
-    // There is no `controls` region any more: each stage renders its own
-    // control bar under its own canvas, because the three-up layout gives
-    // every panel one. It arrives inside `stage`, so its position relative
-    // to `content` is still fixed by this same nesting.
+    // Neither `stepper` nor `controls` is a layout region any more. Both
+    // now arrive inside `stage`: the slot strip is one-up-only chrome that
+    // has to sit next to the layout decision hiding it at three-up, and
+    // each panel renders its own control bar. Their position relative to
+    // `content` is still fixed by this same nesting.
     const wrapper = mountLayoutWithAllRegions()
-    const markers = ['heading-marker', 'stepper-marker', 'stage-marker', 'content-marker', 'prevnext-marker']
+    const markers = ['heading-marker', 'stage-marker', 'content-marker', 'prevnext-marker']
     const html = wrapper.html()
     const positions = markers.map(m => html.indexOf(m))
     expect(positions.every(p => p !== -1)).toBe(true)

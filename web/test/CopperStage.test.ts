@@ -321,12 +321,12 @@ describe('CopperStage navigation choreography', () => {
     mountStage({})
     await settle()
 
-    expect(renderer.createScene).toHaveBeenCalledWith('density-a:anatomy')
+    expect(renderer.createScene).toHaveBeenCalledWith('/modelView/density-1/left/density25.glb')
     expect(loadGltfModel).toHaveBeenCalledTimes(1)
     expect(loadGltfModel).toHaveBeenCalledWith('/modelView/density-1/left/density25.glb', '/draco/')
     // The new guarantee this app now owns instead of copper3d: without this
     // call the model would decode perfectly and simply never appear.
-    expect(scenes.get('density-a:anatomy')!.scene.add).toHaveBeenCalledTimes(1)
+    expect(scenes.get('/modelView/density-1/left/density25.glb')!.scene.add).toHaveBeenCalledTimes(1)
   })
 
   /**
@@ -341,7 +341,7 @@ describe('CopperStage navigation choreography', () => {
   it('crossfades within the existing scene on a density step, without loading a second scene', async () => {
     const wrapper = mountStage({})
     await settle()
-    const scene = scenes.get('density-a:anatomy')!
+    const scene = scenes.get('/modelView/density-1/left/density25.glb')!
     expect(scene.objects).toHaveLength(1)
 
     await wrapper.setProps({ slug: 'density-b', modality: DENSITY_B })
@@ -367,7 +367,7 @@ describe('CopperStage navigation choreography', () => {
   it('leaves the camera exactly where it was through a density crossfade', async () => {
     const wrapper = mountStage({})
     await settle()
-    const scene = scenes.get('density-a:anatomy')!
+    const scene = scenes.get('/modelView/density-1/left/density25.glb')!
     scene.camera.position.set(5, 6, 7)
     scene.loadView.mockClear()
 
@@ -431,20 +431,29 @@ describe('CopperStage navigation choreography', () => {
     )
   })
 
-  // Controller correction C12: `the-breast` and `density-a` ship the same
-  // density25.glb, so §7.1 says there is no morph between them. The guard
-  // lives in the morph, and the navigation has to fall through to an
-  // ordinary load rather than silently doing nothing.
-  it('falls through to an ordinary load when the density step would fade a model against its own twin', async () => {
+  /**
+   * `the-breast` and `density-a` ship the SAME `density25.glb`, so there is
+   * nothing to crossfade between them (controller correction C12: the morph
+   * declines to fade a model against its own twin) -- and, since scenes are
+   * keyed by asset rather than by slug, nothing to rebuild either.
+   *
+   * This used to build a second scene under a second name and decode the
+   * same file twice. The human caught it: "The Breast 页面和 density-A 页面
+   * 他们就是完全一样的内容，直接复用就行了，为何要反复渲染？！"
+   */
+  it('reuses the one scene when two cases ship the same asset', async () => {
     const wrapper = mountStage({ slug: 'the-breast', group: 'overview' })
     await settle()
 
     await wrapper.setProps({ slug: 'density-a', group: 'density', modality: DENSITY_A })
     await settle()
 
-    expect(renderer.createScene).toHaveBeenCalledTimes(2)
-    expect(renderer.createScene).toHaveBeenLastCalledWith('density-a:anatomy')
-    expect(scenes.get('the-breast:anatomy')!.scene.remove).not.toHaveBeenCalled()
+    // One scene, built once, for one file -- not one per case.
+    expect(renderer.createScene).toHaveBeenCalledTimes(1)
+    expect(renderer.createScene).toHaveBeenCalledWith('/modelView/density-1/left/density25.glb')
+    // And the model in it is left alone: no teardown, no second download.
+    expect(scenes.get('/modelView/density-1/left/density25.glb')!.scene.remove).not.toHaveBeenCalled()
+    expect(loadGltfModel).toHaveBeenCalledTimes(1)
   })
 
   /**
@@ -465,7 +474,7 @@ describe('CopperStage navigation choreography', () => {
 
     const wrapper = mountStage({})
     await settle()
-    const first = scenes.get('density-a:anatomy')!
+    const first = scenes.get('/modelView/density-1/left/density25.glb')!
 
     // Hold density-b's GLB open, as a slow network would.
     let landB!: (value: { group: ReturnType<typeof makeGroup>, size: number }) => void
@@ -521,7 +530,7 @@ describe('CopperStage navigation choreography', () => {
 
     const wrapper = mountStage({})
     await settle()
-    const scene = scenes.get('density-a:anatomy')!
+    const scene = scenes.get('/modelView/density-1/left/density25.glb')!
     const outgoing = scene.objects[0]!
 
     await wrapper.setProps({ slug: 'density-b', modality: DENSITY_B })

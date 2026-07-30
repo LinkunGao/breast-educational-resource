@@ -128,8 +128,6 @@ const sheetExpanded = ref(false)
           <!-- Case heading (group label + title). -->
           <slot name="heading" />
 
-          <!-- Modality stepper, horizontally scrollable. -->
-          <slot name="stepper" />
 
           <!-- md:max-xl:min-h ensures the stage can't be squeezed to 0 at
                tablet: in a column flex layout with a shrink-0 sibling,

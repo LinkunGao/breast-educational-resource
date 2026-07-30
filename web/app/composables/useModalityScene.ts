@@ -281,11 +281,33 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
     scene.value = next
   }
 
-  /** Scenes are namespaced `${slug}:${modalityId}` so two cases can never
-   * collide, and switching modalities within one case can find its own
-   * previously-built scene back. */
+  /**
+   * A scene is identified by the ASSET it displays, not by the case that
+   * happens to be showing it.
+   *
+   * This used to be `${slug}:${modality.id}`, which quietly decoded the
+   * same file more than once. `the-breast` and `density-a` ship the same
+   * three files (`density-1/left/density25.glb`,
+   * `density-1/middle/m3d.nrrd`, `density-1/right/mri.nrrd`), so stepping
+   * between them built a second scene per modality and paid for a second
+   * copy of a 21MB volume -- which is what the human saw: "The Breast 页面
+   * 和 density-A 页面他们就是完全一样的内容，直接复用就行了，为何要反复
+   * 渲染？！". The same waste applied five times over to the lesion cases,
+   * which all borrow `density-3/left/density75.glb` for their anatomy.
+   *
+   * `slug` stays in the signature because every call site has it and the
+   * pairing reads correctly; it just does not contribute to identity.
+   *
+   * Two consequences worth knowing:
+   *  - The residency budget now counts each distinct file once, which is
+   *    what it was always trying to measure.
+   *  - `prepareMorph` already declined to crossfade a model against its own
+   *    twin by comparing asset URLs (controller correction C12); with names
+   *    derived from the same URL, `adoptSceneName` is a no-op in exactly
+   *    that case rather than a rename between two names for one file.
+   */
   function sceneName(slug: string, modality: Modality) {
-    return `${slug}:${modality.id}`
+    return url(modality.asset)
   }
 
   /**
@@ -460,15 +482,33 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
     const preset = viewpointByScene.get(name)
     if (!bounds || !preset) return
 
-    const [tx, ty, tz] = preset.targetPosition
+    const [px, py, pz] = preset.targetPosition
     const [ex, ey, ez] = preset.eyePosition
-    const dx = ex - tx
-    const dy = ey - ty
-    const dz = ez - tz
+    const dx = ex - px
+    const dy = ey - py
+    const dz = ez - pz
     const length = Math.hypot(dx, dy, dz)
     // A preset whose eye sits exactly on its target has no direction to
     // preserve; leave it to `loadView`'s own result rather than guessing one.
     if (length === 0) return
+
+    /**
+     * Aim at the object's own centre, not at the preset's target.
+     *
+     * The presets all target the origin, which is right for the NRRD
+     * volumes -- `RASDimensions` describes a box centred there. A GLB is
+     * not: `density25.glb`'s bounding box sits well off the origin, so
+     * framing from the origin pushed half the model out of frame, and
+     * narrowing a panel made it obvious -- the human's screenshot showed
+     * the anatomy model clipped against the left edge of its own cell.
+     *
+     * `centre` is [0,0,0] for imaging scenes, so this is a no-op there and
+     * the imaging framing is unchanged.
+     */
+    const [cx, cy, cz] = bounds.center
+    const tx = px + cx
+    const ty = py + cy
+    const tz = pz + cz
 
     const distance = fitDistance(bounds, aspect, target.camera.fov)
     target.camera.position.set(
@@ -476,6 +516,10 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
       ty + (dy / length) * distance,
       tz + (dz / length) * distance,
     )
+    target.camera.lookAt(tx, ty, tz)
+    // TrackballControls orbits around `target`; leaving it at the preset's
+    // origin would make the first drag swing the model out of frame again.
+    target.controls.target?.set?.(tx, ty, tz)
     target.camera.updateProjectionMatrix()
     target.controls.handleResize?.()
     renderer.render()
@@ -692,8 +736,19 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
       // "no auto-fit for this scene" (the model still displays, at the
       // preset's own unmodified distance), not fail a load that has already
       // successfully added its content to the scene.
-      const size = new Box3().setFromObject(group as never).getSize(new Vector3())
-      boundsByScene.set(name, { width: size.x, height: size.y, depth: size.z })
+      const box = new Box3().setFromObject(group as never)
+      const size = box.getSize(new Vector3())
+      // The centre matters as much as the size here: a GLB's box is not
+      // centred on the origin the presets target, so framing from the
+      // origin leaves part of the model outside the frame -- visible as
+      // soon as a panel narrows. See `refitCurrentScene`.
+      const centre = box.getCenter(new Vector3())
+      boundsByScene.set(name, {
+        width: size.x,
+        height: size.y,
+        depth: size.z,
+        center: [centre.x, centre.y, centre.z],
+      })
     }
     catch {
       boundsByScene.delete(name)
@@ -904,7 +959,16 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
             slices.z.repaint.call(slices.z)
 
             const [rx, ry, rz] = volume.RASDimensions
-            boundsByScene.set(name, { width: rx ?? 0, height: ry ?? 0, depth: rz ?? 0 })
+            // `RASDimensions` describes a box centred on the origin, which
+            // is exactly what every `*_view.json` preset targets -- so the
+            // centre offset is zero here and the imaging framing is
+            // unaffected by the GLB centring fix.
+            boundsByScene.set(name, {
+              width: rx ?? 0,
+              height: ry ?? 0,
+              depth: rz ?? 0,
+              center: [0, 0, 0],
+            })
 
             if (flat) {
               // The same two properties the legacy 2D views set

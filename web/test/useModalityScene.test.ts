@@ -256,7 +256,7 @@ describe('useModalityScene', () => {
     const modalityScene = useModalityScene(stage)
 
     const loadPromise = modalityScene.load('the-breast', makeModality({ id: 'mri', asset: 'density-1/right/mri.nrrd' }))
-    expect(renderer.createScene).toHaveBeenCalledWith('the-breast:mri')
+    expect(renderer.createScene).toHaveBeenCalledWith('/modelView/density-1/right/mri.nrrd')
     expect(renderer.setCurrentScene).toHaveBeenCalledWith(scene)
 
     // Resolve loadNrrd's callback synchronously, as a fast local fixture load would.
@@ -482,7 +482,7 @@ describe('useModalityScene', () => {
     const stage = makeFakeStage(renderer)
     const modalityScene = useModalityScene(stage)
     const modality = makeModality()
-    const name = 'the-breast:mammogram'
+    const name = '/modelView/density-1/middle/m3d.nrrd'
 
     const firstLoad = modalityScene.load('the-breast', modality)
     // createScene's default mock registers into sceneMap synchronously,
@@ -1135,17 +1135,17 @@ describe('useModalityScene', () => {
      */
     it('re-keys the scene under the case it now displays, so returning to that case is a cache hit', async () => {
       const { scene, modalityScene, renderer, resolveGltf } = await loadInitialAnatomy()
-      expect(renderer.sceneMap['density-a:anatomy']).toBe(scene)
+      expect(renderer.sceneMap['/modelView/density-1/left/density25.glb']).toBe(scene)
 
       resolveGltf(makeAnatomyGroup().group)
       const morph = (await modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb')))!
       morph.commit()
 
-      expect(renderer.sceneMap['density-b:anatomy']).toBe(scene)
-      expect(renderer.sceneMap['density-a:anatomy']).toBeUndefined()
+      expect(renderer.sceneMap['/modelView/density-2/left/density50.glb']).toBe(scene)
+      expect(renderer.sceneMap['/modelView/density-1/left/density25.glb']).toBeUndefined()
       // copper3d keeps its own copy on the instance; a stale one would make
       // any reader of `sceneName` disagree with the map it is keyed in.
-      expect(scene.sceneName).toBe('density-b:anatomy')
+      expect(scene.sceneName).toBe('/modelView/density-2/left/density50.glb')
       // The per-scene bookkeeping travels with the name, or the re-keyed
       // scene comes back framed by whatever preset happened to load last.
       expect(modalityScene.viewpoint.value).toEqual(DEFAULT_VIEWPOINT)
@@ -1213,7 +1213,9 @@ describe('useModalityScene', () => {
       id: 'mammogram' | 'mri',
     ) {
       const pending = modalityScene.load(slug, makeModality({ id, asset: `${slug}/${id}.nrrd` }))
-      const scene = renderer.sceneMap[`${slug}:${id}`]!
+      // Scenes are keyed by the resolved asset URL, not by slug:modality --
+      // see `sceneName`. Two cases shipping the same file share one scene.
+      const scene = renderer.sceneMap[`/modelView/${slug}/${id}.nrrd`]!
       if (vi.mocked(scene.loadNrrd).mock.calls.length) resolveNrrd(scene)
       await pending
       return scene
@@ -1232,7 +1234,7 @@ describe('useModalityScene', () => {
       await visit(modalityScene, renderer, 'density-d', 'mammogram')
 
       expect(Object.keys(renderer.sceneMap).sort()).toEqual([
-        'density-b:mammogram', 'density-c:mammogram', 'density-d:mammogram',
+        '/modelView/density-b/mammogram.nrrd', '/modelView/density-c/mammogram.nrrd', '/modelView/density-d/mammogram.nrrd',
       ])
       // Evicting means freeing: `scene.remove` alone only unlinks, and the
       // slice plane's texture IS the decoded volume slice.
@@ -1256,7 +1258,7 @@ describe('useModalityScene', () => {
       await visit(modalityScene, renderer, 'density-d', 'mammogram')
 
       expect(Object.keys(renderer.sceneMap).sort()).toEqual([
-        'density-a:mammogram', 'density-c:mammogram', 'density-d:mammogram',
+        '/modelView/density-a/mammogram.nrrd', '/modelView/density-c/mammogram.nrrd', '/modelView/density-d/mammogram.nrrd',
       ])
     })
 
@@ -1272,7 +1274,7 @@ describe('useModalityScene', () => {
 
       // density-a was evicted; visiting it again must genuinely rebuild.
       const rebuilt = await visit(modalityScene, renderer, 'density-a', 'mammogram')
-      expect(vi.mocked(renderer.createScene).mock.calls.filter(c => c[0] === 'density-a:mammogram')).toHaveLength(2)
+      expect(vi.mocked(renderer.createScene).mock.calls.filter(c => c[0] === '/modelView/density-a/mammogram.nrrd')).toHaveLength(2)
       expect(rebuilt.loadNrrd).toHaveBeenCalledTimes(1)
       expect(modalityScene.sliceState.value).not.toBeNull()
       expect(modalityScene.viewpoint.value).toEqual(DEFAULT_VIEWPOINT)
@@ -1287,7 +1289,7 @@ describe('useModalityScene', () => {
       const only = await visit(modalityScene, renderer, 'density-a', 'mammogram')
       for (let i = 0; i < 5; i++) await visit(modalityScene, renderer, 'density-a', 'mammogram')
 
-      expect(renderer.sceneMap['density-a:mammogram']).toBe(only)
+      expect(renderer.sceneMap['/modelView/density-a/mammogram.nrrd']).toBe(only)
       expect(modalityScene.scene.value).toBe(only)
     })
 
@@ -1319,12 +1321,12 @@ describe('useModalityScene', () => {
 
       // A starts loading but its NRRD response is slow.
       const loadA = modalityScene.load('density-a', makeModality({ id: 'mammogram', asset: 'density-a/mammogram.nrrd' }))
-      const sceneA = renderer.sceneMap['density-a:mammogram']!
+      const sceneA = renderer.sceneMap['/modelView/density-a/mammogram.nrrd']!
 
       // The user steps to B before A's response lands. B is not superseded
       // by anything after it, so it completes normally.
       const loadB = modalityScene.load('density-b', makeModality({ id: 'mammogram', asset: 'density-b/mammogram.nrrd' }))
-      resolveNrrd(renderer.sceneMap['density-b:mammogram']!)
+      resolveNrrd(renderer.sceneMap['/modelView/density-b/mammogram.nrrd']!)
       await loadB
 
       // A's own response finally arrives, late -- superseded, but it still
@@ -1342,14 +1344,14 @@ describe('useModalityScene', () => {
       // completion, before A's own late registration), so it is the first
       // to overflow -- not A.
       expect(Object.keys(renderer.sceneMap)).toHaveLength(3)
-      expect(renderer.sceneMap['density-b:mammogram']).toBeUndefined()
-      expect(renderer.sceneMap['density-a:mammogram']).toBe(sceneA)
+      expect(renderer.sceneMap['/modelView/density-b/mammogram.nrrd']).toBeUndefined()
+      expect(renderer.sceneMap['/modelView/density-a/mammogram.nrrd']).toBe(sceneA)
 
       // One more visit proves A was genuinely counted, not leaked: it is
       // now the LRU-oldest survivor and is the next thing evicted.
       await visit(modalityScene, renderer, 'density-e', 'mammogram')
       expect(Object.keys(renderer.sceneMap)).toHaveLength(3)
-      expect(renderer.sceneMap['density-a:mammogram']).toBeUndefined()
+      expect(renderer.sceneMap['/modelView/density-a/mammogram.nrrd']).toBeUndefined()
     })
 
     // Shared with Task 8's failed-load eviction: one way out of the map,
@@ -1364,9 +1366,9 @@ describe('useModalityScene', () => {
       await visit(modalityScene, renderer, 'density-b', 'mammogram')
       await visit(modalityScene, renderer, 'density-c', 'mammogram')
 
-      const survivor = renderer.sceneMap['density-a:mammogram']!
+      const survivor = renderer.sceneMap['/modelView/density-a/mammogram.nrrd']!
       vi.mocked(renderer.getSceneByName).mockImplementation(
-        (name: string) => name === 'density-a:mammogram' ? survivor : renderer.sceneMap[name],
+        (name: string) => name === '/modelView/density-a/mammogram.nrrd' ? survivor : renderer.sceneMap[name],
       )
 
       await visit(modalityScene, renderer, 'density-d', 'mammogram')
@@ -1395,7 +1397,7 @@ describe('useModalityScene', () => {
       await visit(modalityScene, renderer, 'density-a', 'mammogram')
 
       // The last one loaded is the one on screen.
-      expect(renderer.getSceneByName('density-a:mammogram')).toBeDefined()
+      expect(renderer.getSceneByName('/modelView/density-a/mammogram.nrrd')).toBeDefined()
     })
   })
 
