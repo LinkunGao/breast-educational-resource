@@ -236,19 +236,15 @@ export function lesionSliceIndexFor(c: Case, modality: ModalityId): number {
 
 /**
  * Design doc §7.1's morph family: the four density levels plus `the-breast`,
- * which borrows density-1's GLB. Membership has two consequences that must
- * agree, so both read this one predicate:
+ * which borrows density-1's GLB. `chooseTransition` (cameraTransitions.ts)
+ * reads this predicate to decide which case navigations may crossfade
+ * ('density-morph') rather than cut.
  *
- *  · `chooseTransition` (cameraTransitions.ts) only returns 'density-morph'
- *    within the family, and
- *  · `app.vue`'s page key gives the whole family ONE component instance, so
- *    the renderer and the outgoing model survive the case navigation a
- *    crossfade needs.
- *
- * If those two ever disagreed the app would either share a renderer across
- * cases it never morphs between (paying the residency for nothing) or try to
- * morph across a boundary the renderer is torn down at (doing nothing at
- * all, the exact failure mode fix round 1 exists to close).
+ * Task 2 (three-up plan) gave every case one shared page key
+ * (app/utils/pageKey.ts), not just this family, so membership here no
+ * longer has anything to do with which cases share a renderer -- every case
+ * does now, and residency is bounded by `sceneBudget.ts` instead. This
+ * predicate is purely about which navigations are eligible to crossfade.
  */
 export function isMorphFamilyGroup(group: CaseGroup): boolean {
   return group === 'density' || group === 'overview'

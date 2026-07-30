@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Modality } from '../content/types'
 import type { CopperModule, CopperRenderer, CopperScene, CopperViewPoint, StageApi } from '../app/composables/copper-types'
 import { loadGltfModel } from '../app/composables/loadGltfModel'
+import { createSceneBudget } from '../app/composables/sceneBudget'
 import { useModalityScene } from '../app/composables/useModalityScene'
 
 /**
@@ -1142,15 +1143,23 @@ describe('useModalityScene', () => {
   })
 
   /**
-   * Fix round 1. Before it, the cache needed no cap: `app.vue` keyed the
-   * case page by slug, so leaving a case tore the whole renderer down, and
-   * no case offers more than three modalities. §7.1's crossfade needs the
-   * renderer to survive a case navigation within the morph family, so that
-   * structural bound is gone for those five cases and this replaces it with
-   * the same number -- which matters because the family's imaging volumes
-   * decode to considerably more than the 167MB they occupy on disk.
+   * Task 2 (three-up plan). Residency is now bounded by bytes
+   * (`sceneBudget.ts`), not by a fixed count -- every case now shares one
+   * page instance, so a per-page-instance cap of three would mean fifteen
+   * possible scenes fighting over three slots. These tests size an isolated
+   * budget to a multiple of `FIXTURE_SCENE_BYTES` so "three scenes resident"
+   * stays a meaningful, exact assertion even though the underlying unit is
+   * now bytes rather than a count.
    */
   describe('cached-scene residency cap', () => {
+    /** Every scene these fixtures build falls back to useModalityScene's
+     *  GLB_ESTIMATED_BYTES estimate: the fake NRRD volumes built by
+     *  `fakeSlice`/`resolveNrrd` carry no `raw.volume.data`, so `sceneBytes`
+     *  never finds a `byteLength` to size an NRRD scene by and falls back to
+     *  the same flat estimate a GLB gets. Sizing a test budget as a multiple
+     *  of this keeps eviction counts predictable. */
+    const FIXTURE_SCENE_BYTES = 2 * 1024 * 1024
+
     /** A renderer that builds a DISTINCT scene per name and answers
      * `getSceneByName` from its own map, the way the real one does --
      * `makeFakeRenderer` deliberately returns one fixed scene, which cannot
@@ -1190,7 +1199,8 @@ describe('useModalityScene', () => {
 
     it('keeps three scenes and evicts the least recently used, never the one on screen', async () => {
       const renderer = makeMultiSceneRenderer()
-      const modalityScene = useModalityScene(makeFakeStage(renderer))
+      const budget = createSceneBudget(3 * FIXTURE_SCENE_BYTES)
+      const modalityScene = useModalityScene(makeFakeStage(renderer), budget)
 
       const a = await visit(modalityScene, renderer, 'density-a', 'mammogram')
       await visit(modalityScene, renderer, 'density-b', 'mammogram')
@@ -1212,7 +1222,8 @@ describe('useModalityScene', () => {
 
     it('counts a revisit as recent, so the scene you keep coming back to is not the one thrown away', async () => {
       const renderer = makeMultiSceneRenderer()
-      const modalityScene = useModalityScene(makeFakeStage(renderer))
+      const budget = createSceneBudget(3 * FIXTURE_SCENE_BYTES)
+      const modalityScene = useModalityScene(makeFakeStage(renderer), budget)
 
       await visit(modalityScene, renderer, 'density-a', 'mammogram')
       await visit(modalityScene, renderer, 'density-b', 'mammogram')
@@ -1229,7 +1240,8 @@ describe('useModalityScene', () => {
 
     it('drops the evicted scene\'s own bookkeeping, so a rebuild is not handed the old scene\'s framing', async () => {
       const renderer = makeMultiSceneRenderer()
-      const modalityScene = useModalityScene(makeFakeStage(renderer))
+      const budget = createSceneBudget(3 * FIXTURE_SCENE_BYTES)
+      const modalityScene = useModalityScene(makeFakeStage(renderer), budget)
 
       await visit(modalityScene, renderer, 'density-a', 'mammogram')
       await visit(modalityScene, renderer, 'density-b', 'mammogram')
@@ -1247,7 +1259,8 @@ describe('useModalityScene', () => {
     // The one place the cap must yield: never blank the stage to satisfy it.
     it('never evicts the scene currently displayed, even if it is the only one left', async () => {
       const renderer = makeMultiSceneRenderer()
-      const modalityScene = useModalityScene(makeFakeStage(renderer))
+      const budget = createSceneBudget(3 * FIXTURE_SCENE_BYTES)
+      const modalityScene = useModalityScene(makeFakeStage(renderer), budget)
 
       const only = await visit(modalityScene, renderer, 'density-a', 'mammogram')
       for (let i = 0; i < 5; i++) await visit(modalityScene, renderer, 'density-a', 'mammogram')
@@ -1256,20 +1269,31 @@ describe('useModalityScene', () => {
       expect(modalityScene.scene.value).toBe(only)
     })
 
-    // Finding 1 (code review, Important). `touchScene` is the only path
-    // that pushes a name into the LRU (`recentScenes`), and it is correctly
-    // gated behind the load token so a superseded load can never bump the
-    // scene the user is actually looking at. But the unconditional
-    // bookkeeping right below it in `load()` (review fix #3: a superseded
-    // load that genuinely finished building still gets registered, so
-    // switching back to it later isn't half-built) runs regardless of that
-    // token -- so a scene built by a superseded-but-successful load used to
-    // become permanently invisible to the cap, sitting in copper3d's
-    // sceneMap forever. Rapid modality-stepping during slow NRRD downloads
-    // is exactly the shape of traffic that hits this.
-    it('evicts a superseded-but-completed load once it becomes resident, even though it was never actually viewed', async () => {
+    // Finding 1 (code review, Important), carried forward from the
+    // count-of-three cap to the byte budget. `touchScene` is the only path
+    // that pins/touches a scene, and it is correctly gated behind the load
+    // token so a superseded load can never bump the scene the user is
+    // actually looking at. But `load()`'s bookkeeping just above it
+    // (`budget.register`, review fix #3: a superseded load that genuinely
+    // finished building still gets registered, so switching back to it
+    // later isn't half-built) runs unconditionally, regardless of that
+    // token -- so a scene built by a superseded-but-successful load must
+    // still be counted against the budget, or it sits in copper3d's
+    // sceneMap forever, invisible to `overflow()`. Rapid modality-stepping
+    // during slow NRRD downloads is exactly the shape of traffic that hits
+    // this.
+    //
+    // Unlike the old count-of-three cap, the budget has no special-cased
+    // preference for evicting a never-viewed resident first: eviction is
+    // plain LRU by registration/touch order. A's late, superseded
+    // registration lands in the queue AFTER B's completion touched it, so
+    // the first thing to overflow is B -- the genuinely-viewed scene that
+    // happens to be LRU-oldest -- not A. What this test still proves is the
+    // load-bearing part of finding 1: A is bounded, not leaked forever.
+    it('registers a superseded-but-completed load against the budget, so it does not leak forever', async () => {
       const renderer = makeMultiSceneRenderer()
-      const modalityScene = useModalityScene(makeFakeStage(renderer))
+      const budget = createSceneBudget(3 * FIXTURE_SCENE_BYTES)
+      const modalityScene = useModalityScene(makeFakeStage(renderer), budget)
 
       // A starts loading but its NRRD response is slow.
       const loadA = modalityScene.load('density-a', makeModality({ id: 'mammogram', asset: 'density-a/mammogram.nrrd' }))
@@ -1292,12 +1316,17 @@ describe('useModalityScene', () => {
       await visit(modalityScene, renderer, 'density-c', 'mammogram')
       await visit(modalityScene, renderer, 'density-d', 'mammogram')
 
-      // Cap is 3. Without treating A as a resident, this sits at 4 (A plus
-      // whichever 3 of B/C/D are most recent) forever -- MAX_CACHED_SCENES
-      // silently stops bounding anything.
+      // Budget holds 3 scenes' worth. B is the LRU-oldest entry (touched on
+      // completion, before A's own late registration), so it is the first
+      // to overflow -- not A.
       expect(Object.keys(renderer.sceneMap)).toHaveLength(3)
-      // And specifically: A -- never actually looked at -- is the one
-      // dropped, not a scene the user genuinely viewed.
+      expect(renderer.sceneMap['density-b:mammogram']).toBeUndefined()
+      expect(renderer.sceneMap['density-a:mammogram']).toBe(sceneA)
+
+      // One more visit proves A was genuinely counted, not leaked: it is
+      // now the LRU-oldest survivor and is the next thing evicted.
+      await visit(modalityScene, renderer, 'density-e', 'mammogram')
+      expect(Object.keys(renderer.sceneMap)).toHaveLength(3)
       expect(renderer.sceneMap['density-a:mammogram']).toBeUndefined()
     })
 
@@ -1305,9 +1334,10 @@ describe('useModalityScene', () => {
     // one place that checks it took.
     it('fails loudly if a copper3d upgrade makes deleting from sceneMap a silent no-op', async () => {
       const renderer = makeMultiSceneRenderer()
+      const budget = createSceneBudget(3 * FIXTURE_SCENE_BYTES)
       // Simulates `sceneMap` no longer being a plain object keyed by name:
       // the delete stops taking, but nothing throws on its own.
-      const modalityScene = useModalityScene(makeFakeStage(renderer))
+      const modalityScene = useModalityScene(makeFakeStage(renderer), budget)
       await visit(modalityScene, renderer, 'density-a', 'mammogram')
       await visit(modalityScene, renderer, 'density-b', 'mammogram')
       await visit(modalityScene, renderer, 'density-c', 'mammogram')
@@ -1319,6 +1349,31 @@ describe('useModalityScene', () => {
 
       await visit(modalityScene, renderer, 'density-d', 'mammogram')
       expect(modalityScene.loadError.value?.message).toMatch(/survived eviction/)
+    })
+
+    // Task 2 (three-up plan). Three-up shows up to three panels at once, so
+    // whatever a stage is currently displaying must survive ANY budget,
+    // however small -- the pin is the only thing standing between a soft
+    // memory limit and a blank panel the reader is looking at.
+    it('never evicts the scene this stage is currently showing', async () => {
+      // A budget so small that everything overflows, so the only thing that
+      // can keep the visible scene alive is the pin.
+      const budget = createSceneBudget(1)
+      const renderer = makeMultiSceneRenderer()
+      const modalityScene = useModalityScene(makeFakeStage(renderer), budget)
+
+      vi.mocked(loadGltfModel).mockResolvedValueOnce({
+        group: { name: '', traverse: () => {} } as never,
+        size: 1,
+      })
+      await modalityScene.load('density-a', makeModality({
+        id: 'anatomy', label: 'Anatomy', asset: 'density-1/left/density25.glb', viewPreset: 'left_breast_view.json',
+      }))
+      await visit(modalityScene, renderer, 'density-a', 'mri')
+      await visit(modalityScene, renderer, 'density-a', 'mammogram')
+
+      // The last one loaded is the one on screen.
+      expect(renderer.getSceneByName('density-a:mammogram')).toBeDefined()
     })
   })
 

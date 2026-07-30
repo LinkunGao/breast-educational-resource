@@ -1,5 +1,7 @@
 import type { Modality } from '~~/content/types'
 import type { CopperModule, CopperRenderer, CopperScene, CopperViewPoint, NrrdMesh, NrrdSlice, SceneObject, SceneObjectChild, StageApi } from './copper-types'
+import type { SceneBudget } from './sceneBudget'
+import { getSceneBudget } from './sceneBudget'
 
 /**
  * GLBs are all <=1.28MB (this app's four `density*.glb` anatomy assets --
@@ -101,7 +103,24 @@ export interface AnatomyMorph {
   commit: () => void
 }
 
-export function useModalityScene(stage: StageApi) {
+/**
+ * A scene's decoded size, for the residency budget.
+ *
+ * NRRD: the volume's own typed array, which is the whole cost -- the slice
+ * plane's canvas texture is one slice, kilobytes against megabytes.
+ * GLB (slice === null): the anatomy models in this catalogue are 617KB to
+ * 1.05MB on disk and decode to a similar order, so a flat estimate is
+ * accurate enough to keep them from being free. Being wrong here changes
+ * eviction order, not correctness.
+ */
+const GLB_ESTIMATED_BYTES = 2 * 1024 * 1024
+
+function sceneBytes(slice: SliceState | null): number {
+  const data = slice?.raw.volume.data as { byteLength?: number } | undefined
+  return data?.byteLength ?? GLB_ESTIMATED_BYTES
+}
+
+export function useModalityScene(stage: StageApi, budget: SceneBudget = getSceneBudget()) {
   const { url } = useAssetUrl()
   /**
    * Where the self-hosted DRACO decoder lives (`public/draco/`), resolved
@@ -199,60 +218,8 @@ export function useModalityScene(stage: StageApi) {
    */
   const morphingScenes = new Set<CopperScene>()
 
-  /**
-   * Scene names in least-recently-activated order. Mirrors the subset of
-   * copper3d's `sceneMap` this composable created, so the LRU below has an
-   * order to evict in -- `sceneMap` is a plain object with no ordering
-   * guarantee worth relying on.
-   *
-   * Deliberately NOT the source of truth for which scenes are resident (see
-   * `residentScenes`): a name only lands here via `touchScene`, which is
-   * (correctly) gated behind the load token so a superseded load can never
-   * jump the queue ahead of the scene the user is actually looking at, or
-   * evict it out from under them. Every name here is also in
-   * `residentScenes`, but not the reverse.
-   */
-  const recentScenes: string[] = []
-
-  /**
-   * Scene names that genuinely hold built content and are registered in
-   * copper3d's `sceneMap` -- i.e. everything the residency cap must count,
-   * whether or not the user ever actually looked at it.
-   *
-   * Finding 1 (code review, Important): `load()`'s unconditional bookkeeping
-   * (`sliceStateByScene.set`/`nameOfScene.set`, right below) runs even for a
-   * superseded-but-successful load, on purpose -- review fix #3 already
-   * established that leaving it half-built would poison the cache when the
-   * user steps back to it. But `touchScene` is the only thing that used to
-   * add a name to `recentScenes`, and it is (correctly) skipped for a
-   * superseded load. That left such a scene fully built, holding a decoded
-   * volume, yet invisible to `evictOverflow`'s `recentScenes.length` check --
-   * permanently unevictable. Rapid modality-stepping during slow NRRD
-   * downloads (up to 53MB) hits this on every step that loses its race.
-   *
-   * Added to unconditionally, in lockstep with the bookkeeping above; removed
-   * by `evictScene` and renamed by `adoptSceneName`, exactly like
-   * `sliceStateByScene`.
-   */
-  const residentScenes = new Set<string>()
-
-  /**
-   * How many built scenes may stay resident.
-   *
-   * Before fix round 1 this needed no cap: `app.vue` keyed the case page by
-   * slug, so leaving a case tore the whole renderer down, and a single case
-   * offers at most three modalities. §7.1's crossfade needs the outgoing
-   * model, its scene and its renderer to survive a CASE navigation, so the
-   * five morph-family cases now share one page instance (app/utils/pageKey.ts)
-   * -- and with it this cache. Three keeps residency at exactly the figure
-   * the paragraph in `load()` below already reasoned about, which matters
-   * because the family's imaging volumes decode to considerably more than
-   * the 167MB they occupy compressed on disk.
-   *
-   * Anatomy costs nothing extra either way: a morph loads its model into
-   * the scene already on screen and creates none.
-   */
-  const MAX_CACHED_SCENES = 3
+  // How many built scenes may stay resident, and which ones to evict first:
+  // see sceneBudget.ts.
 
   /** Bumped on every `load()` call. Guards against a stale async result
    * (a slow network response, or a timeout/stall) landing after the user
@@ -260,6 +227,11 @@ export function useModalityScene(stage: StageApi) {
    * `loading`/`sliceState`/`loadError` with data for a scene that is no
    * longer current. */
   let loadToken = 0
+
+  /** The scene this stage is currently showing, pinned in the budget so it
+   *  can never be evicted out from under the reader -- see `touchScene` and
+   *  `onScopeDispose`. */
+  let pinnedName: string | undefined
 
   /** Set once this composable's owning scope (CopperStage's component
    * instance) is disposed -- e.g. case navigation. Mirrors useCopperStage's
@@ -342,9 +314,7 @@ export function useModalityScene(stage: StageApi) {
     evictFromSceneMap(renderer, name)
     sliceStateByScene.delete(name)
     viewpointByScene.delete(name)
-    residentScenes.delete(name)
-    const position = recentScenes.indexOf(name)
-    if (position !== -1) recentScenes.splice(position, 1)
+    budget.release(name)
     if (!victim) return
 
     anatomyAssetByScene.delete(victim)
@@ -370,54 +340,22 @@ export function useModalityScene(stage: StageApi) {
     }
   }
 
-  /**
-   * Picks the next eviction victim out of `residentScenes`, never
-   * `currentName`.
-   *
-   * A resident that was never actually activated -- a superseded load's
-   * leftover (finding 1) -- is preferred first: the user never saw it, so
-   * there is nothing to protect by keeping it over a scene that has
-   * genuinely been on screen. `recentScenes` gives true LRU order for
-   * everything else.
-   */
-  function pickEvictionVictim(currentName: string): string | undefined {
-    for (const name of residentScenes) {
-      if (name !== currentName && !recentScenes.includes(name)) return name
-    }
-    return recentScenes.find(name => name !== currentName)
-  }
-
-  /**
-   * Caps residency at `MAX_CACHED_SCENES`, evicting least-recently-activated
-   * first and never the scene on screen.
-   *
-   * Counts `residentScenes`, not `recentScenes.length` (finding 1): a scene
-   * a superseded load finished building is resident -- it holds a decoded
-   * volume and must count against the cap -- even though it was never
-   * touched.
-   */
-  function evictOverflow(renderer: CopperRenderer, currentName: string) {
-    while (residentScenes.size > MAX_CACHED_SCENES) {
-      const victim = pickEvictionVictim(currentName)
-      // Only the current scene is left. Nothing evictable, and evicting it
-      // would blank the stage.
-      if (victim === undefined) return
-      evictScene(renderer, victim)
-    }
-  }
-
-  /** Records `name` as the most recently activated scene and applies the
-   * cap. Called only once a scene genuinely holds content AND is the one
-   * the user is actually looking at -- a failed load is evicted by
-   * `load()`'s own catch instead, and a superseded load's own success is
-   * registered as a resident directly in `load()`, never through here (see
-   * `residentScenes`). */
+  /** Records `name` as most-recently-used and applies the budget. Called
+   *  only once a scene genuinely holds content AND is the one the user is
+   *  actually looking at -- a failed load is evicted by `load()`'s own
+   *  catch instead, and a superseded load registers itself in `load()`
+   *  without touching the queue. */
   function touchScene(renderer: CopperRenderer, scene: CopperScene, name: string) {
     nameOfScene.set(scene, name)
-    const position = recentScenes.indexOf(name)
-    if (position !== -1) recentScenes.splice(position, 1)
-    recentScenes.push(name)
-    evictOverflow(renderer, name)
+    budget.touch(name)
+    // Whatever this stage is showing is off limits: three-up has up to
+    // three of these composables live at once, and evicting a visible
+    // scene to satisfy a soft byte budget would blank a panel the reader
+    // is looking at.
+    if (pinnedName && pinnedName !== name) budget.unpin(pinnedName)
+    pinnedName = name
+    budget.pin(name)
+    for (const victim of budget.overflow()) evictScene(renderer, victim)
   }
 
   /**
@@ -454,9 +392,17 @@ export function useModalityScene(stage: StageApi) {
         viewpointByScene.set(nextName, preset)
         viewpointByScene.delete(currentName)
       }
-      residentScenes.delete(currentName)
-      const position = recentScenes.indexOf(currentName)
-      if (position !== -1) recentScenes.splice(position, 1)
+      // Carries the budget's bytes, queue position and pin state across --
+      // the morphed scene held content (and, if on screen, the pin) under
+      // `currentName` a moment ago, and holds content now too.
+      budget.rename(currentName, nextName)
+      if (pinnedName === currentName) pinnedName = nextName
+    }
+    else {
+      // No previous name: this scene was never registered in the budget at
+      // all (unreachable in practice -- a morph target always has one --
+      // but kept so the scene is still counted rather than silently free).
+      budget.register(nextName, GLB_ESTIMATED_BYTES)
     }
 
     renderer.sceneMap[nextName] = target
@@ -465,11 +411,6 @@ export function useModalityScene(stage: StageApi) {
     // reader of `scene.sceneName` disagree with the map it is keyed in.
     target.sceneName = nextName
     nameOfScene.set(target, nextName)
-    // The morphed scene is unconditionally resident under its new name --
-    // it held content under `currentName` a moment ago, so it holds content
-    // now too (finding 1's `residentScenes`).
-    residentScenes.add(nextName)
-    recentScenes.push(nextName)
   }
 
   async function load(slug: string, modality: Modality) {
@@ -488,16 +429,14 @@ export function useModalityScene(stage: StageApi) {
     // volumes decode to raw typed arrays larger still than that compressed
     // size. The bandwidth this saves on the modality stepper's
     // back-and-forth navigation outweighs that, but it is a real tradeoff,
-    // not a free one -- which is why `MAX_CACHED_SCENES` caps it.
+    // not a free one -- which is why `budget` (sceneBudget.ts) caps it.
     //
-    // Before fix round 1 the cap was structural: `app.vue` keyed the case
-    // page by slug, so leaving a case unmounted CopperStage and
+    // Before fix round 1 residency was bounded structurally: every case had
+    // its own page key, so leaving it unmounted CopperStage and
     // `useCopperStage`'s dispose() tore the whole renderer down, GPU
-    // context included, and no case offers more than three modalities. §7.1
-    // needs the renderer to survive a case navigation within the morph
-    // family (app/utils/pageKey.ts), so that structural bound is gone for
-    // those five cases and `evictOverflow` replaces it with the same
-    // number.
+    // context included. Every case now shares one page instance
+    // (app/utils/pageKey.ts), so that structural bound is gone entirely and
+    // the byte budget replaces it.
     const existing = renderer.getSceneByName(name)
     if (existing) {
       activateScene(renderer, existing)
@@ -568,11 +507,11 @@ export function useModalityScene(stage: StageApi) {
       nameOfScene.set(next, name)
       // Unconditional for the same reason, and just as load-bearing
       // (finding 1): this scene now holds real content and must count
-      // against `MAX_CACHED_SCENES` even though a superseded load never
-      // reaches `touchScene` below to register it there itself. Without
-      // this, a scene a superseded load finished building sat in
-      // copper3d's `sceneMap` forever, invisible to `evictOverflow`.
-      residentScenes.add(name)
+      // against the budget even though a superseded load never reaches
+      // `touchScene` below to register it there itself. Without this, a
+      // scene a superseded load finished building sat in copper3d's
+      // `sceneMap` forever, invisible to the budget's overflow check.
+      budget.register(name, sceneBytes(slice))
       // Named `preset`, not `viewpoint`, to avoid shadowing the outer
       // `viewpoint` ref this composable exposes.
       const preset = await fetchViewPoint(url(modality.viewPreset))
@@ -908,6 +847,7 @@ export function useModalityScene(stage: StageApi) {
 
   onScopeDispose(() => {
     disposed = true
+    if (pinnedName) budget.unpin(pinnedName)
   })
 
   return { scene, loading, progress, sliceState, loadError, viewpoint, load, prepareMorph }

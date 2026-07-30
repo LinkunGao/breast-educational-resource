@@ -51,12 +51,12 @@ export function easeInOutCubic(t: number): number {
  * borrows density-1's GLB, so the `overview` group belongs to the same
  * morph family as `density`.
  *
- * Fix round 1: membership now comes from `content/cases.ts`, because
- * `app.vue`'s page key reads the same predicate to decide which cases share
- * a renderer. Two copies of this rule that drifted apart would silently
- * disable the morph. Importing a pure predicate from the content layer
- * keeps this file free of `three` and of copper3d, which is the property
- * that matters here.
+ * Membership comes from `content/cases.ts`, which keeps this file free of
+ * `three` and of copper3d -- the property that matters here, since
+ * everything else in this module is a pure function tested with no WebGL.
+ * (Every case shares a page key and a renderer now, task 2 of the three-up
+ * plan -- this predicate no longer has anything to do with that; it only
+ * decides which case navigations are eligible to crossfade.)
  */
 function inDensityFamily(v: ViewKey) {
   return isMorphFamilyGroup(v.group)
