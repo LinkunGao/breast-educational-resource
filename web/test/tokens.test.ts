@@ -34,7 +34,8 @@ const t = readColorTokens()
 const REQUIRED = [
   'bg', 'surface', 'surface-sunken', 'border', 'border-strong',
   'text', 'text-muted', 'text-subtle',
-  'brand', 'brand-hover', 'brand-subtle', 'accent-plum', 'accent-hot',
+  'brand', 'brand-hover', 'brand-subtle',
+  'group-anatomy', 'group-benign', 'group-cancer',
   'anatomy-ink', 'anatomy-fill',
   'mammogram-ink', 'mammogram-fill',
   'ultrasound-ink', 'ultrasound-fill',
@@ -62,9 +63,15 @@ describe('body text meets AA on every light surface', () => {
   }
 })
 
-describe('brand and modality inks meet AA on white', () => {
+describe('every ink used for TEXT meets AA on white', () => {
+  // `brand` is deliberately absent, and that is the point of the pair of
+  // describes: the design system's Breast Rose is an ACCENT (fills,
+  // indicators, focus rings) and `brand-hover` -- its Deep Burgundy
+  // secondary -- is the ink that goes with it. The band `brand` does have
+  // to stay inside is asserted below.
   const inks = [
-    'brand', 'brand-hover', 'accent-plum',
+    'brand-hover',
+    'group-anatomy', 'group-benign', 'group-cancer',
     'anatomy-ink', 'mammogram-ink', 'ultrasound-ink', 'mri-ink',
   ] as const
 
@@ -76,10 +83,14 @@ describe('brand and modality inks meet AA on white', () => {
 })
 
 describe('documented exceptions stay in the graphics-only band', () => {
-  // Design doc §5.1: neither colour reaches body-text AA, so both are pinned
-  // into the 3:1 graphics band. Asserting both ends stops someone darkening
-  // one in passing and letting it drift back into body text.
-  for (const name of ['text-subtle', 'accent-hot'] as const) {
+  // Neither colour reaches body-text AA, so both are pinned into the 3:1
+  // graphics band. Asserting BOTH ends is the point: the lower bound stops
+  // one being lightened past the non-text floor, and the upper bound is
+  // what stops `brand` quietly being darkened until it "can" be used as
+  // text again -- which is the exact drift that turned this interface pink
+  // in the first place, and which the design system's §3 forbids in words
+  // a test cannot check.
+  for (const name of ['text-subtle', 'brand'] as const) {
     it(`--color-${name} is 3:1..4.5:1 on white`, () => {
       const ratio = contrastRatio(t[name]!, t.surface!)
       expect(ratio).toBeGreaterThanOrEqual(AA_LARGE)
@@ -94,6 +105,17 @@ describe('the dark reading panel is gone', () => {
   // a half-revert that restored them without restoring the treatment would
   // otherwise leave three dead custom properties nobody would notice.
   for (const dead of ['film-bg', 'film-bg-2', 'film-border']) {
+    it(`does not define --color-${dead}`, () => {
+      expect(t[dead]).toBeUndefined()
+    })
+  }
+
+  // Same reasoning for the two accents the design-system palette dropped:
+  // `accent-plum` became `--color-mammogram-ink`'s job and `accent-hot`
+  // existed only as a second graphics-band pink, which `brand` now is.
+  // Neither has a use left, and a stray redefinition would be a dead
+  // custom property nobody would notice.
+  for (const dead of ['accent-plum', 'accent-hot']) {
     it(`does not define --color-${dead}`, () => {
       expect(t[dead]).toBeUndefined()
     })

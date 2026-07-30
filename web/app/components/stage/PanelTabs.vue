@@ -109,16 +109,32 @@ function onKeydown(event: KeyboardEvent) {
     aria-label="Imaging modalities"
     @keydown="onKeydown"
   >
-    <li v-for="t in tabs" :key="t.panel.id">
+    <!--
+      The active underline lives on the <li>, not on the link, because the
+      3D/2D control below is the link's SIBLING rather than its child.
+
+      It used to be nested inside the NuxtLink, which is invalid HTML -- an
+      `<a>`'s content model forbids interactive descendants -- and had a
+      visible consequence the human reported: hovering one of those buttons
+      made the browser show the enclosing link's target in its status bar,
+      because as far as the browser was concerned the pointer was over a
+      link. `@click.prevent` was papering over the same nesting. Out of the
+      anchor, the buttons are buttons: no status-bar URL, no swallowed
+      click, nothing to prevent.
+    -->
+    <li
+      v-for="t in tabs"
+      :key="t.panel.id"
+      class="relative flex shrink-0 items-center transition-colors
+             after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-t-full
+             after:bg-current after:transition-opacity"
+      :class="t.panel.id === props.activePanel
+        ? [STYLE[t.current.id].ink, 'font-bold after:opacity-100']
+        : 'text-text-muted after:opacity-0'"
+    >
       <NuxtLink
         :to="`/${props.case.slug}/${t.current.id}`"
-        class="relative flex min-h-12 shrink-0 items-center gap-2 px-3 text-body-sm
-               transition-colors
-               after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-t-full
-               after:bg-current after:transition-opacity"
-        :class="t.panel.id === props.activePanel
-          ? [STYLE[t.current.id].ink, 'font-bold after:opacity-100']
-          : 'text-text-muted hover:text-text after:opacity-0'"
+        class="flex min-h-12 items-center gap-2 px-3 text-body-sm hover:text-text"
         :aria-current="t.panel.id === props.activePanel ? 'step' : undefined"
       >
         <svg
@@ -135,33 +151,29 @@ function onKeydown(event: KeyboardEvent) {
         </svg>
 
         <span class="whitespace-nowrap">{{ t.panel.label }}</span>
-
-        <!--
-          The 3D/2D control, on the active slot only. Shown inside the tab
-          so the two readings stay adjacent, and `.prevent` because these
-          buttons sit inside the tab's own NuxtLink -- without it a click
-          would both emit and follow the link.
-        -->
-        <span
-          v-if="t.panel.id === props.activePanel && t.panel.modalities.length > 1"
-          data-variant
-          class="ml-1 flex gap-1"
-        >
-          <button
-            v-for="m in t.panel.modalities"
-            :key="m.id"
-            type="button"
-            class="rounded-chip px-2 py-0.5 text-caption"
-            :class="m.id === t.current.id
-              ? 'bg-brand-subtle font-bold text-brand-hover'
-              : 'text-text-muted hover:bg-surface-sunken'"
-            :aria-pressed="m.id === t.current.id"
-            @click.prevent="emit('variant', { panel: t.panel.id, modality: m.id })"
-          >
-            {{ m.label }}
-          </button>
-        </span>
       </NuxtLink>
+
+      <!-- The 3D/2D control, on the active slot only. Beside the tab it
+           belongs to, so the two readings stay adjacent. -->
+      <span
+        v-if="t.panel.id === props.activePanel && t.panel.modalities.length > 1"
+        data-variant
+        class="-ml-1 flex gap-1 pr-3"
+      >
+        <button
+          v-for="m in t.panel.modalities"
+          :key="m.id"
+          type="button"
+          class="rounded-chip px-2 py-0.5 text-caption"
+          :class="m.id === t.current.id
+            ? 'bg-brand-subtle font-bold text-brand-hover'
+            : 'text-text-muted hover:bg-surface-sunken'"
+          :aria-pressed="m.id === t.current.id"
+          @click="emit('variant', { panel: t.panel.id, modality: m.id })"
+        >
+          {{ m.label }}
+        </button>
+      </span>
     </li>
   </ol>
 </template>

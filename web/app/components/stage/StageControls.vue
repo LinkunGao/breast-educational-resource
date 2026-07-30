@@ -165,7 +165,7 @@ const tipClass = 'pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 -t
     <button
       v-if="hasLesion"
       type="button"
-      :class="`${buttonClass} font-bold text-brand hover:bg-brand/10`"
+      :class="`${buttonClass} font-bold text-brand-hover hover:bg-brand/10`"
       :disabled="!props.ready"
       aria-label="Locate lesion"
       @click="emit('locate')"

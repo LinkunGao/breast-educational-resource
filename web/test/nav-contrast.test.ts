@@ -32,13 +32,43 @@ const AA_BODY = 4.5
 const AA_LARGE = 3
 
 describe('CaseSidebar: active link ink on its highlight background (14px body text)', () => {
-  it('text-anatomy-ink on bg-brand-subtle meets AA body (text-brand does not)', () => {
-    const used = contrastRatio(t['anatomy-ink']!, t['brand-subtle']!)
+  it('text-brand-hover on bg-brand-subtle meets AA body (text-brand does not)', () => {
+    const used = contrastRatio(t['brand-hover']!, t['brand-subtle']!)
     const rejected = contrastRatio(t.brand!, t['brand-subtle']!)
     expect(used).toBeGreaterThanOrEqual(AA_BODY)
     // Pin the failure this replaced, so nobody "fixes" it back to text-brand
-    // because brand is the more obvious colour to reach for.
+    // because brand is the more obvious colour to reach for. Design system
+    // §8 asks for the rose itself here; on its own 8% tint the rose is
+    // 3.38:1, so its burgundy secondary carries the label and the rose
+    // carries the 4px indicator beside it, which needs only 3:1.
     expect(rejected).toBeLessThan(AA_BODY)
+  })
+
+  it('the 4px active indicator clears the 3:1 non-text floor on both surfaces it sits on', () => {
+    // The indicator is drawn over the row's own rose tint at the left edge
+    // and over the panel's white where the row does not reach.
+    expect(contrastRatio(t.brand!, t['brand-subtle']!)).toBeGreaterThanOrEqual(AA_LARGE)
+    expect(contrastRatio(t.brand!, t.surface!)).toBeGreaterThanOrEqual(AA_LARGE)
+  })
+})
+
+describe('CaseSidebar: group headings carry the group ink on white (12px caption)', () => {
+  for (const group of ['group-anatomy', 'group-benign', 'group-cancer'] as const) {
+    it(`text-${group} meets AA body on white`, () => {
+      expect(contrastRatio(t[group]!, t.surface!)).toBeGreaterThanOrEqual(AA_BODY)
+    })
+  }
+
+  it('the three groups are three different colours', () => {
+    // Deliberately only inequality. Whether blue, teal and burgundy are
+    // TELLABLE APART is a hue question, and contrastRatio is a luminance
+    // ratio -- anatomy and benign sit within 1.28:1 of each other and are
+    // still obviously different colours on screen. Pinning a ratio here
+    // would assert something this function cannot measure; pinning
+    // inequality still catches the realistic regression, which is someone
+    // collapsing two groups onto one token.
+    const inks = [t['group-anatomy'], t['group-benign'], t['group-cancer']]
+    expect(new Set(inks).size).toBe(3)
   })
 })
 
