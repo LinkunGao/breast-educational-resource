@@ -2,6 +2,7 @@
 import type { CaseGroup, Modality } from '~~/content/types'
 import { chooseTransition } from '~/composables/cameraTransitions'
 import type { ViewKey } from '~/composables/cameraTransitions'
+import type { StageOptions } from '~/composables/useCopperStage'
 
 /**
  * Controller correction C7: this component takes `slug` plus the two case
@@ -34,8 +35,21 @@ const ORBIT_STEP = Math.PI / 36
 const ZOOM_STEP = 0.9
 
 const host = ref<HTMLDivElement>()
-const stage = useCopperStage(host)
+/**
+ * Passed to `useCopperStage` below, then mutated once `modalityScene`
+ * exists -- `useModalityScene` is built FROM `stage`, so there is nothing to
+ * pass a resize hook that calls into it until both are constructed. The
+ * `ResizeObserver`'s callback closes over this same object and reads
+ * `.onResize` fresh on every fire, so assigning it here (before the observer
+ * can ever fire -- `onMounted`'s dynamic `import('copper3d')` has not even
+ * started yet) is enough. See `StageOptions`.
+ */
+const stageOptions: StageOptions = {}
+const stage = useCopperStage(host, stageOptions)
 const modalityScene = useModalityScene(stage)
+stageOptions.onResize = ({ width, height }) => {
+  modalityScene.refitCurrentScene(height > 0 ? width / height : 1)
+}
 // Destructured at the top level so Vue's template compiler auto-unwraps
 // these (a nested `stage.loadError` access in the template would not be).
 const { loadError: chunkLoadError } = stage
@@ -214,6 +228,10 @@ function onReset() {
   const preset = modalityScene.viewpoint.value
   if (!target || !preset) return
   target.loadView(preset)
+  // "Reset view" means back to the opening framing, which includes handing
+  // refitting back to the layout.
+  modalityScene.markPosed(false)
+  modalityScene.refitCurrentScene(stage.aspect())
   stage.renderer.value?.render()
 }
 
@@ -245,8 +263,16 @@ function onLocate() {
  * control back to OrbitControls (design doc §7.4). Controller correction
  * C3 (Task 9): `camera.interrupt()` stops the camera exactly where the
  * current frame left it rather than snapping to either end.
+ *
+ * Also marks this scene posed (Task 3, three-up plan): any real gesture
+ * means a later panel resize must refit nothing and leave the reader's view
+ * where they put it. This fires on exactly the two gestures that mean the
+ * user is driving -- see the `pointerdown`/`wheel` listeners below.
  */
-function onUserInput() { camera.interrupt() }
+function onUserInput() {
+  camera.interrupt()
+  modalityScene.markPosed(true)
+}
 
 /**
  * §11's stage keyboard: arrow keys orbit, `+`/`-` zoom. (`[`/`]` are

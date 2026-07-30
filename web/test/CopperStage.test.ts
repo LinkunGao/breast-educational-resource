@@ -79,6 +79,7 @@ function makeScene() {
   const objects: Array<{ name: string }> = []
   const scene = {
     camera: {
+      fov: 45,
       position: makeVec3(0, 0, 100),
       up: makeVec3(0, 1, 0),
       lookAt: vi.fn(),

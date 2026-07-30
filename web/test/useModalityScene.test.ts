@@ -85,10 +85,28 @@ function makeTrackballDouble() {
   }
 }
 
+/**
+ * Task 3 (three-up plan): `refitCurrentScene` reads `camera.fov` and writes
+ * `camera.position`/`updateProjectionMatrix`. Every fixture scene loads
+ * successfully and gets bounds recorded (a real `RASDimensions`/measured
+ * Box3 for imaging, or nothing for the plain-object GLB fakes here -- see
+ * `loadAnatomy`'s own try/catch), so the refit genuinely runs against these
+ * fakes on most loads, not just the tests that care about it.
+ */
+function makeFakeCamera() {
+  return {
+    fov: 45,
+    position: { x: 0, y: 0, z: 0, set: vi.fn() },
+    up: { x: 0, y: 1, z: 0, set: vi.fn() },
+    lookAt: vi.fn(),
+    updateProjectionMatrix: vi.fn(),
+  }
+}
+
 function makeFakeScene(): CopperScene {
   const objects: Array<{ name: string }> = []
   const scene = {
-    camera: {} as CopperScene['camera'],
+    camera: makeFakeCamera() as unknown as CopperScene['camera'],
     // The OrbitControls instance copper3d's constructor builds. Production
     // code replaces this via `installTrackballControls` before touching it,
     // so it is shaped the way copper3d leaves it, NOT the way the app then
@@ -184,6 +202,10 @@ function makeFakeStage(renderer: CopperRenderer): StageApi {
     loadError: shallowRef(undefined),
     requestContinuous: vi.fn(),
     releaseContinuous: vi.fn(),
+    // Fixed at 1 (square): no test here cares about a non-square host, and
+    // `fitToView.test.ts` already covers `fitDistance`'s own aspect handling
+    // in isolation.
+    aspect: vi.fn(() => 1),
   }
 }
 

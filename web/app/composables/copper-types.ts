@@ -34,6 +34,14 @@ export interface CopperCamera {
   up: Vec3
   lookAt: ((x: number, y: number, z: number) => void) & ((target: Vec3) => void)
   updateProjectionMatrix: () => void
+  /**
+   * Vertical field of view in degrees. Not used by copper3d's own view
+   * presets -- `fitToView` reads it to work out how far back the camera
+   * has to sit for the object to fill the frame. Present because the
+   * underlying object is a three `PerspectiveCamera`; declared here
+   * because this type is the app's whole view of it.
+   */
+  fov: number
 }
 
 /**
@@ -471,4 +479,13 @@ export interface StageApi {
   loadError: Ref<Error | undefined>
   requestContinuous: () => void
   releaseContinuous: () => void
+  /**
+   * The stage host's current width / height, measured fresh off
+   * `getBoundingClientRect()` on every call rather than cached -- panel
+   * collapse/three-up resize the host with no event this composable would
+   * otherwise see in time. Returns 1 (square) for a zero-height or
+   * not-yet-laid-out box: `fitDistance` already tolerates a bad aspect, but
+   * 1 is a more honest "don't know yet" than 0 or `Infinity`.
+   */
+  aspect: () => number
 }

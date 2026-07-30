@@ -1,6 +1,8 @@
 import type { Modality } from '~~/content/types'
 import type { CopperModule, CopperRenderer, CopperScene, CopperViewPoint, NrrdMesh, NrrdSlice, SceneObject, SceneObjectChild, StageApi } from './copper-types'
+import type { FitBounds } from './fitToView'
 import type { SceneBudget } from './sceneBudget'
+import { fitDistance } from './fitToView'
 import { getSceneBudget } from './sceneBudget'
 
 /**
@@ -189,6 +191,21 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
    * last. */
   const viewpointByScene = new Map<string, CopperViewPoint>()
 
+  /** Each scene's object bounds, for `fitDistance`. NRRD gives this
+   *  directly as `volume.RASDimensions`; a GLB is measured with a Box3. */
+  const boundsByScene = new Map<string, FitBounds>()
+  /**
+   * Scenes the reader has moved the camera on.
+   *
+   * A refit on resize is right for a scene still showing its opening
+   * framing and wrong for one the reader has posed -- there, it would
+   * yank the view back every time a panel collapsed. `CopperStage`
+   * already listens for the two gestures that mean "the user is driving"
+   * (`pointerdown` and `wheel`, for `onUserInput`); this is set from the
+   * same place, and `Reset view` clears it.
+   */
+  const posedScenes = new Set<string>()
+
   /**
    * Which anatomy GLB each scene currently DISPLAYS -- not which one its
    * name says it should. §7.1's density morph deliberately swaps the model
@@ -314,6 +331,8 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
     evictFromSceneMap(renderer, name)
     sliceStateByScene.delete(name)
     viewpointByScene.delete(name)
+    boundsByScene.delete(name)
+    posedScenes.delete(name)
     budget.release(name)
     if (!victim) return
 
@@ -392,6 +411,15 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
         viewpointByScene.set(nextName, preset)
         viewpointByScene.delete(currentName)
       }
+      const bounds = boundsByScene.get(currentName)
+      if (bounds !== undefined) {
+        boundsByScene.set(nextName, bounds)
+        boundsByScene.delete(currentName)
+      }
+      if (posedScenes.has(currentName)) {
+        posedScenes.delete(currentName)
+        posedScenes.add(nextName)
+      }
       // Carries the budget's bytes, queue position and pin state across --
       // the morphed scene held content (and, if on screen, the pin) under
       // `currentName` a moment ago, and holds content now too.
@@ -411,6 +439,53 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
     // reader of `scene.sceneName` disagree with the map it is keyed in.
     target.sceneName = nextName
     nameOfScene.set(target, nextName)
+  }
+
+  /**
+   * Moves the current scene's camera along its existing view direction to
+   * the distance that frames the object, and renders.
+   *
+   * No-op on a scene the reader has posed: see `posedScenes`.
+   */
+  function refitCurrentScene(aspect: number) {
+    const target = scene.value
+    const renderer = stage.renderer.value
+    const name = target ? nameOfScene.get(target) : undefined
+    if (!target || !renderer || !name || posedScenes.has(name)) return
+
+    const bounds = boundsByScene.get(name)
+    const preset = viewpointByScene.get(name)
+    if (!bounds || !preset) return
+
+    const [tx, ty, tz] = preset.targetPosition
+    const [ex, ey, ez] = preset.eyePosition
+    const dx = ex - tx
+    const dy = ey - ty
+    const dz = ez - tz
+    const length = Math.hypot(dx, dy, dz)
+    // A preset whose eye sits exactly on its target has no direction to
+    // preserve; leave it to `loadView`'s own result rather than guessing one.
+    if (length === 0) return
+
+    const distance = fitDistance(bounds, aspect, target.camera.fov)
+    target.camera.position.set(
+      tx + (dx / length) * distance,
+      ty + (dy / length) * distance,
+      tz + (dz / length) * distance,
+    )
+    target.camera.updateProjectionMatrix()
+    target.controls.handleResize?.()
+    renderer.render()
+  }
+
+  /** Called by `CopperStage` on the first real user gesture, and undone by
+   *  `Reset view`. */
+  function markPosed(posed: boolean) {
+    const target = scene.value
+    const name = target ? nameOfScene.get(target) : undefined
+    if (!name) return
+    if (posed) posedScenes.add(name)
+    else posedScenes.delete(name)
   }
 
   async function load(slug: string, modality: Modality) {
@@ -445,6 +520,7 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
       loading.value = false
       progress.value = 1
       touchScene(renderer, existing, name)
+      refitCurrentScene(stage.aspect())
       renderer.render()
       return
     }
@@ -490,8 +566,8 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
       next.controls.panSpeed = modality.id === 'anatomy' ? 0.2 : 0.5
 
       const slice = modality.id === 'anatomy'
-        ? await loadAnatomy(next, url(modality.asset))
-        : await loadImaging(next, Copper, modality, url(modality.asset), token)
+        ? await loadAnatomy(next, url(modality.asset), name)
+        : await loadImaging(next, Copper, modality, url(modality.asset), token, name)
 
       if (disposed) return // torn down mid-load; nothing left to update
 
@@ -518,6 +594,13 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
       if (disposed) return
       next.loadView(preset)
       viewpointByScene.set(name, preset)
+      // Frames whatever scene is genuinely on screen right now, not
+      // necessarily `next`: if a later load has already superseded this one,
+      // `scene.value` already points at ITS scene (its own `activateScene`
+      // ran before this `await`), and `refitCurrentScene` reads bounds/preset
+      // back off `scene.value`'s own name -- so this is correct either way,
+      // not just for the common case.
+      refitCurrentScene(stage.aspect())
 
       if (token !== loadToken) return // superseded by a later load() call
 
@@ -593,10 +676,25 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
     }
   }
 
-  async function loadAnatomy(target: CopperScene, assetUrl: string): Promise<null> {
+  async function loadAnatomy(target: CopperScene, assetUrl: string, name: string): Promise<null> {
     const group = await loadGlb(target, assetUrl)
     group.name = 'anatomy-model'
     anatomyAssetByScene.set(target, assetUrl)
+    const { Box3, Vector3 } = await import('three')
+    try {
+      // `Box3.setFromObject` walks real `Object3D` machinery
+      // (`updateWorldMatrix`, `matrixWorld`, ...) that only a genuine
+      // GLTFLoader group has -- which is all `loadGlb` ever hands this in
+      // production. Guarded anyway: a measurement failing must degrade to
+      // "no auto-fit for this scene" (the model still displays, at the
+      // preset's own unmodified distance), not fail a load that has already
+      // successfully added its content to the scene.
+      const size = new Box3().setFromObject(group as never).getSize(new Vector3())
+      boundsByScene.set(name, { width: size.x, height: size.y, depth: size.z })
+    }
+    catch {
+      boundsByScene.delete(name)
+    }
     return null
   }
 
@@ -691,6 +789,7 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
     modality: Modality,
     assetUrl: string,
     token: number,
+    name: string,
   ): Promise<SliceState | null> {
     return new Promise((resolve, reject) => {
       const bar = Copper.loading()
@@ -801,6 +900,9 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
             void installFastSliceRepaint(slices.z)
             slices.z.repaint.call(slices.z)
 
+            const [rx, ry, rz] = volume.RASDimensions
+            boundsByScene.set(name, { width: rx ?? 0, height: ry ?? 0, depth: rz ?? 0 })
+
             if (flat) {
               // The same two properties the legacy 2D views set
               // (frontend/components/model/Model.vue:268-269). They work now
@@ -850,7 +952,7 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
     if (pinnedName) budget.unpin(pinnedName)
   })
 
-  return { scene, loading, progress, sliceState, loadError, viewpoint, load, prepareMorph }
+  return { scene, loading, progress, sliceState, loadError, viewpoint, load, prepareMorph, refitCurrentScene, markPosed }
 }
 
 /** One mesh material enrolled in a crossfade, together with the appearance
