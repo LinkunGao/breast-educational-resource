@@ -24,22 +24,39 @@ const GROUP_LABEL: Record<Exclude<CaseGroup, 'overview'>, string> = {
  *
  *   density   three horizontal bands, increasingly dense
  *   benign    a smooth closed ellipse -- a well-circumscribed lesion
- *   cancer    a lobulated outline with spiculations off it
+ *   cancer    a lobulated outline with a few short, irregular spiculations
+ *             off it (deliberately uneven -- 8 spikes at even 45° steps
+ *             read as a sun/gear, not a spiculated mass; see below)
  */
 const GROUP_ICON: Record<Exclude<CaseGroup, 'overview'>, string[]> = {
   density: ['M4 7h16', 'M4 12h16', 'M4 17h16', 'M8 12v5', 'M12 12v5', 'M16 12v5'],
   benign: ['M12 5.5c3.6 0 6.5 2.9 6.5 6.5s-2.9 6.5-6.5 6.5S5.5 15.6 5.5 12 8.4 5.5 12 5.5z'],
+  // Five spikes, at irregular angles and lengths, instead of the original
+  // eight evenly-spaced radial rays: at 16px the evenly-spaced version read
+  // as a sun or a settings gear rather than a spiculated mass. Uneven
+  // spacing and length is what reads as organic/pathological rather than
+  // as a mechanical/decorative asterisk.
   cancer: [
     'M12 7.5c2.5 0 4.5 2 4.5 4.5S14.5 16.5 12 16.5 7.5 14.5 7.5 12 9.5 7.5 12 7.5z',
-    'M12 7.5V4', 'M16.5 12H20', 'M12 16.5V20', 'M7.5 12H4',
-    'M15.2 8.8 17.7 6.3', 'M15.2 15.2l2.5 2.5', 'M8.8 15.2l-2.5 2.5', 'M8.8 8.8 6.3 6.3',
+    'M9.5 8 6.5 6.8', 'M14 7.6 17 5', 'M16.4 13.5 20.5 15.5', 'M8.7 15 7.2 16.8 6 19.5',
   ],
 }
 
-/** The home row's own icon: a breast in profile against the chest wall,
- *  the same mark ModalityStepper uses for the anatomy step, so the two
- *  places that mean "the model" agree. */
-const HOME_ICON = ['M4.5 3.5v17', 'M4.5 5.5a6.5 6.5 0 0 1 0 13', 'M11 12h3.5']
+/**
+ * The home row's own icon.
+ *
+ * This does NOT reuse ModalityStepper's anatomy mark (a chest-wall line plus
+ * a semicircular breast profile). That glyph is correct at the stepper's own
+ * size, but at this row's smaller `size-5` rendering it collapsed into an
+ * unmistakable right-pointing play triangle -- exactly the failure mode
+ * ModalityStepper's own header warns about, just re-triggered at a size the
+ * anatomy glyph was never checked against. This row is the site's home
+ * entry, not an imaging modality, so it does not have to share that mark;
+ * legibility at its actual rendered size wins over that consistency. A
+ * house -- roof, walls, door -- is unambiguous at 16-20px and reads as
+ * "home" rather than "start".
+ */
+const HOME_ICON = ['M4 11 12 4l8 7', 'M5.5 10.5v9.5h13v-9.5', 'M10 20v-6h4v6']
 
 /**
  * `the-breast` is pulled OUT of the grouped lists (client feedback item 8).
