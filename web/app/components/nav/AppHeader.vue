@@ -77,7 +77,7 @@ const store = useViewerStore()
       button exists. A wrapper that is present at every width cannot have
       that failure mode.
     -->
-    <div data-header-actions class="ml-auto flex items-center gap-1">
+    <div data-header-actions class="ml-auto flex items-center gap-3">
       <!-- Desktop-only (design doc §10.1): the content column's other half of
            "collapse both panels for projection". Below xl the content pane
            has no collapse concept (bottom sheet at tablet, inline at phone),
