@@ -112,6 +112,17 @@ describe('ModalityStepper: inactive step ring and connector on white (non-text, 
  * otherwise only be visible to someone tabbing onto the canvas.
  */
 describe('CopperStage: focus ring on the stage background', () => {
+  /**
+   * The stage's ring is drawn as an inset double box-shadow: brand, then a
+   * 2px `--color-surface` ring just outside it. That second ring is the
+   * whole point -- it means the brand ring's contrast does not depend on
+   * whatever the model happens to be rendering underneath, which is what an
+   * inward `outline` on a canvas could never guarantee.
+   */
+  it('the stage focus ring clears 3:1 against the surface ring it is drawn on', () => {
+    expect(contrastRatio(t.brand!, t.surface!)).toBeGreaterThanOrEqual(AA_LARGE)
+  })
+
   it('the brand focus outline clears 3:1 on the light anatomy background', () => {
     // The stage paints a gradient from surface-sunken to bg; the ring must
     // clear the floor against either end of it.
