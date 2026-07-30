@@ -29,7 +29,6 @@ const NuxtLayoutStub = {
       <div class="heading-slot"><slot name="heading" /></div>
       <div class="stepper-slot"><slot name="stepper" /></div>
       <div class="stage-slot"><slot name="stage" /></div>
-      <div class="controls-slot"><slot name="controls" /></div>
       <div class="content-slot"><slot name="content" /></div>
     </div>
   `,
@@ -137,46 +136,38 @@ describe('case page', () => {
     })
   })
 
-  // Task 10, controller correction C13: the control bar renders into the
-  // layout's own #controls slot rather than overlaying the canvas, so the
-  // page -- the nearest common ancestor of the two sibling slots -- is what
-  // wires them together.
-  it('renders the control bar into the layout\'s #controls slot, not into the stage', () => {
+  /**
+   * The control bar is no longer this page's business.
+   *
+   * It used to render into the layout's `#controls` slot, a sibling of the
+   * stage slot, so this page -- their nearest common ancestor -- had to own
+   * the state between them. Each stage now renders its own bar under its own
+   * canvas, because the three-up layout gives every panel one. What is left
+   * for the page to get right is the lesion index it hands the stage, and
+   * that is what these two assert. `CopperStage.test.ts` covers the bar
+   * itself.
+   */
+  it('renders no control bar of its own', () => {
     stubRoute({ slug: 'density-d', modality: undefined })
     const wrapper = mountPage()
 
-    const bar = wrapper.find('.controls-slot')
-    expect(bar.text()).toContain('Reset view')
-    expect(bar.text()).toContain('Fullscreen')
-    expect(wrapper.find('.stage-slot').text()).not.toContain('Reset view')
-  })
-
-  // Asserted on the prop rather than on the rendered button: the locator
-  // also needs a slice stack to glide through, and that only arrives once
-  // the (here stubbed out) stage has actually loaded a volume.
-  // StageControls.test.ts covers the button's own gating.
-  it('tells the control bar which slice holds this case\'s lesion, and zero when it has none', () => {
-    stubRoute({ slug: 'cancer-dcis', modality: 'mri' })
-    expect(mountPage().findComponent(StageControls).props('lesionSliceIndex')).toBe(90)
-
-    stubRoute({ slug: 'density-d', modality: 'mri' })
-    expect(mountPage().findComponent(StageControls).props('lesionSliceIndex')).toBe(0)
+    expect(wrapper.text()).not.toContain('Reset view')
+    expect(wrapper.findComponent(StageControls).exists()).toBe(false)
   })
 
   /**
    * Fix round 1, Critical. `lesionSliceIndex` is an MRI slice number, and
    * cancer-dcis's mammogram volume is 39 slices deep against an index of
-   * 90. Both the stage and the bar have to be told zero there -- the bar so
-   * it does not offer the control, the stage so nothing can drive the slice
-   * plane to a position in a volume the number was never measured on.
+   * 90. The stage has to be told zero there, so nothing can drive the slice
+   * plane to a position in a volume the number was never measured on -- and
+   * so the bar it now owns does not offer a control that would.
    */
   it('withholds the lesion index from every modality it was not measured on', () => {
     stubRoute({ slug: 'cancer-dcis', modality: 'mammogram' })
-    const wrapper = mountPage()
+    expect(mountPage().find('.copper-stage-stub').attributes('data-lesion')).toBe('0')
 
-    expect(wrapper.findComponent(StageControls).props('lesionSliceIndex')).toBe(0)
-    expect(wrapper.find('.copper-stage-stub').attributes('data-lesion')).toBe('0')
-    expect(wrapper.find('.controls-slot').text()).not.toContain('Locate lesion')
+    stubRoute({ slug: 'cancer-dcis', modality: 'mri' })
+    expect(mountPage().find('.copper-stage-stub').attributes('data-lesion')).toBe('90')
   })
 
   it('gives the stage the case fields its §7 transitions depend on', () => {

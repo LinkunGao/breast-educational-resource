@@ -46,14 +46,18 @@ useHead(() => ({
   title: `${current.value!.heading} — ${modality.value.label} — Breast Educational Resource`,
 }))
 
-/**
- * The control bar (design doc §10.1) lives in the layout's `#controls`
- * slot, which is a SIBLING of the stage slot -- so this page, the nearest
- * common ancestor of both, owns the state they share. See
- * useStageControls.ts for why the slot rather than an overlay on the
- * canvas, and why provide/inject rather than a bus.
+/*
+ * There is no `provideStageControls()` here any more, and no `#controls`
+ * slot below.
+ *
+ * That seam existed for one reason, stated in the composable it used to
+ * live in: the control bar sat in the layout's `#controls` slot, a SIBLING
+ * of the stage slot, so the stage could not reach it and this page -- their
+ * nearest common ancestor -- had to own the state between them. Each stage
+ * now renders its own bar directly under its own canvas, because the
+ * three-up layout gives every panel one. With the bar inside the component
+ * that drives it, there is nothing left to bridge.
  */
-const stageControls = provideStageControls()
 
 /**
  * §7.2's locate target for the modality actually on screen. Zero on every
@@ -104,18 +108,7 @@ const lesionSliceIndex = computed(() => lesionSliceIndexFor(current.value!, moda
         :group="current!.group"
         :lesion-slice-index="lesionSliceIndex"
         :modality="modality"
-      />
-    </template>
-
-    <template #controls>
-      <StageControls
-        :slice-index="stageControls.sliceIndex.value"
-        :slice-max="stageControls.sliceMax.value"
-        :settled-slice-index="stageControls.settledSliceIndex.value"
-        :lesion-slice-index="lesionSliceIndex"
-        :ready="Boolean(stageControls.actions.value)"
-        @reset="stageControls.actions.value?.reset()"
-        @locate="stageControls.actions.value?.locateLesion()"
+        :panel-label="modality.label"
       />
     </template>
 

@@ -24,6 +24,11 @@ const props = defineProps<{
    * Only the five lesion cases carry a non-zero value. */
   lesionSliceIndex: number
   modality: Modality
+  /** The slot's label, for the canvas's accessible name in three-up where
+   *  three canvases are on screen at once. */
+  panelLabel: string
+  /** Three-up: icon-only buttons, since three bars share the width one had. */
+  compact?: boolean
 }>()
 
 /** §7.1: the crossfade's own duration. This is a MATERIAL crossfade between
@@ -47,7 +52,23 @@ const host = ref<HTMLDivElement>()
 const stageOptions: StageOptions = {}
 const stage = useCopperStage(host, stageOptions)
 const modalityScene = useModalityScene(stage)
+
+/**
+ * True once CSS has given this panel a real box.
+ *
+ * Three stages are mounted at all times -- unmounting one destroys its
+ * renderer and everything decoded into it, which is client feedback item
+ * 5. One-up hides two of them with `display: none`; a hidden element
+ * measures 0x0, and that is the whole signal. No breakpoint literal
+ * appears in this file, because the measurement IS what CSS decided.
+ *
+ * Sticky on purpose: once a panel has loaded, hiding it again must not
+ * unload it, or stepping between slots would re-download on every step.
+ */
+const everSized = ref(false)
+
 stageOptions.onResize = ({ width, height }) => {
+  if (width > 0 && height > 0) everSized.value = true
   modalityScene.refitCurrentScene(height > 0 ? width / height : 1)
 }
 // Destructured at the top level so Vue's template compiler auto-unwraps
@@ -77,7 +98,8 @@ const slice = useSliceControl(host, modalityScene.scene, modalityScene.sliceStat
  * `alpha: true` on all three renderers, with the page's own colour showing
  * through).
  *
- * The `film` flag on `useStageControls` went with it; the control bar is a
+ * The `film` flag the old dark-backdrop variant carried went with it; the
+ * control bar (rendered by this component itself -- see the template) is a
  * single appearance now.
  */
 
@@ -195,14 +217,14 @@ async function enterView() {
 }
 
 watch(
-  [() => stage.ready.value, () => props.slug, () => props.modality.id],
-  ([ready]) => {
+  [() => stage.ready.value, () => everSized.value, () => props.slug, () => props.modality.id],
+  ([ready, sized]) => {
     // Fire-and-forget by design, but never unhandled: a frame callback that
     // throws rejects the driver's promise (Task 9's M-9), and there is
     // nothing useful to do about a failed decorative transition beyond not
     // stacking a second error on top of whatever the load-failure overlay
     // is already showing.
-    if (ready) void enterView().catch(() => {})
+    if (ready && sized) void enterView().catch(() => {})
   },
   { immediate: true },
 )
@@ -324,127 +346,113 @@ onScopeDispose(() => {
   host.value?.removeEventListener('wheel', onUserInput)
 })
 
-// ── Control bar wiring ───────────────────────────────────────────────────
-//
-// The bar renders into the layout's `#controls` slot, a SIBLING of this
-// component, so `defineExpose` cannot reach it (controller correction C13).
-// The case page provides this context and both sides talk through it. No
-// event bus.
-const stageControls = useStageControls()
-if (stageControls) {
-  watchEffect(() => {
-    stageControls.sliceIndex.value = slice.index.value
-    stageControls.sliceMax.value = slice.max.value
-    stageControls.settledSliceIndex.value = slice.settledIndex.value
-  })
-  /**
-   * Published only once the actions can DO something.
-   *
-   * This used to run in `onMounted`, before the async renderer build. The
-   * control bar takes `ready` from whether `actions` is set, so Reset and
-   * Locate rendered enabled and silently did nothing through a 53MB NRRD
-   * download -- a control that looks available and no-ops is a worse failure
-   * than a disabled one, and it contradicted StageControls' own prop
-   * documentation.
-   *
-   * `isHealthy()` is the same gate both actions check internally, so the
-   * enabled state and the actions' own guards can no longer disagree.
-   */
-  watchEffect(() => {
-    stageControls.actions.value = isHealthy()
-      ? { reset: onReset, locateLesion: onLocate }
-      : null
-  })
-  onScopeDispose(() => {
-    stageControls.actions.value = null
-  })
-}
-
 defineExpose({ stage, modalityScene, host, camera, slice })
 </script>
 
 <template>
-  <div
-    class="relative flex-1 bg-linear-to-b from-surface-sunken to-bg"
-  >
-    <!--
-      `role="application"`, NOT `role="img"`.
-
-      This element advertises arrow-key rotation through
-      `aria-describedby`, and with `role="img"` that was a lie: NVDA and JAWS
-      are in browse mode over an image and consume the arrow keys themselves,
-      so the keys never reached `onStageKeydown`. `application` is the
-      documented escape hatch for a widget that handles its own keys, and it
-      costs nothing here -- the only thing inside is a canvas, so there is no
-      readable content for browse mode to have been useful on. The name and
-      the key help both still come through, because `aria-label` and
-      `aria-describedby` are unaffected by the role.
-
-      The focus ring is drawn with an inset double box-shadow rather than an
-      outline, and that is a contrast fix, not a stylistic one. The stage is
-      `absolute inset-0` inside a column that scrolls and clips, so an
-      outward ring gets cut off -- but the inward `-outline-offset-2` it used
-      instead put the brand ring straight onto canvas pixels, where its
-      contrast depends on whatever the model happens to be showing and cannot
-      be guaranteed at all. The inner shadow pairs the brand ring with a 2px
-      surface-coloured ring just outside it, so it always sits against a
-      known colour: 4.95:1 on `--color-surface`, comfortably over §11's 3:1
-      non-text floor, whatever is rendered underneath. Pinned in
-      test/nav-contrast.test.ts.
-
-      Always mounted, never behind a v-if (a bug fixed while wiring Task 8):
-      useCopperStage builds its one WebGLRenderer against whatever DOM node
-      `host` pointed to at mount time and never rebuilds it. `assetLoadError`
-      clears on every subsequent successful `load()`, so a v-if/v-else here
-      would unmount-then-remount this element on recovery, leaving the
-      existing canvas attached to an orphaned node while a brand new, empty
-      host sits in the document -- a permanently blank stage even though the
-      error had cleared. The error/loading states below overlay this
-      element instead of replacing it.
-    -->
+  <!-- `data-stage-panel` marks the fullscreen target for this panel's own
+       control bar (StageControls' ⛶ button): the canvas host and the bar
+       together, so the control that entered fullscreen is still on screen
+       to leave it again. Three-up gives each panel its own bar directly
+       under its own canvas now, so this replaces the layout's old
+       `data-stage-column` as the PREFERRED target -- fullscreening the
+       whole column would blow up all three panels when the reader asked
+       for one (StageControls falls back to the column for any caller not
+       inside a panel). -->
+  <div data-stage-panel class="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
     <div
-      ref="host"
-      class="absolute inset-0 focus-visible:outline-none
-             focus-visible:shadow-[inset_0_0_0_2px_var(--color-brand),inset_0_0_0_4px_var(--color-surface)]"
-      role="application"
-      tabindex="0"
-      :aria-label="`${props.modality.label} viewer`"
-      aria-describedby="stage-keyboard-help"
-      @keydown="onStageKeydown"
-    />
-
-    <p id="stage-keyboard-help" class="sr-only">
-      Arrow keys rotate the view, plus and minus zoom, left and right square
-      brackets step through slices.
-    </p>
-
-    <!-- Task 7 review fix #7 (copper3d's own chunk failed to import) and
-         Task 8's asset-load failure (a timed-out/failed GLB or NRRD fetch)
-         both render through this same message rather than leaving a
-         permanently-empty stage with nothing but a console warning. -->
-    <p
-      v-if="chunkLoadError || assetLoadError"
-      role="alert"
-      class="absolute inset-0 flex items-center justify-center bg-bg p-4 text-center text-body-sm text-text-muted"
+      class="relative flex-1 bg-linear-to-b from-surface-sunken to-bg"
     >
-      Couldn't load the 3D viewer. Check your connection and reload the page.
-    </p>
+      <!--
+        `role="application"`, NOT `role="img"`.
 
-    <div
-      v-else-if="loading"
-      class="pointer-events-none absolute inset-0 flex items-center justify-center"
-    >
+        This element advertises arrow-key rotation through
+        `aria-describedby`, and with `role="img"` that was a lie: NVDA and JAWS
+        are in browse mode over an image and consume the arrow keys themselves,
+        so the keys never reached `onStageKeydown`. `application` is the
+        documented escape hatch for a widget that handles its own keys, and it
+        costs nothing here -- the only thing inside is a canvas, so there is no
+        readable content for browse mode to have been useful on. The name and
+        the key help both still come through, because `aria-label` and
+        `aria-describedby` are unaffected by the role.
+
+        The focus ring is drawn with an inset double box-shadow rather than an
+        outline, and that is a contrast fix, not a stylistic one. The stage is
+        `absolute inset-0` inside a column that scrolls and clips, so an
+        outward ring gets cut off -- but the inward `-outline-offset-2` it used
+        instead put the brand ring straight onto canvas pixels, where its
+        contrast depends on whatever the model happens to be showing and cannot
+        be guaranteed at all. The inner shadow pairs the brand ring with a 2px
+        surface-coloured ring just outside it, so it always sits against a
+        known colour: 4.95:1 on `--color-surface`, comfortably over §11's 3:1
+        non-text floor, whatever is rendered underneath. Pinned in
+        test/nav-contrast.test.ts.
+
+        Always mounted, never behind a v-if (a bug fixed while wiring Task 8):
+        useCopperStage builds its one WebGLRenderer against whatever DOM node
+        `host` pointed to at mount time and never rebuilds it. `assetLoadError`
+        clears on every subsequent successful `load()`, so a v-if/v-else here
+        would unmount-then-remount this element on recovery, leaving the
+        existing canvas attached to an orphaned node while a brand new, empty
+        host sits in the document -- a permanently blank stage even though the
+        error had cleared. The error/loading states below overlay this
+        element instead of replacing it.
+      -->
       <div
-        class="flex items-center gap-3 rounded-card bg-surface/80 px-4 py-3 text-text backdrop-blur-sm"
-        role="status"
-        aria-live="polite"
+        ref="host"
+        class="absolute inset-0 focus-visible:outline-none
+               focus-visible:shadow-[inset_0_0_0_2px_var(--color-brand),inset_0_0_0_4px_var(--color-surface)]"
+        role="application"
+        tabindex="0"
+        :aria-label="`${props.panelLabel}: ${props.modality.label} viewer`"
+        aria-describedby="stage-keyboard-help"
+        @keydown="onStageKeydown"
+      />
+
+      <p id="stage-keyboard-help" class="sr-only">
+        Arrow keys rotate the view, plus and minus zoom, left and right square
+        brackets step through slices.
+      </p>
+
+      <!-- Task 7 review fix #7 (copper3d's own chunk failed to import) and
+           Task 8's asset-load failure (a timed-out/failed GLB or NRRD fetch)
+           both render through this same message rather than leaving a
+           permanently-empty stage with nothing but a console warning. -->
+      <p
+        v-if="chunkLoadError || assetLoadError"
+        role="alert"
+        class="absolute inset-0 flex items-center justify-center bg-bg p-4 text-center text-body-sm text-text-muted"
       >
-        <span
-          class="size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
-          aria-hidden="true"
-        />
-        <span class="text-body-sm">Loading {{ props.modality.label }}…</span>
+        Couldn't load the 3D viewer. Check your connection and reload the page.
+      </p>
+
+      <div
+        v-else-if="loading"
+        class="pointer-events-none absolute inset-0 flex items-center justify-center"
+      >
+        <div
+          class="flex items-center gap-3 rounded-card bg-surface/80 px-4 py-3 text-text backdrop-blur-sm"
+          role="status"
+          aria-live="polite"
+        >
+          <span
+            class="size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+            aria-hidden="true"
+          />
+          <span class="text-body-sm">Loading {{ props.modality.label }}…</span>
+        </div>
       </div>
     </div>
+
+    <StageControls
+      :slice-index="slice.index.value"
+      :slice-max="slice.max.value"
+      :settled-slice-index="slice.settledIndex.value"
+      :lesion-slice-index="props.lesionSliceIndex"
+      :ready="isHealthy()"
+      :compact="props.compact"
+      @reset="onReset"
+      @locate="onLocate"
+    />
   </div>
 </template>

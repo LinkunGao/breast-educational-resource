@@ -147,8 +147,11 @@ const sheetExpanded = ref(false)
             <slot name="stage" />
           </section>
 
-          <!-- Control bar: reset / fullscreen / locate lesion / slice readout. -->
-          <slot name="controls" />
+          <!-- No `#controls` slot: each stage renders its own control bar
+               directly under its own canvas, because the three-up layout
+               gives every panel one. The slot existed only while a single
+               bar had to sit beside a single stage. -->
+
         </div>
 
         <!-- Content column: collapsible width at xl+ (design doc §10.1's

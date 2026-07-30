@@ -2,7 +2,6 @@ import { computed, inject, nextTick, onMounted, onScopeDispose, provide, reactiv
 import { vi } from 'vitest'
 import { installTrackballControls } from '../app/composables/installTrackballControls'
 import { useAssetUrl } from '../app/composables/useAssetUrl'
-import { provideStageControls, useStageControls } from '../app/composables/useStageControls'
 import { useViewerStore } from '../app/stores/viewer'
 
 // Nuxt auto-imports Vue's reactivity APIs and its own composables/stores as
@@ -19,12 +18,8 @@ vi.stubGlobal('watchEffect', watchEffect)
 vi.stubGlobal('nextTick', nextTick)
 vi.stubGlobal('onMounted', onMounted)
 vi.stubGlobal('onScopeDispose', onScopeDispose)
-// useStageControls (Task 10) crosses the layout's stage/controls slot
-// boundary with provide/inject rather than an event bus.
 vi.stubGlobal('provide', provide)
 vi.stubGlobal('inject', inject)
-vi.stubGlobal('provideStageControls', provideStageControls)
-vi.stubGlobal('useStageControls', useStageControls)
 vi.stubGlobal('useViewerStore', useViewerStore)
 // useModalityScene calls the real useAssetUrl, which itself calls
 // useRuntimeConfig -- a Nuxt global with no plain-Vitest equivalent.

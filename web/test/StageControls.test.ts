@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import StageControls from '../app/components/stage/StageControls.vue'
 
 /**
@@ -132,5 +132,42 @@ describe('StageControls', () => {
     // the same background now, so the bar does too. This pins the absence,
     // because a half-reverted `film` prop would otherwise be invisible.
     expect(mountBar().classes()).toContain('bg-surface')
+  })
+
+  it('fullscreens the panel it belongs to, not the whole column', async () => {
+    const panel = document.createElement('div')
+    panel.setAttribute('data-stage-panel', '')
+    const column = document.createElement('div')
+    column.setAttribute('data-stage-column', '')
+    column.appendChild(panel)
+    document.body.appendChild(column)
+
+    const requestFullscreen = vi.fn(() => Promise.resolve())
+    panel.requestFullscreen = requestFullscreen as never
+    column.requestFullscreen = vi.fn(() => Promise.resolve()) as never
+
+    const wrapper = mount(StageControls, {
+      props: {
+        sliceIndex: 0, sliceMax: 0, settledSliceIndex: 0, lesionSliceIndex: 0, ready: true,
+      },
+      attachTo: panel,
+    })
+    await wrapper.get('button[aria-pressed]').trigger('click')
+    expect(requestFullscreen).toHaveBeenCalled()
+    expect(column.requestFullscreen).not.toHaveBeenCalled()
+
+    column.remove()
+  })
+
+  it('compact mode drops the button labels but keeps their accessible names', () => {
+    const wrapper = mount(StageControls, {
+      props: {
+        sliceIndex: 3, sliceMax: 10, settledSliceIndex: 3, lesionSliceIndex: 0,
+        ready: true, compact: true,
+      },
+    })
+    const reset = wrapper.get('button[aria-label="Reset view"]')
+    expect(reset.text()).toBe('')
+    expect(wrapper.text()).toContain('3 / 10')
   })
 })

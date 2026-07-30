@@ -7,8 +7,8 @@ import { useCameraChoreography } from '../app/composables/useCameraChoreography'
 import { useCopperStage } from '../app/composables/useCopperStage'
 import { useModalityScene } from '../app/composables/useModalityScene'
 import { useSliceControl } from '../app/composables/useSliceControl'
-import { useStageControls } from '../app/composables/useStageControls'
 import CopperStage from '../app/components/stage/CopperStage.client.vue'
+import StageControls from '../app/components/stage/StageControls.vue'
 
 // `loadGltfModel` is a plain module export that useModalityScene's `loadGlb`
 // calls as a Nuxt-auto-imported bare global (no local `import` for it in the
@@ -107,7 +107,21 @@ function makeScene() {
     },
     objects,
     addObject: vi.fn(),
-    loadNrrd: vi.fn(),
+    // Default happy path: resolves synchronously with a plausible 100-slice
+    // stack, so a test that only cares about "an imaging modality finished
+    // loading" (e.g. the load-gate and control-bar tests below) doesn't have
+    // to hand-roll copper3d's loadNrrd callback shape itself. Tests that need
+    // to hold the load open, or shape its result differently, override this
+    // with their own `mockImplementation` (see e.g. the "does not fly until
+    // ..." test below) -- that call fully replaces this one.
+    loadNrrd: vi.fn((...args: unknown[]) => {
+      const callback = args[3] as (volume: unknown, meshes: unknown, slices: unknown) => void
+      callback(
+        { RASDimensions: [1, 1, 1], windowHigh: 1, repaintAllSlices: vi.fn() },
+        { x: { name: '' }, y: { name: '' }, z: { name: 'z' } },
+        { z: { index: 0, MaxIndex: 100, volume: { spacing: [1, 1, 1] }, repaint: vi.fn() } },
+      )
+    }),
     // Deliberately no `loadGltf` here: `loadGlb` (useModalityScene.ts) no
     // longer calls it -- it calls the module-level `loadGltfModel` instead
     // (mocked globally, see this file's header) and adds the result to
@@ -169,10 +183,9 @@ vi.mock('copper3d', () => ({
   addBoxHelper: vi.fn(),
 }))
 
-class FakeResizeObserver {
-  observe = vi.fn()
-  disconnect = vi.fn()
-}
+/** The callbacks live `ResizeObserver` instances were constructed with,
+ *  newest last. `useCopperStage` creates exactly one per stage. */
+const resizeCallbacks: ResizeObserverCallback[] = []
 
 const ANATOMY_PRESET = 'left_breast_view.json'
 
@@ -192,11 +205,74 @@ const DENSITY_B = modality('anatomy', 'density-2/left/density50.glb')
 const DENSITY_C = modality('anatomy', 'density-3/left/density75.glb')
 const MRI = modality('mri', 'density-1/right/mri.nrrd')
 
-function mountStage(props: Record<string, unknown>) {
-  return mount(CopperStage, {
-    props: { slug: 'density-a', group: 'density', lesionSliceIndex: 0, modality: DENSITY_A, ...props },
+/**
+ * Mounts the stage and gives its host a measured box, `getBoundingClientRect`-
+ * style, defaulting to a plainly non-zero one -- otherwise every pre-existing
+ * test in this file measures 0x0 and the load gate (below) keeps them from
+ * ever loading at all.
+ *
+ * The box can't be applied by simply stubbing `getBoundingClientRect` alone:
+ * `useCopperStage`'s `ResizeObserver` only exists once copper3d's dynamic
+ * import resolves, deep inside `onMounted`, so there is nothing to drive yet
+ * at the point this function returns. The fire below is queued rather than
+ * awaited (this function is synchronous, matching plain `mount()`) -- every
+ * call site immediately follows with its own `await flushPromises()` (or
+ * `settle()`), which is what actually lets it land before any assertion.
+ */
+function mountStage(overrides: Record<string, unknown> = {}) {
+  const { hostSize = { width: 400, height: 300 }, ...props } = overrides as {
+    hostSize?: { width: number, height: number }
+  } & Record<string, unknown>
+
+  const wrapper = mount(CopperStage, {
+    props: {
+      slug: 'density-a', group: 'density', lesionSliceIndex: 0, modality: DENSITY_A,
+      panelLabel: 'Anatomy', ...props,
+    },
+    // Nuxt auto-imports components; plain Vitest does not, so the
+    // `<StageControls>` in this component's template would resolve to
+    // nothing and render as an unknown element. Registering it here is what
+    // lets the "the control bar is the stage's own" block assert on the real
+    // component rather than on a stub of it.
+    global: { components: { StageControls } },
     attachTo: document.body,
   })
+
+  const host = wrapper.get('[role="application"]').element as HTMLElement
+  host.getBoundingClientRect = () => ({
+    ...hostSize, top: 0, left: 0, right: hostSize.width, bottom: hostSize.height, x: 0, y: 0,
+    toJSON: () => ({}),
+  }) as DOMRect
+
+  void flushPromises().then(() => {
+    for (const callback of resizeCallbacks) {
+      callback([] as unknown as ResizeObserverEntry[], {} as ResizeObserver)
+    }
+  })
+
+  return wrapper
+}
+
+/**
+ * Drives the stage's ResizeObserver with a new box.
+ *
+ * `useCopperStage`'s observer reads the size back off the host with
+ * `getBoundingClientRect()` rather than from the entry, so that is what
+ * has to be stubbed -- the entry is only the trigger.
+ */
+async function resizeHost(
+  wrapper: ReturnType<typeof mountStage>,
+  box: { width: number, height: number },
+) {
+  const host = wrapper.get('[role="application"]').element as HTMLElement
+  host.getBoundingClientRect = () => ({
+    ...box, top: 0, left: 0, right: box.width, bottom: box.height, x: 0, y: 0,
+    toJSON: () => ({}),
+  }) as DOMRect
+  for (const callback of resizeCallbacks) {
+    callback([] as unknown as ResizeObserverEntry[], {} as ResizeObserver)
+  }
+  await flushPromises()
 }
 
 /** Lets every awaited load / animation in `enterView` settle. */
@@ -210,7 +286,12 @@ describe('CopperStage navigation choreography', () => {
     renderer.sceneMap = {}
     vi.clearAllMocks()
 
-    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+    resizeCallbacks.length = 0
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: ResizeObserverCallback) { resizeCallbacks.push(callback) }
+      observe() {}
+      disconnect() {}
+    })
     // Mirrors how production resolves this Nuxt-auto-imported composable --
     // see this file's header. Every test here mounts an anatomy modality by
     // default (DENSITY_A), so a default implementation resolving with a
@@ -224,7 +305,6 @@ describe('CopperStage navigation choreography', () => {
     vi.stubGlobal('useModalityScene', useModalityScene)
     vi.stubGlobal('useCameraChoreography', useCameraChoreography)
     vi.stubGlobal('useSliceControl', useSliceControl)
-    vi.stubGlobal('useStageControls', useStageControls)
     vi.stubGlobal('matchMedia', () => ({
       matches: true, // see this file's header
       addEventListener: vi.fn(),
@@ -503,26 +583,85 @@ describe('CopperStage navigation choreography', () => {
 
     expect(markPosed).toHaveBeenCalledWith(true)
   })
+})
 
-  it('publishes slice state and actions to the control bar it cannot render itself', async () => {
-    const context = {
-      sliceIndex: ref(0),
-      sliceMax: ref(0),
-      settledSliceIndex: ref(0),
-      film: ref(false),
-      actions: shallowRef<{ reset: () => void, locateLesion: () => void } | null>(null),
-    }
-    vi.stubGlobal('useStageControls', () => context)
+describe('load gate: nothing downloads until CSS has given this panel a box', () => {
+  let loadSpy: ReturnType<typeof vi.fn>
 
-    const wrapper = mountStage({})
-    await settle()
+  beforeEach(() => {
+    loadSpy = vi.fn()
+    vi.stubGlobal('useModalityScene', (...args: Parameters<typeof useModalityScene>) => {
+      const api = useModalityScene(...args)
+      loadSpy.mockImplementation(api.load)
+      return { ...api, load: loadSpy }
+    })
+  })
 
-    expect(context.actions.value).not.toBeNull()
-    expect(context.film.value).toBe(false) // anatomy is the light modality
+  /**
+   * Three stages are mounted at all times (client feedback item 5 -- an
+   * unmounted stage is a destroyed renderer). One-up hides two of them
+   * with `display: none`, which measures 0x0, and that measurement is the
+   * only signal here about which tier the layout is in. No breakpoint
+   * literal in JS: the host's size IS what CSS decided.
+   */
+  it('does not call load() while the host measures zero', async () => {
+    mountStage({ hostSize: { width: 0, height: 0 } })
+    await flushPromises()
+    expect(loadSpy).not.toHaveBeenCalled()
+  })
 
-    wrapper.unmount()
-    // Nothing left to drive: the bar must stop offering controls that would
-    // reach into a disposed renderer.
-    expect(context.actions.value).toBeNull()
+  it('loads as soon as the host is given a size', async () => {
+    const wrapper = mountStage({ hostSize: { width: 0, height: 0 } })
+    await flushPromises()
+    expect(loadSpy).not.toHaveBeenCalled()
+
+    await resizeHost(wrapper, { width: 400, height: 300 })
+    expect(loadSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays loaded when the host is hidden again', async () => {
+    const wrapper = mountStage({ hostSize: { width: 400, height: 300 } })
+    await flushPromises()
+    expect(loadSpy).toHaveBeenCalledTimes(1)
+
+    await resizeHost(wrapper, { width: 0, height: 0 })
+    await resizeHost(wrapper, { width: 400, height: 300 })
+    // Re-shown, not re-downloaded: the scene is cached and load() short-
+    // circuits on it, but it must not be called again from the gate.
+    expect(loadSpy).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('the control bar is the stage\'s own', () => {
+  it('renders one StageControls inside the stage', async () => {
+    const wrapper = mountStage({ hostSize: { width: 400, height: 300 } })
+    await flushPromises()
+    expect(wrapper.findAllComponents(StageControls)).toHaveLength(1)
+  })
+
+  // StageControls' own gate (StageControls.test.ts) is "lesionSliceIndex > 0
+  // AND sliceMax > 0" -- anatomy structurally never has slices (it is a
+  // GLB), so this needs an imaging modality to exercise the positive case at
+  // all; the default `loadNrrd` above resolves synchronously with a 100-
+  // slice stack for exactly this.
+  /**
+   * Asserted on the prop the stage forwards, not on the rendered button.
+   *
+   * `StageControls` only offers "Locate lesion" when it has BOTH a lesion
+   * index and a slice stack to move through, and the second of those only
+   * arrives once a real volume has decoded -- which needs WebGL, so it
+   * cannot happen here. `StageControls.test.ts` covers that gating against
+   * both inputs directly; what belongs to this component is that it hands
+   * its own bar the index it was given.
+   */
+  it('forwards its lesion index to the bar it owns', async () => {
+    const withLesion = mountStage({ modality: MRI, lesionSliceIndex: 90, hostSize: { width: 400, height: 300 } })
+    await flushPromises()
+    expect(withLesion.findComponent(StageControls).props('lesionSliceIndex')).toBe(90)
+
+    const without = mountStage({ modality: MRI, lesionSliceIndex: 0, hostSize: { width: 400, height: 300 } })
+    await flushPromises()
+    expect(without.findComponent(StageControls).props('lesionSliceIndex')).toBe(0)
+    expect(without.text()).not.toContain('Locate lesion')
   })
 })
