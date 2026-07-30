@@ -462,6 +462,48 @@ describe('CopperStage navigation choreography', () => {
     expect(materialOpacityOf(scene.objects[0]!)).toBe(1)
   })
 
+  // Review fix (Task 3, three-up plan): `onUserInput` (pointerdown/wheel)
+  // was the only place that marked a scene posed, so a keyboard-only
+  // reader -- who has no other way to move the camera at all -- could
+  // never pose it, and the next panel resize silently discarded their
+  // orbit/zoom. `onStageKeydown` must mark posed too, for every key that
+  // actually moves the camera.
+  it('marks the scene posed on a keyboard orbit, the only way a keyboard-only reader can move the camera', async () => {
+    const markPosed = vi.fn()
+    vi.stubGlobal('useModalityScene', (...args: Parameters<typeof useModalityScene>) => {
+      const api = useModalityScene(...args)
+      markPosed.mockImplementation(api.markPosed)
+      return { ...api, markPosed }
+    })
+
+    const wrapper = mountStage({ modality: MRI })
+    await settle()
+    expect(markPosed).not.toHaveBeenCalled()
+
+    await wrapper.find('[role="application"]').trigger('keydown', { key: 'ArrowLeft' })
+
+    expect(markPosed).toHaveBeenCalledWith(true)
+  })
+
+  // Same fix, the zoom keys: a separate switch branch from the arrow keys,
+  // so it needs its own proof rather than trusting the arrow-key case above
+  // to cover it.
+  it('marks the scene posed on a keyboard zoom too', async () => {
+    const markPosed = vi.fn()
+    vi.stubGlobal('useModalityScene', (...args: Parameters<typeof useModalityScene>) => {
+      const api = useModalityScene(...args)
+      markPosed.mockImplementation(api.markPosed)
+      return { ...api, markPosed }
+    })
+
+    const wrapper = mountStage({ modality: MRI })
+    await settle()
+
+    await wrapper.find('[role="application"]').trigger('keydown', { key: '+' })
+
+    expect(markPosed).toHaveBeenCalledWith(true)
+  })
+
   it('publishes slice state and actions to the control bar it cannot render itself', async () => {
     const context = {
       sliceIndex: ref(0),

@@ -303,6 +303,11 @@ function onStageKeydown(event: KeyboardEvent) {
     case '-': case '_': camera.zoomBy(1 / ZOOM_STEP); break
     default: return
   }
+  // Review fix (Task 3): every case above moves the camera, exactly like
+  // `onUserInput`'s pointerdown/wheel -- and for a keyboard-only reader this
+  // is the ONLY way to pose the camera at all, so leaving it out meant every
+  // panel collapse/resize silently discarded precisely that reader's view.
+  modalityScene.markPosed(true)
   event.preventDefault()
 }
 

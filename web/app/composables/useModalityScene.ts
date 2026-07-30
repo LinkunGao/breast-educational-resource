@@ -199,10 +199,13 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
    *
    * A refit on resize is right for a scene still showing its opening
    * framing and wrong for one the reader has posed -- there, it would
-   * yank the view back every time a panel collapsed. `CopperStage`
-   * already listens for the two gestures that mean "the user is driving"
-   * (`pointerdown` and `wheel`, for `onUserInput`); this is set from the
-   * same place, and `Reset view` clears it.
+   * yank the view back every time a panel collapsed. `CopperStage` marks
+   * this from every input that actually moves the camera: `pointerdown`/
+   * `wheel` (`onUserInput`) and the arrow-key orbit/`+`/`-` zoom keyboard
+   * equivalents (`onStageKeydown`) -- the keyboard path matters on its own,
+   * not just as a fallback: a keyboard-only reader has no other way to pose
+   * the camera at all, so missing it there silently discarded exactly that
+   * reader's view on the next panel resize. `Reset view` clears it.
    */
   const posedScenes = new Set<string>()
 
