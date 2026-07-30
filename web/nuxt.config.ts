@@ -93,6 +93,29 @@ export default defineNuxtConfig({
       // of globIgnores: a future asset added outside modelView/ that is
       // genuinely too large should be skipped, not silently bloat sw.js.
       maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+      // DO NOT DELETE THIS KEY, even though `undefined` looks like "unset"
+      // and therefore redundant. @vite-pwa/nuxt checks presence, not value:
+      // `if (!("navigateFallback" in options.workbox)) options.workbox
+      // .navigateFallback = nuxt.options.app.baseURL ?? "/"`. Deleting the
+      // line removes the key, which re-enables that default; setting it to
+      // `undefined` keeps the key (and so the `in` check true) without
+      // giving workbox a fallback URL. This was deleted once already as
+      // "cargo-culted" and had to be restored -- see the fix commit.
+      //
+      // With a fallback set, workbox emits a NavigationRoute with no
+      // allow/deny list, which intercepts EVERY navigation in scope, not
+      // only offline ones -- online included, immediately, because
+      // `registerType: 'autoUpdate'` calls `skipWaiting()` +
+      // `clientsClaim()`. Every legitimate route here is prerendered by
+      // `nuxi generate` and already in the 142-entry precache; the only
+      // requests a fallback would catch are typos, stale links and bad
+      // slugs, which it would silently serve the cached homepage shell for
+      // instead of the real `404.html` the generate step already produces.
+      // For a clinical reference, a wrong link should fail visibly, not
+      // resolve to the wrong page. See
+      // test-browser/production.spec.ts's "no navigation fallback is
+      // registered" test, which reads the built sw.js for exactly this.
+      navigateFallback: undefined,
     },
   },
 

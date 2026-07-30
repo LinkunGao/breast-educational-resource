@@ -238,4 +238,30 @@ test.describe('§12 acceptance, against the generated site', () => {
     expect(source).not.toMatch(/\.glb/)
     expect(source).not.toMatch(/modelView/)
   })
+
+  /**
+   * Regression test for a defect a review round introduced and then caught:
+   * `nuxt.config.ts`'s `pwa.workbox.navigateFallback: undefined` was briefly
+   * deleted as "cargo-culted". It is not -- @vite-pwa/nuxt only applies its
+   * own default (`app.baseURL`) when the KEY is absent from `workbox`, not
+   * when its value is `undefined`, so deleting the line silently re-enabled
+   * a fallback. A unit test on the config object alone would not catch
+   * this: the defect is injected by the module *after* the config is read,
+   * so only the built artefact shows it -- hence this lives here, reading
+   * `sw.js` the same way "no imaging asset is precached" does, not in
+   * test/pwa.test.ts.
+   *
+   * With a fallback set, workbox emits a `NavigationRoute` with no
+   * allow/deny list, which serves the cached shell for EVERY navigation in
+   * scope that isn't already precached -- typos and stale links included,
+   * online included, immediately (`registerType: 'autoUpdate'`). That masks
+   * the real `404.html` `nuxi generate` already produces. Every legitimate
+   * route here is prerendered and precached, so this app has no use for a
+   * fallback in the first place.
+   */
+  test('no navigation fallback is registered', async ({ page }) => {
+    const source = await (await page.request.get(`${base}/sw.js`)).text()
+    expect(source).not.toMatch(/NavigationRoute/)
+    expect(source).not.toMatch(/createHandlerBoundToURL/)
+  })
 })
