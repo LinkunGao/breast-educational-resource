@@ -4,6 +4,7 @@ import { dirname, extname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createGzip } from 'node:zlib'
 import { expect, test } from '@playwright/test'
+import { focusedPanel, waitForModality } from './helpers'
 
 /**
  * The §12 criteria that can only be measured against what actually ships.
@@ -142,10 +143,11 @@ test.describe('§12 acceptance, against the generated site', () => {
       if (url) transferred.set(url, (transferred.get(url) ?? 0) + e.encodedDataLength)
     })
 
+    // One-up, so the first screen loads one panel's asset. At three-up all
+    // three load, which is correct and a different measurement.
+    await page.setViewportSize({ width: 1280, height: 800 })
     await page.goto(`${base}/the-breast`)
-    await expect(page.locator('canvas')).toHaveCount(1, { timeout: 60_000 })
-    await expect(page.getByRole('status').filter({ hasText: /^Loading/ }))
-      .toBeHidden({ timeout: 150_000 })
+    await waitForModality(page)
 
     const total = [...transferred.values()].reduce((a, b) => a + b, 0)
     console.log(`the-breast first screen (production, gzip): ${(total / 1048576).toFixed(2)} MB`)
@@ -166,12 +168,11 @@ test.describe('§12 acceptance, against the generated site', () => {
     // from the catalogue because the crawler cannot reach them); this proves
     // one of those files is a working page and not just bytes on disk --
     // which is the failure mode GitHub Pages would ship silently.
+    await page.setViewportSize({ width: 1280, height: 800 })
     await page.goto(`${base}/density-d/mammogram`)
-    await expect(page.locator('canvas')).toHaveCount(1, { timeout: 60_000 })
-    await expect(page.getByRole('status').filter({ hasText: /^Loading/ }))
-      .toBeHidden({ timeout: 150_000 })
-    await expect(page.getByRole('alert')).toHaveCount(0)
-    await expect(page.getByRole('button', { name: /reset/i })).toBeEnabled({ timeout: 60_000 })
+    await waitForModality(page)
+    await expect(focusedPanel(page).getByRole('button', { name: /reset/i }))
+      .toBeEnabled({ timeout: 60_000 })
   })
 
   /**

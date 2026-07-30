@@ -1,9 +1,14 @@
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
+import { focusedPanel, waitForModality as waitForCanvas } from './helpers'
 
 /**
  * Design doc §12 item 10: zero `serious` or `critical` axe violations.
+ *
+ * What axe cannot reach -- keyboard paths through the 3D canvas,
+ * screen-reader announcements, reduced motion -- is in
+ * `web/test/a11y-checklist.md`, which is the residue after automation.
  *
  * These run as tests rather than as a console tool (controller correction
  * C6) so a regression fails a run. The brief originally reached for
@@ -37,10 +42,11 @@ import { expect, test } from '@playwright/test'
  * one a scan run too early would never see.
  */
 async function waitForModality(page: Page) {
-  await expect(page.locator('canvas')).toHaveCount(1, { timeout: 60_000 })
-  await expect(page.getByRole('status').filter({ hasText: /^Loading/ }))
-    .toBeHidden({ timeout: 150_000 })
-  await expect(page.getByRole('button', { name: /reset/i })).toBeEnabled({ timeout: 60_000 })
+  await waitForCanvas(page)
+  // Scoped to the focused panel: three-up gives every panel its own bar,
+  // so there are three Reset buttons and an unscoped lookup is ambiguous.
+  await expect(focusedPanel(page).getByRole('button', { name: /reset/i }))
+    .toBeEnabled({ timeout: 60_000 })
 }
 
 async function scan(page: Page, label: string) {
