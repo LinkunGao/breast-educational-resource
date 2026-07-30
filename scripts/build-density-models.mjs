@@ -323,9 +323,9 @@ function buildDuctIndex(doc) {
 }
 
 /**
- * Drops lobes that no duct reaches -- the "删除不彻底" geometry: fragments
- * left behind when a lobe's duct was deleted in Blender, which then float
- * unattached inside the fat layer.
+ * Drops lobes that no duct reaches -- the incompletely-deleted geometry:
+ * fragments left behind when a lobe's duct was deleted in Blender, which
+ * then float unattached inside the fat layer.
  *
  * See ORPHAN_DISTANCE for where the threshold comes from. Throws rather than
  * proceeds if it would take an implausible share of the model.

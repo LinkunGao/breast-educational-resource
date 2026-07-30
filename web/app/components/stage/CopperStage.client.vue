@@ -91,8 +91,9 @@ const slice = useSliceControl(host, modalityScene.scene, modalityScene.sliceStat
 
 /*
  * §5.3's dark "reading lightbox" background for imaging modalities is GONE,
- * at the human's instruction: "所有images的panel背景为何是黑色的呢？不应该
- * 是要一致都是透明色吗？". Every modality now sits on the same background,
+ * at the human's instruction: why is every image panel's background black
+ * -- shouldn't they all be transparent, consistently? Every modality now
+ * sits on the same background,
  * and copper3d's canvas is alpha:true, so that background is entirely CSS's
  * -- exactly as the legacy app had it (frontend/plugins/copper.js's
  * `alpha: true` on all three renderers, with the page's own colour showing
@@ -206,7 +207,8 @@ async function enterView() {
   // Every modality switch is a hard cut, and the first view of a case has no
   // entrance orbit. Both §7.3's inter-modality camera flight and §7.4's
   // entrance orbit were built and then removed at the human's explicit
-  // instruction ("去掉所有的模型和image上的旋转动画", and the flight with it):
+  // instruction (remove every rotation animation on the models and on the
+  // images, and the flight with them):
   // they moved the camera away from wherever the reader had put it and got
   // in the way of the interactions this stage exists for. `load()` applies
   // the modality's own view preset and renders, which is the whole job now.

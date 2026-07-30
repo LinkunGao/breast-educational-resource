@@ -73,8 +73,9 @@ export interface CopperControls {
    * `true` = no inertia: the camera stops the instant the pointer does.
    * The legacy app left this at `false` (its `staticMoving = true` lines are
    * commented out, Model.vue:235 and PanelControls.vue:123), i.e. it drifted
-   * on release. Turned ON here at the human's explicit request -- "该转动到
-   * 哪个位置就是哪个位置". This is a deliberate divergence from legacy feel,
+   * on release. Turned ON here at the human's explicit request: the model
+   * should stop exactly where it was rotated to, and stay there. This is a
+   * deliberate divergence from legacy feel,
    * not an oversight.
    */
   staticMoving: boolean

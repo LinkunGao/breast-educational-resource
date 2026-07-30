@@ -16,8 +16,9 @@ import type { SliceState } from './useModalityScene'
  * An earlier version set a target and let an eased follower chase it. It
  * looked smoother in isolation and felt wrong in the hand: the image visibly
  * lagged the pointer, which is unacceptable for an instrument the reader is
- * using to look for something. The human's words were "为何不是鼠标移动时
- * 实时更新slice". The follower survives only for the `[`/`]` keys, where a
+ * using to look for something. The human's words were: why doesn't the
+ * slice update in real time as the mouse moves? The follower survives only
+ * for the `[`/`]` keys, where a
  * discrete step genuinely does read better as a short glide than a jump.
  *
  * Three things this file deliberately does not do:
@@ -126,7 +127,7 @@ export function useSliceControl(
    * A high-polling mouse delivers well over 100 moves a second; without this
    * every one of them paid the full `repaint` cost above, and only the last
    * one before each frame was ever seen. The human's report was simply
-   * "渲染的也太慢了吧".
+   * that the rendering was far too slow.
    *
    * This is a single-frame coalescer, NOT a second animation loop -- it
    * schedules at most one callback, holds no lease, and cancels on detach.
@@ -366,8 +367,9 @@ export function useSliceControl(
      * useCopperStage's input pump, `[`/`]` has the animation driver's lease
      * -- but a click on "Locate lesion" has neither, so the new slice sat
      * finished-but-undrawn until the user next rotated the view. That is
-     * exactly what the human saw: "他点了是不会立即有反应，必须要rotate
-     * 一下images，他才会跳到那个slice".
+     * exactly what the human saw: clicking it produces no reaction at all
+     * until you rotate the image, and only then does it jump to that
+     * slice.
      */
     scene.value?.requestRenderIfNotRequested()
   }

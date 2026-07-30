@@ -64,11 +64,8 @@ describe('body text meets AA on every light surface', () => {
 })
 
 describe('every ink used for TEXT meets AA on white', () => {
-  // `brand` is deliberately absent, and that is the point of the pair of
-  // describes: the design system's Breast Rose is an ACCENT (fills,
-  // indicators, focus rings) and `brand-hover` -- its Deep Burgundy
-  // secondary -- is the ink that goes with it. The band `brand` does have
-  // to stay inside is asserted below.
+  // `brand` is deliberately absent: it is an accent, not an ink. Its own
+  // band is asserted below.
   const inks = [
     'brand-hover',
     'group-anatomy', 'group-benign', 'group-cancer',
@@ -83,13 +80,8 @@ describe('every ink used for TEXT meets AA on white', () => {
 })
 
 describe('documented exceptions stay in the graphics-only band', () => {
-  // Neither colour reaches body-text AA, so both are pinned into the 3:1
-  // graphics band. Asserting BOTH ends is the point: the lower bound stops
-  // one being lightened past the non-text floor, and the upper bound is
-  // what stops `brand` quietly being darkened until it "can" be used as
-  // text again -- which is the exact drift that turned this interface pink
-  // in the first place, and which the design system's §3 forbids in words
-  // a test cannot check.
+  // Both ends matter: the lower bound keeps them over the non-text floor,
+  // the upper one stops `brand` being darkened until it "can" be text.
   for (const name of ['text-subtle', 'brand'] as const) {
     it(`--color-${name} is 3:1..4.5:1 on white`, () => {
       const ratio = contrastRatio(t[name]!, t.surface!)
@@ -110,11 +102,7 @@ describe('the dark reading panel is gone', () => {
     })
   }
 
-  // Same reasoning for the two accents the design-system palette dropped:
-  // `accent-plum` became `--color-mammogram-ink`'s job and `accent-hot`
-  // existed only as a second graphics-band pink, which `brand` now is.
-  // Neither has a use left, and a stray redefinition would be a dead
-  // custom property nobody would notice.
+  // Same for the two accents the design-system palette dropped.
   for (const dead of ['accent-plum', 'accent-hot']) {
     it(`does not define --color-${dead}`, () => {
       expect(t[dead]).toBeUndefined()
@@ -135,6 +123,46 @@ describe('modality ink and fill are distinguishable from each other', () => {
       expect(contrastRatio(t[ink]!, t[fill]!)).toBeGreaterThanOrEqual(AA_BODY)
     })
   }
+})
+
+describe('scrollbars are the app\'s own, not the platform default', () => {
+  const css = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../app/assets/css/tokens.css'),
+    'utf8',
+  )
+
+  it('draws the bar itself, at an explicit width, with a rounded thumb', () => {
+    expect(css).toMatch(/::-webkit-scrollbar\s*\{[^}]*width:\s*10px/)
+    expect(css).toMatch(/::-webkit-scrollbar-thumb\s*\{[^}]*border-radius:\s*9999px/)
+    // The only way to inset a thumb: it has no padding of its own.
+    expect(css).toMatch(/::-webkit-scrollbar-thumb\s*\{[^}]*background-clip:\s*padding-box/)
+  })
+
+  it('removes the stepper arrows', () => {
+    // The two buttons at the ends of a Windows scrollbar. Reported
+    // directly: the two arrows at the top and bottom must not exist.
+    expect(css).toMatch(/::-webkit-scrollbar-button\s*\{[^}]*display:\s*none/)
+  })
+
+  /**
+   * A global `scrollbar-width` silently switches the whole treatment above
+   * off in Chromium and hands back the engine's own bar, arrows and all.
+   * This has already happened once.
+   */
+  it('never sets scrollbar-width outside the Firefox-only @supports block', () => {
+    const firefoxOnly = css.match(
+      /@supports not selector\(::-webkit-scrollbar\)\s*\{([\s\S]*?)\n {2}\}/,
+    )
+    expect(firefoxOnly, 'no @supports not selector(::-webkit-scrollbar) block').not.toBeNull()
+    expect(firefoxOnly![1]!).toMatch(/scrollbar-width:\s*thin/)
+    expect(firefoxOnly![1]!).toMatch(/scrollbar-color:/)
+
+    // Comments stripped first: the block above this rule explains the trap
+    // in prose and names the property while doing so, which would match.
+    const elsewhere = css.replace(firefoxOnly![0]!, '').replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(elsewhere).not.toMatch(/scrollbar-width:/)
+    expect(elsewhere).not.toMatch(/scrollbar-color:/)
+  })
 })
 
 describe('prefers-reduced-motion disables motion globally, not just here', () => {
