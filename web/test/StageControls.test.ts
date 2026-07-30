@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import StageControls from '../app/components/stage/StageControls.vue'
 
 /**
@@ -21,7 +21,6 @@ function mountBar(props: Partial<InstanceType<typeof StageControls>['$props']> =
       sliceMax: 0,
       settledSliceIndex: 0,
       lesionSliceIndex: 0,
-      film: false,
       ready: true,
       ...props,
     },
@@ -128,8 +127,99 @@ describe('StageControls', () => {
     }
   })
 
-  it('switches to the dark reading-lightbox palette for imaging modalities (§5.3)', () => {
-    expect(mountBar({ film: true }).classes()).toContain('bg-film-bg')
-    expect(mountBar({ film: false }).classes()).toContain('bg-surface')
+  it('has one appearance, not a per-modality palette', () => {
+    // §5.3's dark reading-lightbox variant is gone: every modality sits on
+    // the same background now, so the bar does too. This pins the absence,
+    // because a half-reverted `film` prop would otherwise be invisible.
+    expect(mountBar().classes()).toContain('bg-surface')
+  })
+
+  it('fullscreens the panel it belongs to, not the whole column', async () => {
+    const panel = document.createElement('div')
+    panel.setAttribute('data-stage-panel', '')
+    const column = document.createElement('div')
+    column.setAttribute('data-stage-column', '')
+    column.appendChild(panel)
+    document.body.appendChild(column)
+
+    const requestFullscreen = vi.fn(() => Promise.resolve())
+    panel.requestFullscreen = requestFullscreen as never
+    column.requestFullscreen = vi.fn(() => Promise.resolve()) as never
+
+    const wrapper = mount(StageControls, {
+      props: {
+        sliceIndex: 0, sliceMax: 0, settledSliceIndex: 0, lesionSliceIndex: 0, ready: true,
+      },
+      attachTo: panel,
+    })
+    await wrapper.get('button[aria-pressed]').trigger('click')
+    expect(requestFullscreen).toHaveBeenCalled()
+    expect(column.requestFullscreen).not.toHaveBeenCalled()
+
+    column.remove()
+  })
+
+  /**
+   * Compact mode replaces each button's inline label with a tooltip, so the
+   * text is still in the DOM -- it is just positioned out of flow and held
+   * at zero opacity until hover or keyboard focus. Asserting on `text()`
+   * therefore cannot tell the two modes apart; the visible difference is
+   * that the label is no longer an inline sibling of the icon.
+   *
+   * The browser's own `title` bubble was used for this first and rejected:
+   * unstyled, delayed, and nothing like the rest of the interface.
+   */
+  it('compact mode moves the button labels into a tooltip, keeping their accessible names', () => {
+    const wrapper = mount(StageControls, {
+      props: {
+        sliceIndex: 3, sliceMax: 10, settledSliceIndex: 3, lesionSliceIndex: 0,
+        ready: true, compact: true,
+      },
+    })
+    const reset = wrapper.get('button[aria-label="Reset view"]')
+
+    // The label is present, but as the tooltip: hidden until hover/focus,
+    // out of flow, and never able to swallow the click it describes.
+    const tip = reset.get('span')
+    expect(tip.text()).toBe('Reset view')
+    expect(tip.classes()).toContain('opacity-0')
+    expect(tip.classes()).toContain('group-hover:opacity-100')
+    expect(tip.classes()).toContain('group-focus-visible:opacity-100')
+    expect(tip.classes()).toContain('pointer-events-none')
+    expect(tip.classes()).toContain('absolute')
+    // Not announced twice: the button already carries the same string as
+    // its accessible name.
+    expect(tip.attributes('aria-hidden')).toBe('true')
+    // The hover target has to be the button itself.
+    expect(reset.classes()).toContain('group')
+    expect(reset.classes()).toContain('relative')
+
+    expect(wrapper.text()).toContain('3 / 10')
+  })
+
+  it('full-width mode keeps the label inline and renders no tooltip', () => {
+    const wrapper = mount(StageControls, {
+      props: {
+        sliceIndex: 3, sliceMax: 10, settledSliceIndex: 3, lesionSliceIndex: 0,
+        ready: true,
+      },
+    })
+    const label = wrapper.get('button[aria-label="Reset view"]').get('span')
+    expect(label.text()).toBe('Reset view')
+    expect(label.classes()).not.toContain('absolute')
+  })
+
+  it('uses no native title attribute anywhere', () => {
+    // `title` renders the browser's own bubble, which is unstyled and
+    // delayed. Every hint here is the app's own.
+    const wrapper = mount(StageControls, {
+      props: {
+        sliceIndex: 3, sliceMax: 10, settledSliceIndex: 90, lesionSliceIndex: 90,
+        ready: true, compact: true,
+      },
+    })
+    for (const button of wrapper.findAll('button')) {
+      expect(button.attributes('title')).toBeUndefined()
+    }
   })
 })

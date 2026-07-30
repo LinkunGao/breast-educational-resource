@@ -1,12 +1,21 @@
 import tailwindcss from '@tailwindcss/vite'
+import { publicUrl } from './app/composables/assetUrl'
 import { enabledCases } from './content/cases'
 import { LEGACY_ROUTES } from './content/legacyRoutes'
+
+// Mirrors @nuxt/schema's own default resolution for `app.baseURL` (it reads
+// this same env var with this same fallback). Needed at config-eval time
+// because `app.head.link` entries are rendered as literal strings -- Nuxt
+// does NOT rewrite them against `app.baseURL` the way it does page assets --
+// so the apple-touch-icon link below has to be made subpath-aware by hand,
+// same trap `assetBase` documents above.
+const appBaseURL = process.env.NUXT_APP_BASE_URL || '/'
 
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-28',
   devtools: { enabled: true },
 
-  modules: ['@pinia/nuxt'],
+  modules: ['@pinia/nuxt', '@vite-pwa/nuxt'],
 
   // Nuxt's default component scanning prefixes nested-folder components with
   // the folder name (components/nav/AppHeader.vue -> <NavAppHeader>). Task 5's
@@ -34,6 +43,79 @@ export default defineNuxtConfig({
       // live somewhere else entirely, in which case give an absolute URL
       // (e.g. `https://cdn.example/modelView/`), which is used verbatim.
       assetBase: '/modelView/',
+    },
+  },
+
+  /**
+   * Installable app shell (client feedback item 1). The legacy app had this
+   * via `@nuxtjs/pwa` (legacy/nuxt.config.js) and the rebuild dropped it
+   * along with the icon; the manifest fields below are that config's,
+   * verbatim.
+   *
+   * APP SHELL ONLY. `globIgnores` keeps `modelView/**` out of the precache
+   * manifest, and that is load-bearing rather than tidy: those assets total
+   * ~355MB, and Chromium refuses to store responses of that size in its
+   * HTTP cache at all -- measured on this exact catalogue, see the §9.2
+   * correction in pages/[slug]/[[modality]].vue. Listing them would produce
+   * a service worker that either fails to install or silently drops them,
+   * and would inflate sw.js with thousands of useless entries. The volumes
+   * and models go over the network, as they do today.
+   *
+   * `registerType: 'autoUpdate'` because this is a reference resource with
+   * no user state: there is nothing to lose by taking the new version, and
+   * a stale shell pinned behind a prompt nobody clicks is worse.
+   */
+  pwa: {
+    registerType: 'autoUpdate',
+    manifest: {
+      name: 'Breast Educational Resource',
+      short_name: 'Breast Education App',
+      description: 'An ABI Education App for Breast Cancer.',
+      theme_color: '#ffffff',
+      background_color: '#FBF7F8',
+      display: 'standalone',
+      icons: [
+        { src: 'pwa-64x64.png', sizes: '64x64', type: 'image/png' },
+        { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+        { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png' },
+        {
+          src: 'maskable-icon-512x512.png',
+          sizes: '512x512',
+          type: 'image/png',
+          purpose: 'maskable',
+        },
+      ],
+    },
+    workbox: {
+      globPatterns: ['**/*.{js,css,html,ico,png,svg,webp,woff2}'],
+      globIgnores: ['**/modelView/**', '**/draco/**'],
+      // A 5MB ceiling on any single precached file. Belt and braces on top
+      // of globIgnores: a future asset added outside modelView/ that is
+      // genuinely too large should be skipped, not silently bloat sw.js.
+      maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+      // DO NOT DELETE THIS KEY, even though `undefined` looks like "unset"
+      // and therefore redundant. @vite-pwa/nuxt checks presence, not value:
+      // `if (!("navigateFallback" in options.workbox)) options.workbox
+      // .navigateFallback = nuxt.options.app.baseURL ?? "/"`. Deleting the
+      // line removes the key, which re-enables that default; setting it to
+      // `undefined` keeps the key (and so the `in` check true) without
+      // giving workbox a fallback URL. This was deleted once already as
+      // "cargo-culted" and had to be restored -- see the fix commit.
+      //
+      // With a fallback set, workbox emits a NavigationRoute with no
+      // allow/deny list, which intercepts EVERY navigation in scope, not
+      // only offline ones -- online included, immediately, because
+      // `registerType: 'autoUpdate'` calls `skipWaiting()` +
+      // `clientsClaim()`. Every legitimate route here is prerendered by
+      // `nuxi generate` and already in the 142-entry precache; the only
+      // requests a fallback would catch are typos, stale links and bad
+      // slugs, which it would silently serve the cached homepage shell for
+      // instead of the real `404.html` the generate step already produces.
+      // For a clinical reference, a wrong link should fail visibly, not
+      // resolve to the wrong page. See
+      // test-browser/production.spec.ts's "no navigation fallback is
+      // registered" test, which reads the built sw.js for exactly this.
+      navigateFallback: undefined,
     },
   },
 
@@ -66,6 +148,33 @@ export default defineNuxtConfig({
   },
 
   app: {
+    /**
+     * Keeps every page's component instance alive across navigation.
+     *
+     * This is here for one reason: the case page owns the single
+     * `WebGLRenderer` and every scene decoded into it (see
+     * `useCopperStage`'s `onScopeDispose`, which calls `renderer.dispose()`).
+     * `app/utils/pageKey.ts` already pins one instance across all nine cases,
+     * so case-to-case navigation keeps its cache -- but `/about` is a
+     * different route, so leaving the case page unmounted the stage, tore the
+     * GPU context down, and every model and volume was downloaded and decoded
+     * again on the way back. The human reported exactly that: "为何从 about
+     * 页面跳转回来之后，还有重新加载已经加载过了的模型？"
+     *
+     * Set HERE rather than as `definePageMeta({ keepalive: true })` on the
+     * case page, and the difference is not stylistic: `NuxtPage` reads the
+     * keepalive config off the CURRENT route's meta, so a per-page flag means
+     * the `<KeepAlive>` wrapper itself disappears the moment `/about` is the
+     * current route -- taking the cache, and the renderer, with it. A default
+     * on `app` keeps the wrapper mounted for every route, which is the only
+     * arrangement that survives the round trip.
+     *
+     * The cost is three WebGL contexts held while the reader is on `/about`.
+     * Browsers cap live contexts around 16, and this app has exactly one page
+     * that builds any.
+     */
+    keepalive: true,
+
     head: {
       /**
        * The legacy app's own title, verbatim (frontend/nuxt.config.js:22).
@@ -103,6 +212,22 @@ export default defineNuxtConfig({
            */
           href: 'https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,400&display=swap',
         },
+        {
+          rel: 'apple-touch-icon',
+          // Absolute-from-root and baseURL-prefixed, not a bare relative
+          // filename: case pages are nested (`/te-uma/density-c/anatomy/`),
+          // and a relative href resolves against the *document* URL, not
+          // the site root, so it would break at that depth. `rel: 'icon'`
+          // below needs the same treatment and for the same reason: without
+          // it, a browser falls back to requesting `/favicon.ico` at the
+          // ORIGIN root, which under the `/te-uma/` GitHub Pages deploy is
+          // a 404 -- the generated favicon.ico is never fetched at all.
+          href: publicUrl('apple-touch-icon-180x180.png', appBaseURL),
+        },
+        {
+          rel: 'icon',
+          href: publicUrl('favicon.ico', appBaseURL),
+        },
       ],
       meta: [
         { charset: 'utf-8' },
@@ -111,6 +236,10 @@ export default defineNuxtConfig({
           name: 'description',
           content: 'Auckland Bioengineering Institute Breast Research App',
         },
+        // iOS Safari reads this for the standalone status bar; Android reads
+        // `pwa.manifest.theme_color` instead. Same value in both places so
+        // the two cannot drift apart.
+        { name: 'theme-color', content: '#ffffff' },
       ],
     },
   },

@@ -1,55 +1,97 @@
 @import "tailwindcss";
 
 /* Tailwind 4 CSS-first config: variables in @theme also generate utilities.
-   For example --color-brand yields bg-brand / text-brand / border-brand. */
+   For example --color-brand yields bg-brand / text-brand / border-brand.
+
+   ── Where these values come from ─────────────────────────────────────────
+   plan/reference/TE_UMA_Breast_Health_Explorer_Design_System.md, the
+   client's own design system. Its stated goal is "Apple Health meets
+   Scientific Visualization"; its stated anti-goal is "I am browsing a pink
+   cancer awareness website" -- which is what this palette had drifted into,
+   because one saturated magenta was doing every job in the interface at
+   once.
+
+   Two structural changes carry most of the difference:
+
+     1. The brand rose got softer AND was demoted from a text colour to an
+        accent colour, with Deep Burgundy taking over as its ink. See
+        --color-brand below.
+     2. The three case groups got their own colours -- blue for anatomy,
+        teal for benign, burgundy for cancer -- straight out of the design
+        system's semantic table (§4). The sidebar used to render all three
+        in the same grey under the same pink highlight; the colour is what
+        makes it read as a clinical taxonomy rather than as a list. */
 @theme {
-  /* ── Neutral layer (70%) ─────────────────────────────────────────────
-     Neutral, not pink.
-
-     Every one of these used to be tinted toward the brand: a #FBF7F8 page,
-     #E8DCE0 rules, #6E5A62 secondary text. Individually each is a couple of
-     percent off grey; together they washed the entire interface pink, which
-     is what reads as unserious on a clinical reference. The brand still owns
-     the 10% accent layer below -- it just no longer leaks into the paper.
-
-     Very slightly cool, so a warm-toned anatomy render sits ON the page
-     rather than dissolving into it. */
-  --color-bg:             #F8F9FA;
+  /* ── Neutral layer ───────────────────────────────────────────────────
+     Design system §3's neutral palette. Slightly cooler than the greys it
+     replaces, which is what keeps a warm-toned anatomy render sitting ON
+     the page rather than dissolving into it. */
+  --color-bg:             #F7F8FA;
   --color-surface-sunken: #F1F3F5;
-  --color-border:         #E5E8EB;
-  --color-border-strong:  #C4CACF;
+  --color-border:         #E5E7EB;
+  --color-border-strong:  #CBD5E1;
 
-  /* ── Card layer (20%) ────────────────────────── */
+  /* ── Card layer ──────────────────────────────── */
   --color-surface:        #FFFFFF;
 
   /* ── Text ────────────────────────────────────── */
-  --color-text:           #16191D;
-  --color-text-muted:     #565D66;
-  --color-text-subtle:    #868E96;  /* only ≥18.66px, or graphics */
+  --color-text:           #1B2430;
+  /* Design system §3 gives #657080 here. Darkened one step because that
+     value measures 4.39:1 on --color-surface-sunken -- under the AA body
+     floor on one of the three surfaces this app puts 14px secondary text
+     on. 5.42:1 on white, 4.88:1 on sunken. Pinned in test/tokens.test.ts. */
+  --color-text-muted:     #5F6B7A;
+  /* Likewise §3's #9AA3AF, which measures 2.55:1 on white -- below even the
+     3:1 non-text floor, so there is nothing it could legally be used for.
+     3.65:1: graphics, and text at >=18.66px only. */
+  --color-text-subtle:    #7C8794;
 
-  /* ── Brand layer (10%) ───────────────────────── */
-  --color-brand:          #D81B60;
-  --color-brand-hover:    #AD1457;
-  --color-brand-subtle:   #FCE7EE;
-  --color-accent-plum:    #7D1E7D;
-  --color-accent-hot:     #EB3175;  /* 4.02:1 — graphics only, never body text */
+  /* ── Brand layer ─────────────────────────────────────────────────────
+     Design system §3: Breast Rose, for "Logo accent, Active navigation,
+     Cancer highlights, Primary CTA" -- and explicitly NOT for page
+     backgrounds or large panels.
+
+     #D94F70 measures 3.96:1 on white. That is over §11's 3:1 non-text
+     floor, so it is right for the focus ring, the active-nav indicator,
+     the focused card's border in three-up and the wordmark's dot; and it
+     is UNDER the 4.5:1 body floor, so it is not a text colour.
+     --color-brand-hover (Deep Burgundy, §3's secondary brand, 7.11:1) is
+     the ink that goes with it, and is what every brand-coloured piece of
+     TEXT in the app now uses. Both bands are pinned in
+     test/tokens.test.ts, so a later "just use brand for the label too"
+     fails the suite instead of shipping. */
+  --color-brand:          #D94F70;
+  --color-brand-hover:    #8E3650;
+  --color-brand-subtle:   #FCE8ED;  /* §14's cancer-tag background */
+
+  /* ── Case-group semantics (design system §4 and §7) ──────────────────
+     ANATOMY / BENIGN CONDITIONS / BREAST CANCER -- the same three groups
+     CaseSidebar renders. These match the corresponding modality inks below
+     on purpose: one palette addressed on two axes (what a case IS, and how
+     it was IMAGED), so a blue group heading and a blue anatomy tab are the
+     same blue rather than two blues that nearly agree. */
+  --color-group-anatomy:  #285A7A;  /* Medical Blue            7.41:1 */
+  --color-group-benign:   #26706D;  /* Supporting Teal, inked  5.80:1 */
+  --color-group-cancer:   #8E3650;  /* Deep Burgundy           7.11:1 */
 
   /* The dark "reading lightbox" tokens that used to live here are gone with
      the treatment they served: every modality now sits on one background.
      See CopperStage.client.vue. */
 
-  /* ── Modality semantic colours ───────────────── */
-  /* anatomy-ink is one step darker than --color-brand: the stepper's active
-     chip is ink-on-fill, and #D81B60 on #FCE7EE is only 4.27:1, short of
-     the AA floor for body text. */
-  --color-anatomy-ink:      #C2185B;
-  --color-anatomy-fill:     #FCE7EE;
-  --color-mammogram-ink:    #7D1E7D;
-  --color-mammogram-fill:   #F3E5F5;
-  --color-ultrasound-ink:   #0E7490;
-  --color-ultrasound-fill:  #E0F2F1;
-  --color-mri-ink:          #1E40AF;
-  --color-mri-fill:         #E8EEFC;
+  /* ── Modality semantic colours ───────────────────────────────────────
+     Also §3/§4: blue for anatomy, a deeper blue for MRI (§3 gives Medical
+     Blue both jobs; two tabs cannot share one colour, so MRI takes the
+     darker end), teal for the benign workup's ultrasound, burgundy for
+     mammography. Every ink clears AA body on white AND on its own fill --
+     both pinned in test/tokens.test.ts. */
+  --color-anatomy-ink:      #285A7A;
+  --color-anatomy-fill:     #E7EFF4;
+  --color-mammogram-ink:    #8E3650;
+  --color-mammogram-fill:   #FCE8ED;
+  --color-ultrasound-ink:   #26706D;
+  --color-ultrasound-fill:  #E3F1F0;
+  --color-mri-ink:          #2F4B7C;
+  --color-mri-fill:         #E8EDF6;
 
   /* ── Typography ──────────────────────────────── */
   /* See nuxt.config.ts's font link for why Inter replaced Inria Sans. The
@@ -57,34 +99,43 @@
      platform UI faces rather than falling straight to a generic. */
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
-  --text-display:      2.5rem;    /* 40 */
+  /* Design system §5's scale. Its H1/H2/H3 land on --text-display/--text-h1/
+     --text-h2 here, because this app's one <h1> (the case heading) renders
+     at --text-h1 on narrow screens and --text-display at xl -- so the page
+     title is the design system's H1 exactly where there is room for it and
+     its H2 where there is not. --text-h3 sits below their scale and is this
+     app's own: the content panel's run-in subheads. */
+  --text-display:      2.25rem;   /* 36 */
   --text-display--line-height: 2.75rem;  /* 44 */
   --text-h1:           1.75rem;   /* 28 */
-  --text-h1--line-height:      2.125rem; /* 34 */
+  --text-h1--line-height:      2.25rem;  /* 36 */
   --text-h2:           1.25rem;   /* 20 */
   --text-h2--line-height:      1.75rem;  /* 28 */
   --text-h3:           1rem;      /* 16 */
   --text-h3--line-height:      1.5rem;   /* 24 */
   --text-body:         1rem;      /* 16 */
-  --text-body--line-height:    1.6875rem;/* 27 = 1.7 */
+  --text-body--line-height:    1.6rem;   /* 25.6 = 1.6 */
   --text-body-sm:      0.875rem;  /* 14 */
-  --text-body-sm--line-height: 1.375rem; /* 22 */
+  --text-body-sm--line-height: 1.3125rem;/* 21 = 1.5 */
   --text-caption:      0.75rem;   /* 12 */
   --text-caption--line-height: 1rem;     /* 16 */
 
-  /* ── Corner radii ────────────────────────────── */
-  --radius-chip:   4px;
-  --radius-ctl:    8px;
-  --radius-card:   12px;
+  /* ── Corner radii (design system §10, §11) ───── */
+  --radius-chip:   6px;
+  --radius-ctl:    10px;  /* their button: 40px tall, 10px radius */
+  --radius-card:   16px;
 
-  /* ── Shadows (tinted toward the brand, not pure black) ── */
-  --shadow-sm: 0 1px 2px rgb(36 19 25 / .06);
-  --shadow-md: 0 2px 8px rgb(36 19 25 / .08);
-  --shadow-lg: 0 8px 24px rgb(36 19 25 / .10);
+  /* ── Shadows (design system §16: "avoid heavy shadows") ──────────────
+     Neutral black at low alpha, not tinted toward the brand. A tinted
+     shadow is a fifth pink surface, and §1 lists "excessive pink usage"
+     first among the things to avoid. */
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / .08);
+  --shadow-md: 0 8px 24px rgb(0 0 0 / .08);
+  --shadow-lg: 0 16px 40px rgb(0 0 0 / .10);
 }
 
-/* Spacing keeps Tailwind's default 4px base (1 = 4px), so design doc §5.5's
-   4·8·12·16·24·32·48·64 maps to 1·2·3·4·6·8·12·16. */
+/* Spacing keeps Tailwind's default 4px base (1 = 4px), so design system §6's
+   4·8·12·16·24·32·40·48·64 maps to 1·2·3·4·6·8·10·12·16. */
 
 @layer base {
   :root {
@@ -97,15 +148,19 @@
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     /* `cv11` gives Inter's single-storey `l` a tail, which is what stops
-       `Il1` collapsing in slice readouts and BI-RADS grades; `ss01` is its
-       open-digit alternates. Both are no-ops on the fallback stack. */
+       `Il1` collapsing in the slice readout; `ss01` is its open-digit
+       alternates. Both are no-ops on the fallback stack. */
     font-feature-settings: "cv11", "ss01";
   }
 
-  /* Headings track tighter than body at these sizes -- Inter is drawn on an
-     optical size axis and its default tracking is tuned for text, not for
-     28-40px display. */
-  h1, h2 {
+  /* Design system §5: H1 tracks -0.03em. Inter is drawn on an optical size
+     axis and its default tracking is tuned for text, not for 28-36px
+     display, so the headings need it pulled in by hand. */
+  h1 {
+    letter-spacing: -0.03em;
+  }
+
+  h2, h3 {
     letter-spacing: -0.015em;
   }
 

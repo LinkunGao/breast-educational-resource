@@ -12,9 +12,17 @@ import { PNG } from 'pngjs'
  * still live.
  */
 
-/** The stage host: a `role="img"` div copper3d appends its canvas into. */
+/**
+ * The stage host: the focusable div copper3d appends its canvas into.
+ *
+ * `application`, not `img`. It was `img` until the a11y pass, and this
+ * locator was not updated with it -- so two of the three tests below spent a
+ * commit resolving to nothing and failing on the screenshot call. Matching
+ * the role by name rather than by a `[data-*]` hook is deliberate: it means
+ * a change to the stage's exposed semantics cannot pass silently again.
+ */
 function stage(page: Page): Locator {
-  return page.getByRole('img', { name: /viewer$/ })
+  return page.getByRole('application', { name: /viewer$/ })
 }
 
 /**
@@ -121,7 +129,7 @@ test.describe('3D stage', () => {
   })
 
   test('renders the anatomy GLB in a real WebGL context', async ({ page }) => {
-    await page.goto('/case/density-a')
+    await page.goto('/density-a')
     await waitForModality(page)
 
     const report = await webglReport(page)
@@ -140,7 +148,7 @@ test.describe('3D stage', () => {
   test('decodes and renders an NRRD volume', async ({ page }) => {
     // density-4 carries this catalogue's smallest volume (10.9MB) and is
     // still a full decode-and-upload of the real shipped asset.
-    await page.goto('/case/density-d/mammogram')
+    await page.goto('/density-d/mammogram')
     await waitForModality(page)
 
     const report = await webglReport(page)
@@ -155,13 +163,45 @@ test.describe('3D stage', () => {
     // Design doc §8.2 -- "switch the scene, not the renderer". A second
     // canvas here means the renderer was rebuilt, which is the leak
     // app.vue's page key exists to prevent.
-    await page.goto('/case/density-d')
+    await page.goto('/density-d')
     await waitForModality(page)
 
     await page.getByRole('link', { name: /3D Mammogram/i }).click()
     await waitForModality(page)
 
     await expect(page.locator('canvas')).toHaveCount(1)
+    if (consoleErrors.length) console.log('console errors:', consoleErrors)
+  })
+
+  /**
+   * Client feedback item 5. Leaving a case and coming back must not
+   * re-download its volume. Before the page key became a constant, this
+   * downloaded ~10MB twice.
+   *
+   * Navigates via the sidebar's own links, NOT `page.goto`: a `goto` is a
+   * full document load that rebuilds every renderer from scratch, which is
+   * a different thing entirely and is not what a reader stepping through
+   * the sidebar does -- it would defeat the point of this test.
+   */
+  test('returning to a case does not re-download its volume', async ({ page }) => {
+    const volumeRequests: string[] = []
+    page.on('request', (request) => {
+      if (/\.nrrd(\?|$)/.test(request.url())) volumeRequests.push(request.url())
+    })
+
+    await page.goto('/cancer-ductal/mammogram')
+    await waitForModality(page)
+    const afterFirst = volumeRequests.length
+    expect(afterFirst).toBeGreaterThan(0)
+
+    await page.getByRole('link', { name: 'Fibroadenoma' }).click()
+    await waitForModality(page)
+
+    const beforeReturn = volumeRequests.length
+    await page.getByRole('link', { name: 'Ductal' }).click()
+    await waitForModality(page)
+
+    expect(volumeRequests.length).toBe(beforeReturn)
     if (consoleErrors.length) console.log('console errors:', consoleErrors)
   })
 })

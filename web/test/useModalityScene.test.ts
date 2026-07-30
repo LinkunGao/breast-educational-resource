@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Modality } from '../content/types'
 import type { CopperModule, CopperRenderer, CopperScene, CopperViewPoint, StageApi } from '../app/composables/copper-types'
 import { loadGltfModel } from '../app/composables/loadGltfModel'
+import { createSceneBudget } from '../app/composables/sceneBudget'
 import { useModalityScene } from '../app/composables/useModalityScene'
 
 /**
@@ -84,10 +85,28 @@ function makeTrackballDouble() {
   }
 }
 
+/**
+ * Task 3 (three-up plan): `refitCurrentScene` reads `camera.fov` and writes
+ * `camera.position`/`updateProjectionMatrix`. Every fixture scene loads
+ * successfully and gets bounds recorded (a real `RASDimensions`/measured
+ * Box3 for imaging, or nothing for the plain-object GLB fakes here -- see
+ * `loadAnatomy`'s own try/catch), so the refit genuinely runs against these
+ * fakes on most loads, not just the tests that care about it.
+ */
+function makeFakeCamera() {
+  return {
+    fov: 45,
+    position: { x: 0, y: 0, z: 0, set: vi.fn() },
+    up: { x: 0, y: 1, z: 0, set: vi.fn() },
+    lookAt: vi.fn(),
+    updateProjectionMatrix: vi.fn(),
+  }
+}
+
 function makeFakeScene(): CopperScene {
   const objects: Array<{ name: string }> = []
   const scene = {
-    camera: {} as CopperScene['camera'],
+    camera: makeFakeCamera() as unknown as CopperScene['camera'],
     // The OrbitControls instance copper3d's constructor builds. Production
     // code replaces this via `installTrackballControls` before touching it,
     // so it is shaped the way copper3d leaves it, NOT the way the app then
@@ -165,8 +184,11 @@ function makeFakeCopperModule(): CopperModule {
   return {
     copperRendererOnDemond: vi.fn() as unknown as CopperModule['copperRendererOnDemond'],
     loading: vi.fn(() => makeLoadingBar()),
+    // A `function`, not an arrow: `installTrackballControls` calls this with
+    // `new`, and an arrow function is not a constructor. Returning an object
+    // from a constructor overrides `this`, so the double is what comes back.
     Copper3dTrackballControls: vi.fn(
-      () => makeTrackballDouble(),
+      function () { return makeTrackballDouble() },
     ) as unknown as CopperModule['Copper3dTrackballControls'],
     addBoxHelper: vi.fn(),
   }
@@ -180,6 +202,10 @@ function makeFakeStage(renderer: CopperRenderer): StageApi {
     loadError: shallowRef(undefined),
     requestContinuous: vi.fn(),
     releaseContinuous: vi.fn(),
+    // Fixed at 1 (square): no test here cares about a non-square host, and
+    // `fitToView.test.ts` already covers `fitDistance`'s own aspect handling
+    // in isolation.
+    aspect: vi.fn(() => 1),
   }
 }
 
@@ -230,7 +256,7 @@ describe('useModalityScene', () => {
     const modalityScene = useModalityScene(stage)
 
     const loadPromise = modalityScene.load('the-breast', makeModality({ id: 'mri', asset: 'density-1/right/mri.nrrd' }))
-    expect(renderer.createScene).toHaveBeenCalledWith('the-breast:mri')
+    expect(renderer.createScene).toHaveBeenCalledWith('/modelView/density-1/right/mri.nrrd')
     expect(renderer.setCurrentScene).toHaveBeenCalledWith(scene)
 
     // Resolve loadNrrd's callback synchronously, as a fast local fixture load would.
@@ -456,7 +482,7 @@ describe('useModalityScene', () => {
     const stage = makeFakeStage(renderer)
     const modalityScene = useModalityScene(stage)
     const modality = makeModality()
-    const name = 'the-breast:mammogram'
+    const name = '/modelView/density-1/middle/m3d.nrrd'
 
     const firstLoad = modalityScene.load('the-breast', modality)
     // createScene's default mock registers into sceneMap synchronously,
@@ -749,14 +775,17 @@ describe('useModalityScene', () => {
     const stage = makeFakeStage(renderer)
     const modalityScene = useModalityScene(stage)
 
-    const fatMaterial = { dispose: vi.fn(), transparent: false, opacity: 1, depthWrite: true, color: { set: vi.fn() } }
+    const fatMaterial = { dispose: vi.fn(), transparent: false, opacity: 1, depthWrite: true, color: { set: vi.fn() }, map: { dispose: vi.fn() } }
     const otherMaterial = { dispose: vi.fn(), transparent: false, opacity: 1, depthWrite: true, color: { set: vi.fn() } }
+    // Stable child objects, not literals built inside `traverse`: the tint
+    // REPLACES `child.material`, and a literal would take the write and be
+    // thrown away, leaving the test asserting against a material production
+    // no longer uses.
+    const fatMesh = { isMesh: true, name: 'VH_F_fat_L', material: fatMaterial as unknown }
+    const glandMesh = { isMesh: true, name: 'VH_F_gland_L', material: otherMaterial as unknown }
     const group = {
       name: '',
-      traverse: (fn: (child: { isMesh: boolean, name: string, material: typeof fatMaterial }) => void) => {
-        fn({ isMesh: true, name: 'VH_F_fat_L', material: fatMaterial })
-        fn({ isMesh: true, name: 'VH_F_gland_L', material: otherMaterial })
-      },
+      traverse: (fn: (child: unknown) => void) => { fn(fatMesh); fn(glandMesh) },
     }
 
     vi.mocked(loadGltfModel).mockResolvedValueOnce({ group: group as never, size: 10 })
@@ -768,9 +797,25 @@ describe('useModalityScene', () => {
     // The new guarantee this app now owns instead of copper3d: without this
     // call the model would decode perfectly and simply never appear.
     expect(scene.scene.add).toHaveBeenCalledWith(group)
-    expect(fatMaterial.transparent).toBe(true)
-    expect(fatMaterial.opacity).toBe(0.4)
-    expect(fatMaterial.color.set).toHaveBeenCalledWith('#a3932a')
+
+    // The fat layer gets a NEW material, not a tweaked one. Tinting the
+    // GLB's own material multiplies the tint into its flesh-toned baseColour
+    // texture, which is what made the model read as mud; the legacy app
+    // replaced the material outright and so does this.
+    const tinted = fatMesh.material as { transparent: boolean, opacity: number, color: { getHexString: () => string } }
+    expect(tinted).not.toBe(fatMaterial)
+    expect(tinted.transparent).toBe(true)
+    expect(tinted.opacity).toBe(0.4)
+    expect(tinted.color.getHexString()).toBe('cb7830')
+
+    // ...and the material it displaced is disposed, texture included. The
+    // density morph swaps models repeatedly; leaking one per swap is the
+    // difference between a bounded and an unbounded texture footprint.
+    expect(fatMaterial.dispose).toHaveBeenCalledTimes(1)
+    expect(fatMaterial.map.dispose).toHaveBeenCalledTimes(1)
+
+    // Every other mesh is left exactly as the GLB authored it.
+    expect(glandMesh.material).toBe(otherMaterial)
     expect(otherMaterial.transparent).toBe(false)
     expect(otherMaterial.color.set).not.toHaveBeenCalled()
   })
@@ -953,7 +998,9 @@ describe('useModalityScene', () => {
 
       expect(next.fat.material.opacity).toBe(0.4)
       expect(next.fat.material.transparent).toBe(true)
-      expect(next.fat.material.color.set).toHaveBeenCalledWith('#a3932a')
+      // A real three material now (the tint replaces rather than mutates),
+      // so this reads the resulting colour instead of a spy call.
+      expect(next.fat.material.color.getHexString()).toBe('cb7830')
       expect(next.gland.material.opacity).toBe(1)
       expect(next.gland.material.transparent).toBe(false)
       expect(next.gland.material.depthWrite).toBe(true)
@@ -983,13 +1030,18 @@ describe('useModalityScene', () => {
       const next = makeAnatomyGroup()
       resolveGltf(next.group)
 
+      // Spied AFTER the load, because the load replaces the fat layer's
+      // material -- the double's own `dispose` mock belongs to a material
+      // that is no longer on the mesh.
+      const disposeFat = vi.spyOn(initial.fat.material as { dispose: () => void }, 'dispose')
+
       const morph = (await modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb')))!
       morph.commit()
       morph.commit()
 
       expect(scene.scene.remove).toHaveBeenCalledTimes(1)
       expect(initial.fat.geometry.dispose).toHaveBeenCalledTimes(1)
-      expect(initial.fat.material.dispose).toHaveBeenCalledTimes(1)
+      expect(disposeFat).toHaveBeenCalledTimes(1)
       expect(objects).toEqual([next.group])
     })
 
@@ -1083,17 +1135,17 @@ describe('useModalityScene', () => {
      */
     it('re-keys the scene under the case it now displays, so returning to that case is a cache hit', async () => {
       const { scene, modalityScene, renderer, resolveGltf } = await loadInitialAnatomy()
-      expect(renderer.sceneMap['density-a:anatomy']).toBe(scene)
+      expect(renderer.sceneMap['/modelView/density-1/left/density25.glb']).toBe(scene)
 
       resolveGltf(makeAnatomyGroup().group)
       const morph = (await modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb')))!
       morph.commit()
 
-      expect(renderer.sceneMap['density-b:anatomy']).toBe(scene)
-      expect(renderer.sceneMap['density-a:anatomy']).toBeUndefined()
+      expect(renderer.sceneMap['/modelView/density-2/left/density50.glb']).toBe(scene)
+      expect(renderer.sceneMap['/modelView/density-1/left/density25.glb']).toBeUndefined()
       // copper3d keeps its own copy on the instance; a stale one would make
       // any reader of `sceneName` disagree with the map it is keyed in.
-      expect(scene.sceneName).toBe('density-b:anatomy')
+      expect(scene.sceneName).toBe('/modelView/density-2/left/density50.glb')
       // The per-scene bookkeeping travels with the name, or the re-keyed
       // scene comes back framed by whatever preset happened to load last.
       expect(modalityScene.viewpoint.value).toEqual(DEFAULT_VIEWPOINT)
@@ -1113,15 +1165,23 @@ describe('useModalityScene', () => {
   })
 
   /**
-   * Fix round 1. Before it, the cache needed no cap: `app.vue` keyed the
-   * case page by slug, so leaving a case tore the whole renderer down, and
-   * no case offers more than three modalities. §7.1's crossfade needs the
-   * renderer to survive a case navigation within the morph family, so that
-   * structural bound is gone for those five cases and this replaces it with
-   * the same number -- which matters because the family's imaging volumes
-   * decode to considerably more than the 167MB they occupy on disk.
+   * Task 2 (three-up plan). Residency is now bounded by bytes
+   * (`sceneBudget.ts`), not by a fixed count -- every case now shares one
+   * page instance, so a per-page-instance cap of three would mean fifteen
+   * possible scenes fighting over three slots. These tests size an isolated
+   * budget to a multiple of `FIXTURE_SCENE_BYTES` so "three scenes resident"
+   * stays a meaningful, exact assertion even though the underlying unit is
+   * now bytes rather than a count.
    */
   describe('cached-scene residency cap', () => {
+    /** Every scene these fixtures build falls back to useModalityScene's
+     *  GLB_ESTIMATED_BYTES estimate: the fake NRRD volumes built by
+     *  `fakeSlice`/`resolveNrrd` carry no `raw.volume.data`, so `sceneBytes`
+     *  never finds a `byteLength` to size an NRRD scene by and falls back to
+     *  the same flat estimate a GLB gets. Sizing a test budget as a multiple
+     *  of this keeps eviction counts predictable. */
+    const FIXTURE_SCENE_BYTES = 2 * 1024 * 1024
+
     /** A renderer that builds a DISTINCT scene per name and answers
      * `getSceneByName` from its own map, the way the real one does --
      * `makeFakeRenderer` deliberately returns one fixed scene, which cannot
@@ -1153,7 +1213,9 @@ describe('useModalityScene', () => {
       id: 'mammogram' | 'mri',
     ) {
       const pending = modalityScene.load(slug, makeModality({ id, asset: `${slug}/${id}.nrrd` }))
-      const scene = renderer.sceneMap[`${slug}:${id}`]!
+      // Scenes are keyed by the resolved asset URL, not by slug:modality --
+      // see `sceneName`. Two cases shipping the same file share one scene.
+      const scene = renderer.sceneMap[`/modelView/${slug}/${id}.nrrd`]!
       if (vi.mocked(scene.loadNrrd).mock.calls.length) resolveNrrd(scene)
       await pending
       return scene
@@ -1161,7 +1223,8 @@ describe('useModalityScene', () => {
 
     it('keeps three scenes and evicts the least recently used, never the one on screen', async () => {
       const renderer = makeMultiSceneRenderer()
-      const modalityScene = useModalityScene(makeFakeStage(renderer))
+      const budget = createSceneBudget(3 * FIXTURE_SCENE_BYTES)
+      const modalityScene = useModalityScene(makeFakeStage(renderer), budget)
 
       const a = await visit(modalityScene, renderer, 'density-a', 'mammogram')
       await visit(modalityScene, renderer, 'density-b', 'mammogram')
@@ -1171,7 +1234,7 @@ describe('useModalityScene', () => {
       await visit(modalityScene, renderer, 'density-d', 'mammogram')
 
       expect(Object.keys(renderer.sceneMap).sort()).toEqual([
-        'density-b:mammogram', 'density-c:mammogram', 'density-d:mammogram',
+        '/modelView/density-b/mammogram.nrrd', '/modelView/density-c/mammogram.nrrd', '/modelView/density-d/mammogram.nrrd',
       ])
       // Evicting means freeing: `scene.remove` alone only unlinks, and the
       // slice plane's texture IS the decoded volume slice.
@@ -1183,7 +1246,8 @@ describe('useModalityScene', () => {
 
     it('counts a revisit as recent, so the scene you keep coming back to is not the one thrown away', async () => {
       const renderer = makeMultiSceneRenderer()
-      const modalityScene = useModalityScene(makeFakeStage(renderer))
+      const budget = createSceneBudget(3 * FIXTURE_SCENE_BYTES)
+      const modalityScene = useModalityScene(makeFakeStage(renderer), budget)
 
       await visit(modalityScene, renderer, 'density-a', 'mammogram')
       await visit(modalityScene, renderer, 'density-b', 'mammogram')
@@ -1194,13 +1258,14 @@ describe('useModalityScene', () => {
       await visit(modalityScene, renderer, 'density-d', 'mammogram')
 
       expect(Object.keys(renderer.sceneMap).sort()).toEqual([
-        'density-a:mammogram', 'density-c:mammogram', 'density-d:mammogram',
+        '/modelView/density-a/mammogram.nrrd', '/modelView/density-c/mammogram.nrrd', '/modelView/density-d/mammogram.nrrd',
       ])
     })
 
     it('drops the evicted scene\'s own bookkeeping, so a rebuild is not handed the old scene\'s framing', async () => {
       const renderer = makeMultiSceneRenderer()
-      const modalityScene = useModalityScene(makeFakeStage(renderer))
+      const budget = createSceneBudget(3 * FIXTURE_SCENE_BYTES)
+      const modalityScene = useModalityScene(makeFakeStage(renderer), budget)
 
       await visit(modalityScene, renderer, 'density-a', 'mammogram')
       await visit(modalityScene, renderer, 'density-b', 'mammogram')
@@ -1209,7 +1274,7 @@ describe('useModalityScene', () => {
 
       // density-a was evicted; visiting it again must genuinely rebuild.
       const rebuilt = await visit(modalityScene, renderer, 'density-a', 'mammogram')
-      expect(vi.mocked(renderer.createScene).mock.calls.filter(c => c[0] === 'density-a:mammogram')).toHaveLength(2)
+      expect(vi.mocked(renderer.createScene).mock.calls.filter(c => c[0] === '/modelView/density-a/mammogram.nrrd')).toHaveLength(2)
       expect(rebuilt.loadNrrd).toHaveBeenCalledTimes(1)
       expect(modalityScene.sliceState.value).not.toBeNull()
       expect(modalityScene.viewpoint.value).toEqual(DEFAULT_VIEWPOINT)
@@ -1218,38 +1283,50 @@ describe('useModalityScene', () => {
     // The one place the cap must yield: never blank the stage to satisfy it.
     it('never evicts the scene currently displayed, even if it is the only one left', async () => {
       const renderer = makeMultiSceneRenderer()
-      const modalityScene = useModalityScene(makeFakeStage(renderer))
+      const budget = createSceneBudget(3 * FIXTURE_SCENE_BYTES)
+      const modalityScene = useModalityScene(makeFakeStage(renderer), budget)
 
       const only = await visit(modalityScene, renderer, 'density-a', 'mammogram')
       for (let i = 0; i < 5; i++) await visit(modalityScene, renderer, 'density-a', 'mammogram')
 
-      expect(renderer.sceneMap['density-a:mammogram']).toBe(only)
+      expect(renderer.sceneMap['/modelView/density-a/mammogram.nrrd']).toBe(only)
       expect(modalityScene.scene.value).toBe(only)
     })
 
-    // Finding 1 (code review, Important). `touchScene` is the only path
-    // that pushes a name into the LRU (`recentScenes`), and it is correctly
-    // gated behind the load token so a superseded load can never bump the
-    // scene the user is actually looking at. But the unconditional
-    // bookkeeping right below it in `load()` (review fix #3: a superseded
-    // load that genuinely finished building still gets registered, so
-    // switching back to it later isn't half-built) runs regardless of that
-    // token -- so a scene built by a superseded-but-successful load used to
-    // become permanently invisible to the cap, sitting in copper3d's
-    // sceneMap forever. Rapid modality-stepping during slow NRRD downloads
-    // is exactly the shape of traffic that hits this.
-    it('evicts a superseded-but-completed load once it becomes resident, even though it was never actually viewed', async () => {
+    // Finding 1 (code review, Important), carried forward from the
+    // count-of-three cap to the byte budget. `touchScene` is the only path
+    // that pins/touches a scene, and it is correctly gated behind the load
+    // token so a superseded load can never bump the scene the user is
+    // actually looking at. But `load()`'s bookkeeping just above it
+    // (`budget.register`, review fix #3: a superseded load that genuinely
+    // finished building still gets registered, so switching back to it
+    // later isn't half-built) runs unconditionally, regardless of that
+    // token -- so a scene built by a superseded-but-successful load must
+    // still be counted against the budget, or it sits in copper3d's
+    // sceneMap forever, invisible to `overflow()`. Rapid modality-stepping
+    // during slow NRRD downloads is exactly the shape of traffic that hits
+    // this.
+    //
+    // Unlike the old count-of-three cap, the budget has no special-cased
+    // preference for evicting a never-viewed resident first: eviction is
+    // plain LRU by registration/touch order. A's late, superseded
+    // registration lands in the queue AFTER B's completion touched it, so
+    // the first thing to overflow is B -- the genuinely-viewed scene that
+    // happens to be LRU-oldest -- not A. What this test still proves is the
+    // load-bearing part of finding 1: A is bounded, not leaked forever.
+    it('registers a superseded-but-completed load against the budget, so it does not leak forever', async () => {
       const renderer = makeMultiSceneRenderer()
-      const modalityScene = useModalityScene(makeFakeStage(renderer))
+      const budget = createSceneBudget(3 * FIXTURE_SCENE_BYTES)
+      const modalityScene = useModalityScene(makeFakeStage(renderer), budget)
 
       // A starts loading but its NRRD response is slow.
       const loadA = modalityScene.load('density-a', makeModality({ id: 'mammogram', asset: 'density-a/mammogram.nrrd' }))
-      const sceneA = renderer.sceneMap['density-a:mammogram']!
+      const sceneA = renderer.sceneMap['/modelView/density-a/mammogram.nrrd']!
 
       // The user steps to B before A's response lands. B is not superseded
       // by anything after it, so it completes normally.
       const loadB = modalityScene.load('density-b', makeModality({ id: 'mammogram', asset: 'density-b/mammogram.nrrd' }))
-      resolveNrrd(renderer.sceneMap['density-b:mammogram']!)
+      resolveNrrd(renderer.sceneMap['/modelView/density-b/mammogram.nrrd']!)
       await loadB
 
       // A's own response finally arrives, late -- superseded, but it still
@@ -1263,33 +1340,64 @@ describe('useModalityScene', () => {
       await visit(modalityScene, renderer, 'density-c', 'mammogram')
       await visit(modalityScene, renderer, 'density-d', 'mammogram')
 
-      // Cap is 3. Without treating A as a resident, this sits at 4 (A plus
-      // whichever 3 of B/C/D are most recent) forever -- MAX_CACHED_SCENES
-      // silently stops bounding anything.
+      // Budget holds 3 scenes' worth. B is the LRU-oldest entry (touched on
+      // completion, before A's own late registration), so it is the first
+      // to overflow -- not A.
       expect(Object.keys(renderer.sceneMap)).toHaveLength(3)
-      // And specifically: A -- never actually looked at -- is the one
-      // dropped, not a scene the user genuinely viewed.
-      expect(renderer.sceneMap['density-a:mammogram']).toBeUndefined()
+      expect(renderer.sceneMap['/modelView/density-b/mammogram.nrrd']).toBeUndefined()
+      expect(renderer.sceneMap['/modelView/density-a/mammogram.nrrd']).toBe(sceneA)
+
+      // One more visit proves A was genuinely counted, not leaked: it is
+      // now the LRU-oldest survivor and is the next thing evicted.
+      await visit(modalityScene, renderer, 'density-e', 'mammogram')
+      expect(Object.keys(renderer.sceneMap)).toHaveLength(3)
+      expect(renderer.sceneMap['/modelView/density-a/mammogram.nrrd']).toBeUndefined()
     })
 
     // Shared with Task 8's failed-load eviction: one way out of the map,
     // one place that checks it took.
     it('fails loudly if a copper3d upgrade makes deleting from sceneMap a silent no-op', async () => {
       const renderer = makeMultiSceneRenderer()
+      const budget = createSceneBudget(3 * FIXTURE_SCENE_BYTES)
       // Simulates `sceneMap` no longer being a plain object keyed by name:
       // the delete stops taking, but nothing throws on its own.
-      const modalityScene = useModalityScene(makeFakeStage(renderer))
+      const modalityScene = useModalityScene(makeFakeStage(renderer), budget)
       await visit(modalityScene, renderer, 'density-a', 'mammogram')
       await visit(modalityScene, renderer, 'density-b', 'mammogram')
       await visit(modalityScene, renderer, 'density-c', 'mammogram')
 
-      const survivor = renderer.sceneMap['density-a:mammogram']!
+      const survivor = renderer.sceneMap['/modelView/density-a/mammogram.nrrd']!
       vi.mocked(renderer.getSceneByName).mockImplementation(
-        (name: string) => name === 'density-a:mammogram' ? survivor : renderer.sceneMap[name],
+        (name: string) => name === '/modelView/density-a/mammogram.nrrd' ? survivor : renderer.sceneMap[name],
       )
 
       await visit(modalityScene, renderer, 'density-d', 'mammogram')
       expect(modalityScene.loadError.value?.message).toMatch(/survived eviction/)
+    })
+
+    // Task 2 (three-up plan). Three-up shows up to three panels at once, so
+    // whatever a stage is currently displaying must survive ANY budget,
+    // however small -- the pin is the only thing standing between a soft
+    // memory limit and a blank panel the reader is looking at.
+    it('never evicts the scene this stage is currently showing', async () => {
+      // A budget so small that everything overflows, so the only thing that
+      // can keep the visible scene alive is the pin.
+      const budget = createSceneBudget(1)
+      const renderer = makeMultiSceneRenderer()
+      const modalityScene = useModalityScene(makeFakeStage(renderer), budget)
+
+      vi.mocked(loadGltfModel).mockResolvedValueOnce({
+        group: { name: '', traverse: () => {} } as never,
+        size: 1,
+      })
+      await modalityScene.load('density-a', makeModality({
+        id: 'anatomy', label: 'Anatomy', asset: 'density-1/left/density25.glb', viewPreset: 'left_breast_view.json',
+      }))
+      await visit(modalityScene, renderer, 'density-a', 'mri')
+      await visit(modalityScene, renderer, 'density-a', 'mammogram')
+
+      // The last one loaded is the one on screen.
+      expect(renderer.getSceneByName('/modelView/density-a/mammogram.nrrd')).toBeDefined()
     })
   })
 

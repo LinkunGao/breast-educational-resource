@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { enabledCases } from '../content/cases'
-import { LEGACY_ROUTES } from '../content/legacyRoutes'
+import { LEGACY_ROUTES, LEGACY_ROUTES_SERVED_DIRECTLY } from '../content/legacyRoutes'
 
 /** Parse the old nuxt.config.js's `generate.routes` array directly, rather
  *  than hand-copying the same ten paths into a second literal here: two
@@ -32,14 +32,37 @@ function legacyGenerateRoutes(): string[] {
 }
 
 describe('legacy route table (design doc §4.5)', () => {
-  it('covers exactly the routes in the legacy nuxt.config.js generate.routes', () => {
-    expect(Object.keys(LEGACY_ROUTES).sort()).toEqual(legacyGenerateRoutes().sort())
+  /**
+   * Every legacy path must still resolve -- but not all of them by
+   * REDIRECTING. Case pages moved from `/case/<slug>` to `/<slug>`, so five
+   * of the ten legacy paths are now the real route's own path and a redirect
+   * entry for them would point at itself. Those five are declared in
+   * `LEGACY_ROUTES_SERVED_DIRECTLY`, and the two lists together must still
+   * account for exactly what the old site generated.
+   */
+  it('accounts for exactly the routes in the legacy nuxt.config.js generate.routes', () => {
+    const covered = [...Object.keys(LEGACY_ROUTES), ...LEGACY_ROUTES_SERVED_DIRECTLY]
+    expect(covered.sort()).toEqual(legacyGenerateRoutes().sort())
   })
 
-  it('every target resolves to an enabled case', () => {
+  it('no legacy path is both redirected and served directly', () => {
+    for (const path of LEGACY_ROUTES_SERVED_DIRECTLY) {
+      expect(Object.keys(LEGACY_ROUTES)).not.toContain(path)
+    }
+  })
+
+  it('every redirect target resolves to an enabled case, and is not a self-loop', () => {
     const slugs = new Set(enabledCases().map(c => c.slug))
-    for (const target of Object.values(LEGACY_ROUTES)) {
-      expect(slugs.has(target.replace('/case/', ''))).toBe(true)
+    for (const [from, target] of Object.entries(LEGACY_ROUTES)) {
+      expect(slugs.has(target.replace(/^\//, ''))).toBe(true)
+      expect(target).not.toBe(from)
+    }
+  })
+
+  it('every directly-served legacy path is an enabled case slug', () => {
+    const slugs = new Set(enabledCases().map(c => c.slug))
+    for (const path of LEGACY_ROUTES_SERVED_DIRECTLY) {
+      expect(slugs.has(path.replace(/^\//, ''))).toBe(true)
     }
   })
 })

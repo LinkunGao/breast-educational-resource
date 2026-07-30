@@ -1,6 +1,25 @@
 export type ModalityId = 'anatomy' | 'mammogram' | 'ultrasound' | 'mri'
 export type CaseGroup = 'overview' | 'density' | 'benign' | 'cancer'
-export type BiRads = 'A' | 'B' | 'C' | 'D'
+
+/**
+ * A viewing slot, not an imaging technique.
+ *
+ * These are the legacy app's left/middle/right panels, which is also how
+ * the assets are laid out on disk (`public/modelView/<case>/{left,middle,
+ * right}/`) and how the copy tables are keyed (`leftPanelText` and friends
+ * in legacy/data.js). A slot can hold more than one modality: the middle
+ * slot of `benign-cyst` holds both the 3D mammogram and the 2D ultrasound,
+ * which the reader switches between rather than seeing side by side.
+ */
+export type PanelId = 'anatomy' | 'mammogram' | 'mri'
+
+export interface Panel {
+  id: PanelId
+  /** Slot label. Navigation text, not medical copy, so it may be adjusted. */
+  label: string
+  /** One or two. `[0]` is the default variant, always the 3D one. */
+  modalities: Modality[]
+}
 
 export interface Modality {
   id: ModalityId
@@ -23,9 +42,6 @@ export interface Case {
   title: string
   /** Case heading */
   heading: string
-  biRads?: BiRads
-  /** Stated explicitly when the case borrows another case's anatomy model */
-  referenceDensity?: BiRads
   /**
    * Slice index holding the lesion, **in this case's MRI volume**. 0 or
    * absent means no specific lesion.
@@ -39,6 +55,19 @@ export interface Case {
    * that is all the source data ever had; it is not one value per modality.
    */
   lesionSliceIndex?: number
+  /**
+   * The three viewing slots, always in `anatomy, mammogram, mri` order.
+   * SOURCE OF TRUTH. `modalities` below is this, flattened.
+   */
+  panels: Panel[]
+  /**
+   * Every modality across every slot, flattened at construction time.
+   *
+   * Kept as a real field rather than a derived helper on purpose: it is
+   * what `nuxt.config.ts`'s prerender seed, the `/:slug/:modality` route
+   * and `content/legacyRoutes.ts` all read, and none of them should have
+   * to know that slots exist. `cases.test.ts` asserts the two stay equal.
+   */
   modalities: Modality[]
   /** Has copy but no imaging assets: generates no route and no nav entry */
   disabled?: boolean

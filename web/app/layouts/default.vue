@@ -103,12 +103,31 @@ const sheetExpanded = ref(false)
              on screen to leave it again. `bg-bg` is load-bearing only in
              that state -- a fullscreened element with no background of its
              own shows the UA's black backdrop through it. -->
-        <div data-stage-column class="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
-          <!-- Case heading (title + BI-RADS badge). -->
+        <!--
+          `max-md:flex-none` is the phone fix, and it is not cosmetic.
+
+          With `flex-1 min-h-0` this column is allowed to shrink below its own
+          content, and in a column flex container whose height is the viewport
+          it does exactly that. Measured at 414x896: the column's content was
+          660px and flexbox gave it 461, so 199px -- the control bar included
+          -- overflowed and was painted over by the content panel, which comes
+          later in the DOM. Worse, the compression kept `main`'s scrollHeight
+          equal to its clientHeight, so there was no scroll range at all and
+          the body copy underneath was simply unreachable.
+
+          `flex: none` restores `flex-basis: auto` with no shrink, so the
+          column keeps its natural height, `main` becomes genuinely
+          scrollable, and §10.3's single stacked column works the way it
+          reads. Tablet and desktop keep `flex-1`: there the column really is
+          meant to fill the space it is given.
+        -->
+        <div
+          data-stage-column
+          class="flex min-h-0 min-w-0 flex-1 flex-col bg-bg max-md:flex-none"
+        >
+          <!-- Case heading (group label + title). -->
           <slot name="heading" />
 
-          <!-- Modality stepper, horizontally scrollable. -->
-          <slot name="stepper" />
 
           <!-- md:max-xl:min-h ensures the stage can't be squeezed to 0 at
                tablet: in a column flex layout with a shrink-0 sibling,
@@ -126,8 +145,11 @@ const sheetExpanded = ref(false)
             <slot name="stage" />
           </section>
 
-          <!-- Control bar: reset / fullscreen / locate lesion / slice readout. -->
-          <slot name="controls" />
+          <!-- No `#controls` slot: each stage renders its own control bar
+               directly under its own canvas, because the three-up layout
+               gives every panel one. The slot existed only while a single
+               bar had to sit beside a single stage. -->
+
         </div>
 
         <!-- Content column: collapsible width at xl+ (design doc §10.1's

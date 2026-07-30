@@ -1,49 +1,42 @@
-import { getCase, isMorphFamilyGroup } from '~~/content/cases'
+import { getCase } from '~~/content/cases'
 
 /**
  * The key `<NuxtPage>` uses to decide when the case page -- and with it
- * `CopperStage`, `useCopperStage`, and the one WebGLRenderer -- is reused
- * rather than rebuilt.
+ * the three `CopperStage` instances, their renderers and their scene
+ * caches -- is reused rather than rebuilt.
  *
- * Extracted from `app.vue` so this rule is testable: it is not cosmetic, it
- * decides which of design doc §7's transitions can physically happen.
+ * ## One key for every case
  *
- * ## Why the modality is not in the key
+ * It is a constant. Every case page reuses one component instance, so a
+ * navigation from `benign-cyst` to `cancer-dcis` keeps three live
+ * renderers and everything decoded into them.
  *
- * NuxtPage's default key is derived from the full matched route, including
- * the optional `modality` param, so `/x/anatomy` -> `/x/mri` would
- * tear down and rebuild the renderer on every step of the modality stepper --
- * exactly what design doc §8.2's "switch the scene, not the renderer" exists
- * to eliminate. Under Suspense it would also transiently double the live
- * WebGL context count, since a still-mounting new page can resolve before
- * the old one unmounts.
+ * This is client feedback item 5, "The 3d views (images and models) no
+ * longer cache and reload each time (slows interaction)". Per-slug keys
+ * meant leaving a case ran `useCopperStage`'s `onScopeDispose`, which
+ * destroys the WebGLRenderer and every scene in it -- so returning
+ * re-downloaded and re-decoded 10-53MB. The legacy app built its three
+ * renderers at module scope and never tore them down; this is the same
+ * lifetime, expressed through the page key.
  *
- * ## Why §7.1's morph family shares ONE key (fix round 1)
+ * What bounds memory now is `sceneBudget.ts`, not the page key. Before,
+ * teardown was doing that job by accident, badly: it freed everything on
+ * every navigation whether or not there was any pressure to.
  *
- * Every §7.1 trigger is a CASE navigation: `the-breast` and `density-a..d`
- * are five separate cases, stepped through from the sidebar. A crossfade
- * needs the outgoing and incoming models alive in one scene on one
- * renderer, so keying those five by slug destroyed, on exactly the
- * navigation meant to trigger it, the thing the transition needs. §7.1 --
- * "the app's central teaching point" -- could never fire.
+ * ## Why a validate guard is still required
  *
- * The cost is that the family shares one scene cache, so imaging scenes
- * accumulate across cases instead of being freed by the page teardown.
- * `useModalityScene` caps that at `MAX_CACHED_SCENES` with an LRU, which
- * pins residency back to the "at most 3 scenes" its own cache comment
- * already assumed. Anatomy-to-anatomy inside the family costs nothing extra
- * either way: a morph loads its model into the EXISTING scene and creates
- * no new one.
+ * With the key pinned, `pages/[slug]/[[modality]].vue`'s setup does not
+ * re-run on navigation, so a setup-time `throw createError` would only
+ * ever fire on the first case page of a session. `definePageMeta({
+ * validate })` runs on EVERY navigation regardless of instance reuse,
+ * which is why the 404 behaviour survives this. Do not replace it.
  *
- * Lesion cases keep a key of their own. They cannot morph (they have no
- * anatomy modality at all), and they hold this catalogue's largest volumes
- * (`cancer-lobular/right/mri.nrrd` alone is 53MB), so there is nothing to
- * buy and a lot to pay by sharing an instance across them.
+ * Every non-case route falls back to `route.path` in `app.vue`, which is
+ * what NuxtPage derives its default key from.
  */
+const CASE_PAGE_KEY = 'case'
+
 export function casePageKey(slug: string | undefined): string | undefined {
   if (typeof slug !== 'string') return undefined
-  const current = getCase(slug)
-  return current && isMorphFamilyGroup(current.group)
-    ? 'case-density-family'
-    : `case-${slug}`
+  return getCase(slug) ? CASE_PAGE_KEY : undefined
 }

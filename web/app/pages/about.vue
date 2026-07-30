@@ -47,7 +47,7 @@ const fullWidthOrgs = computed(() =>
     <NuxtLink
       to="/"
       class="group inline-flex min-h-11 items-center gap-1.5 text-caption
-             uppercase tracking-[0.14em] text-text-muted hover:text-brand"
+             uppercase tracking-[0.14em] text-text-muted hover:text-brand-hover"
     >
       <svg viewBox="0 0 24 24" class="size-3 transition-transform group-hover:-translate-x-0.5" aria-hidden="true">
         <path fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="m15 5-7 7 7 7" />
@@ -174,7 +174,7 @@ const fullWidthOrgs = computed(() =>
               :href="c.doi"
               target="_blank"
               rel="noopener noreferrer"
-              class="text-brand underline decoration-brand/40 underline-offset-2 hover:decoration-brand"
+              class="text-brand-hover underline decoration-brand/40 underline-offset-2 hover:decoration-brand"
             >{{ c.doi }}</a>
           </p>
         </li>
@@ -189,7 +189,7 @@ const fullWidthOrgs = computed(() =>
           :href="FEEDBACK_FORM_URL"
           target="_blank"
           rel="noopener noreferrer"
-          class="font-bold text-brand underline decoration-brand/40 underline-offset-2 hover:decoration-brand"
+          class="font-bold text-brand-hover underline decoration-brand/40 underline-offset-2 hover:decoration-brand"
         >online form</a>
         to give us your valuable feedback about this app.
       </p>

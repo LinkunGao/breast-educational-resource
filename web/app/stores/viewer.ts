@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { ModalityId } from '~~/content/types'
+import type { ModalityId, PanelId } from '~~/content/types'
 
 /** Camera pose snapshot, keyed by `${caseSlug}:${modalityId}`. */
 export interface CameraSnapshot {
@@ -62,6 +62,25 @@ export const useViewerStore = defineStore('viewer', () => {
   //     had sidebarOpen's bug because it never had a second, below-xl
   //     consumer needing the opposite default -- sidebarExpanded exists
   //     specifically because sidebarOpen did.
+  /**
+   * The slot the reader last chose, remembered across case navigation.
+   *
+   * Without this, every case page opens on its first slot (anatomy),
+   * because that is what the URL falls back to -- so a reader comparing the
+   * MRI across four density grades had to re-pick MRI on each one. The
+   * human asked for it directly: "点击过后，就算切换了页面也要记住，返回
+   * 来时也要显示之前高亮的 panel".
+   *
+   * Deliberately a SLOT, not a modality: `benign-cyst` is the only case
+   * with a 2D ultrasound, so remembering `ultrasound` would mean every
+   * other case fell back anyway. A slot exists on every case.
+   *
+   * Not persisted beyond the session. It is a reading position, not a
+   * setting, and a stale one restored days later would be more surprising
+   * than helpful.
+   */
+  const preferredPanel = ref<PanelId>('anatomy')
+
   const sidebarOpen = ref(false)
   const sidebarExpanded = ref(true)
   const contentOpen = ref(true)
@@ -82,6 +101,7 @@ export const useViewerStore = defineStore('viewer', () => {
 
   return {
     caseSlug,
+    preferredPanel,
     modalityId,
     sidebarOpen,
     sidebarExpanded,

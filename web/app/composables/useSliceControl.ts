@@ -144,7 +144,10 @@ export function useSliceControl(
       if (pending === null) return
       applyIndex(pending)
       pending = null
-      settledIndex.value = index.value
+      // Deliberately NOT `settle()`. `settledIndex` is what the screen-reader
+      // live region is bound to (controller correction C11): announcing it
+      // per frame queues one utterance per frame and makes the stage unusable
+      // with a screen reader on. A drag announces once, from `endDrag`.
     })
   }
 
@@ -258,7 +261,11 @@ export function useSliceControl(
   function endDrag() {
     if (!dragging) return
     dragging = false
+    // Any frame the pointer-up beat: apply it before announcing, so the
+    // number read out is the one on screen.
+    if (pending !== null) applyIndex(pending)
     cancelScheduled()
+    settle()
     // Cleared rather than restored to `pointer`: the next pointermove
     // re-decides from an actual raycast, and the pointer may well have left
     // the plane during the drag.
@@ -396,9 +403,26 @@ export function useSliceControl(
    * directly, so `attach()` finds one and the tests exercise handlers that
    * production never wired up.
    */
-  onMounted(async () => {
-    await nextTick()
+  /**
+   * Attached TWICE, deliberately, and the second call is the load-bearing
+   * one.
+   *
+   * The template ref this composable is handed is not bound yet when
+   * `onMounted` fires -- the same trap useCopperStage documents. `attach()`
+   * read `host.value === undefined`, returned early, and silently registered
+   * nothing: the hover cursor, the scrub and the rotation lock were all dead
+   * in a real browser from the day this was written, and no unit test could
+   * see it because they all pass a real element in directly.
+   *
+   * Calling it again after `nextTick` fixes that. Calling it BEFORE as well
+   * costs nothing and keeps the synchronous path working for callers that do
+   * have an element at mount: `addEventListener` ignores a repeat
+   * registration of the same type, callback and capture flag, so whichever
+   * call finds the element first wins and the other is a no-op.
+   */
+  onMounted(() => {
     attach()
+    void nextTick(attach)
   })
   onScopeDispose(detach)
 

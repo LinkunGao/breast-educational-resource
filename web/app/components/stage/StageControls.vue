@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /**
  * Design doc §10.1's control bar: `⟲ Reset  ⛶ Fullscreen  ⌖ Locate lesion
- * ... 62/104`. Rendered into the layout's `#controls` slot, not overlaid on
- * the canvas -- see useStageControls.ts for why.
+ * ... 62/104`. Rendered by `CopperStage` itself, directly under its own
+ * canvas -- one bar per stage, since three-up puts up to three stages on
+ * screen at once and each needs its own.
  *
  * Deliberately presentational: everything it knows arrives as props and
  * everything it does (except fullscreen, which is pure DOM) leaves as an
@@ -22,6 +23,10 @@ const props = defineProps<{
   /** False until the stage's renderer exists; the buttons do nothing until
    * then, so they say so rather than silently no-opping. */
   ready: boolean
+  /** Three-up: icon-only buttons, since three bars share the width one had.
+   * Every button keeps its `aria-label`, so nothing is lost for a screen
+   * reader -- only the visible text goes. */
+  compact?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -33,11 +38,10 @@ const hasSlices = computed(() => props.sliceMax > 0)
 const hasLesion = computed(() => props.lesionSliceIndex > 0 && hasSlices.value)
 
 /**
- * The element fullscreen targets: the whole stage column (case heading,
- * modality stepper, stage, and this bar), marked by the layout. Fullscreening
- * the canvas alone would take this bar off screen with it, leaving Esc as
- * the only way back out -- and §10.1's collapse-both-panels case already
- * covers "just the stage, bigger".
+ * The element fullscreen targets: this panel (canvas host + this bar),
+ * marked `data-stage-panel` by `CopperStage`. Fullscreening the canvas alone
+ * would take this bar off screen with it, leaving Esc as the only way back
+ * out.
  */
 const root = ref<HTMLElement>()
 const isFullscreen = ref(false)
@@ -52,7 +56,12 @@ async function onFullscreen() {
     await document.exitFullscreen().catch(() => {})
     return
   }
-  const target = root.value?.closest<HTMLElement>('[data-stage-column]') ?? root.value?.parentElement
+  // Prefers this panel; falls back to the whole stage column for any caller
+  // that is not inside a panel. In three-up, fullscreening the column would
+  // blow up all three panels when the reader asked for one.
+  const target = root.value?.closest<HTMLElement>('[data-stage-panel]')
+    ?? root.value?.closest<HTMLElement>('[data-stage-column]')
+    ?? root.value?.parentElement
   // Safari and any browser with the Fullscreen API blocked by permissions
   // policy reject this; there is nothing to recover, and an unhandled
   // rejection here would surface as a dev-overlay error on a decorative
@@ -73,9 +82,29 @@ onScopeDispose(() => {
 })
 
 /** Shared by all three buttons. `min-h-11` is §11's 44px touch-target
- * floor; `hover:bg-current/10` tints from the bar's own foreground colour. */
-const buttonClass = 'flex min-h-11 items-center gap-1.5 rounded-ctl px-3 text-body-sm '
+ * floor; `hover:bg-current/10` tints from the bar's own foreground colour.
+ * `group` and `relative` are what the tooltip below hangs off. */
+const buttonClass = 'group relative flex min-h-11 items-center gap-1.5 rounded-ctl px-3 text-body-sm '
   + 'hover:bg-current/10 disabled:opacity-50 disabled:hover:bg-transparent'
+
+/**
+ * The tooltip shown for an icon-only button.
+ *
+ * Compact mode hides the labels, and the browser's own `title` bubble is
+ * not an answer: it is unstyled, appears after a delay the app does not
+ * control, and looks nothing like the rest of the interface.
+ *
+ * CSS only -- no timers, no positioning library. It sits above the button
+ * because this bar is at the foot of a panel, and it is
+ * `pointer-events-none` so it can never eat the click it is describing.
+ * `group-focus-visible` matters as much as `group-hover`: a keyboard
+ * reader gets the same hint, and it is the same accessible name the button
+ * already carries via `aria-label`.
+ */
+const tipClass = 'pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2 '
+  + 'whitespace-nowrap rounded-ctl bg-text px-2 py-1 text-caption font-medium text-surface '
+  + 'opacity-0 shadow-md transition-opacity duration-100 '
+  + 'group-hover:opacity-100 group-focus-visible:opacity-100'
 </script>
 
 <template>
@@ -88,31 +117,57 @@ const buttonClass = 'flex min-h-11 items-center gap-1.5 rounded-ctl px-3 text-bo
       type="button"
       :class="buttonClass"
       :disabled="!props.ready"
+      aria-label="Reset view"
       @click="emit('reset')"
     >
       <svg viewBox="0 0 24 24" class="size-4" aria-hidden="true">
         <path fill="currentColor" d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7" />
       </svg>
-      Reset view
+      <span v-if="!props.compact">Reset view</span>
+      <span v-else :class="tipClass" aria-hidden="true">Reset view</span>
     </button>
 
     <button
       type="button"
       :class="buttonClass"
       :aria-pressed="isFullscreen"
+      :aria-label="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'"
       @click="onFullscreen"
     >
       <svg viewBox="0 0 24 24" class="size-4" aria-hidden="true">
-        <path fill="currentColor" d="M5 5h5V3H3v7h2zm14 0v5h2V3h-7v2zM5 19v-5H3v7h7v-2zm14 0h-5v2h7v-7h-2z" />
+        <!--
+          Two glyphs, not one.
+
+          The label used to carry the state ("Fullscreen" / "Exit
+          fullscreen"), but compact mode hides labels, so in three-up the
+          button looked identical in both states and gave the reader nothing
+          to go on. Corners pointing OUT means "expand"; corners pointing IN
+          means "collapse" -- the same convention video players use, and
+          legible at 16px without a label beside it.
+        -->
+        <path
+          v-if="isFullscreen"
+          fill="currentColor"
+          d="M3 8h5V3H6v3H3zm13-5v3h3v2h-5V3zM3 16h5v5H6v-3H3zm13 5v-3h3v-2h-5v5z"
+        />
+        <path
+          v-else
+          fill="currentColor"
+          d="M5 5h5V3H3v7h2zm14 0v5h2V3h-7v2zM5 19v-5H3v7h7v-2zm14 0h-5v2h7v-7h-2z"
+        />
       </svg>
-      {{ isFullscreen ? 'Exit fullscreen' : 'Fullscreen' }}
+      <span v-if="!props.compact">{{ isFullscreen ? 'Exit fullscreen' : 'Fullscreen' }}</span>
+      <span v-else :class="tipClass" aria-hidden="true">
+        {{ isFullscreen ? 'Exit fullscreen' : 'Fullscreen' }}
+      </span>
     </button>
 
     <button
       v-if="hasLesion"
       type="button"
-      :class="`${buttonClass} font-bold text-brand hover:bg-brand/10`"
+      :class="`${buttonClass} font-bold text-brand-hover hover:bg-brand/10`"
       :disabled="!props.ready"
+      aria-label="Locate lesion"
       @click="emit('locate')"
     >
       <svg viewBox="0 0 24 24" class="size-4" aria-hidden="true">
@@ -123,7 +178,8 @@ const buttonClass = 'flex min-h-11 items-center gap-1.5 rounded-ctl px-3 text-bo
           d="M12 8a4 4 0 1 0 0 8a4 4 0 0 0 0-8m0-6v3m0 14v3M2 12h3m14 0h3"
         />
       </svg>
-      Locate lesion
+      <span v-if="!props.compact">Locate lesion</span>
+      <span v-else :class="tipClass" aria-hidden="true">Locate lesion</span>
     </button>
 
     <!--
@@ -134,13 +190,17 @@ const buttonClass = 'flex min-h-11 items-center gap-1.5 rounded-ctl px-3 text-bo
       carries `settledSliceIndex`, which changes only when the scrub stops.
       `tabular-nums` is design doc §7.5's own requirement -- without it the
       readout's width jitters as the digits change.
+
+      Compact (three-up, icon-only buttons) drops the "Slice " prefix so
+      three narrow bars can each still fit their own readout.
     -->
     <p
       v-if="hasSlices"
       class="ml-auto text-body-sm tabular-nums opacity-80"
       aria-hidden="true"
     >
-      Slice {{ props.sliceIndex }} / {{ props.sliceMax }}
+      <template v-if="props.compact">{{ props.sliceIndex }} / {{ props.sliceMax }}</template>
+      <template v-else>Slice {{ props.sliceIndex }} / {{ props.sliceMax }}</template>
     </p>
     <span v-if="hasSlices" class="sr-only" role="status" aria-live="polite">
       Slice {{ props.settledSliceIndex }} of {{ props.sliceMax }}

@@ -54,7 +54,20 @@ async function importCopper3d(): Promise<CopperModule> {
   }
 }
 
-export function useCopperStage(host: Ref<HTMLElement | undefined>): StageApi {
+// useCopperStage(host, options)
+export interface StageOptions {
+  /**
+   * Called on every container resize with the host's measured box.
+   *
+   * A mutable hook rather than a constructor argument because its only
+   * caller lives in `useModalityScene`, which is built FROM this stage --
+   * so at the moment `useCopperStage` is called there is nothing to pass.
+   * `CopperStage` assigns it on the next line, before any resize can fire.
+   */
+  onResize?: (box: { width: number, height: number }) => void
+}
+
+export function useCopperStage(host: Ref<HTMLElement | undefined>, options: StageOptions = {}): StageApi {
   const renderer = shallowRef<CopperRenderer>()
   const Copper = shallowRef<CopperModule>()
   const ready = ref(false)
@@ -112,6 +125,21 @@ export function useCopperStage(host: Ref<HTMLElement | undefined>): StageApi {
   let resizeObserver: ResizeObserver | undefined
   /** Set once the input pump below is wired; see its comment. */
   let detachInput: (() => void) | undefined
+
+  /**
+   * The host's current width / height, for `fitToView`'s `fitDistance`.
+   * Measured fresh on every call rather than cached off the ResizeObserver:
+   * `refitCurrentScene` also runs right after a load, on a scene the
+   * observer has not necessarily fired for yet. Returns 1 for a box this
+   * function cannot trust -- not yet laid out, or momentarily 0×0 mid panel
+   * collapse -- rather than 0 or `Infinity`, either of which would corrupt
+   * the camera's projection matrix downstream.
+   */
+  function aspect(): number {
+    const box = host.value?.getBoundingClientRect()
+    if (!box || box.width <= 0 || box.height <= 0) return 1
+    return box.width / box.height
+  }
 
   onMounted(async () => {
     // Belt-and-braces: onMounted itself never runs during SSR (Vue skips
@@ -237,6 +265,12 @@ export function useCopperStage(host: Ref<HTMLElement | undefined>): StageApi {
       // controls at all (see CopperBaseScene).
       ;(current as { controls?: { handleResize?: () => void } }).controls?.handleResize?.()
       renderer.value?.render()
+      // Task 3 (three-up plan): a panel resize is exactly when a scene still
+      // showing its opening framing needs to be refitted -- see fitToView.ts.
+      // `useModalityScene` does not exist yet at the point `useCopperStage`
+      // is constructed (it is built FROM this stage), so this is a mutable
+      // hook rather than a value read once here -- see `StageOptions`.
+      options.onResize?.({ width, height })
     })
     resizeObserver.observe(host.value)
 
@@ -301,5 +335,5 @@ export function useCopperStage(host: Ref<HTMLElement | undefined>): StageApi {
     ready.value = false
   })
 
-  return { renderer, Copper, ready, loadError, requestContinuous, releaseContinuous }
+  return { renderer, Copper, ready, loadError, requestContinuous, releaseContinuous, aspect }
 }

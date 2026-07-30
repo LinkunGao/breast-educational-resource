@@ -1,5 +1,9 @@
 import type { Modality } from '~~/content/types'
 import type { CopperModule, CopperRenderer, CopperScene, CopperViewPoint, NrrdMesh, NrrdSlice, SceneObject, SceneObjectChild, StageApi } from './copper-types'
+import type { FitBounds } from './fitToView'
+import type { SceneBudget } from './sceneBudget'
+import { fitDistance } from './fitToView'
+import { getSceneBudget } from './sceneBudget'
 
 /**
  * GLBs are all <=1.28MB (this app's four `density*.glb` anatomy assets --
@@ -101,7 +105,24 @@ export interface AnatomyMorph {
   commit: () => void
 }
 
-export function useModalityScene(stage: StageApi) {
+/**
+ * A scene's decoded size, for the residency budget.
+ *
+ * NRRD: the volume's own typed array, which is the whole cost -- the slice
+ * plane's canvas texture is one slice, kilobytes against megabytes.
+ * GLB (slice === null): the anatomy models in this catalogue are 617KB to
+ * 1.05MB on disk and decode to a similar order, so a flat estimate is
+ * accurate enough to keep them from being free. Being wrong here changes
+ * eviction order, not correctness.
+ */
+const GLB_ESTIMATED_BYTES = 2 * 1024 * 1024
+
+function sceneBytes(slice: SliceState | null): number {
+  const data = slice?.raw.volume.data as { byteLength?: number } | undefined
+  return data?.byteLength ?? GLB_ESTIMATED_BYTES
+}
+
+export function useModalityScene(stage: StageApi, budget: SceneBudget = getSceneBudget()) {
   const { url } = useAssetUrl()
   /**
    * Where the self-hosted DRACO decoder lives (`public/draco/`), resolved
@@ -170,6 +191,24 @@ export function useModalityScene(stage: StageApi) {
    * last. */
   const viewpointByScene = new Map<string, CopperViewPoint>()
 
+  /** Each scene's object bounds, for `fitDistance`. NRRD gives this
+   *  directly as `volume.RASDimensions`; a GLB is measured with a Box3. */
+  const boundsByScene = new Map<string, FitBounds>()
+  /**
+   * Scenes the reader has moved the camera on.
+   *
+   * A refit on resize is right for a scene still showing its opening
+   * framing and wrong for one the reader has posed -- there, it would
+   * yank the view back every time a panel collapsed. `CopperStage` marks
+   * this from every input that actually moves the camera: `pointerdown`/
+   * `wheel` (`onUserInput`) and the arrow-key orbit/`+`/`-` zoom keyboard
+   * equivalents (`onStageKeydown`) -- the keyboard path matters on its own,
+   * not just as a fallback: a keyboard-only reader has no other way to pose
+   * the camera at all, so missing it there silently discarded exactly that
+   * reader's view on the next panel resize. `Reset view` clears it.
+   */
+  const posedScenes = new Set<string>()
+
   /**
    * Which anatomy GLB each scene currently DISPLAYS -- not which one its
    * name says it should. §7.1's density morph deliberately swaps the model
@@ -199,60 +238,8 @@ export function useModalityScene(stage: StageApi) {
    */
   const morphingScenes = new Set<CopperScene>()
 
-  /**
-   * Scene names in least-recently-activated order. Mirrors the subset of
-   * copper3d's `sceneMap` this composable created, so the LRU below has an
-   * order to evict in -- `sceneMap` is a plain object with no ordering
-   * guarantee worth relying on.
-   *
-   * Deliberately NOT the source of truth for which scenes are resident (see
-   * `residentScenes`): a name only lands here via `touchScene`, which is
-   * (correctly) gated behind the load token so a superseded load can never
-   * jump the queue ahead of the scene the user is actually looking at, or
-   * evict it out from under them. Every name here is also in
-   * `residentScenes`, but not the reverse.
-   */
-  const recentScenes: string[] = []
-
-  /**
-   * Scene names that genuinely hold built content and are registered in
-   * copper3d's `sceneMap` -- i.e. everything the residency cap must count,
-   * whether or not the user ever actually looked at it.
-   *
-   * Finding 1 (code review, Important): `load()`'s unconditional bookkeeping
-   * (`sliceStateByScene.set`/`nameOfScene.set`, right below) runs even for a
-   * superseded-but-successful load, on purpose -- review fix #3 already
-   * established that leaving it half-built would poison the cache when the
-   * user steps back to it. But `touchScene` is the only thing that used to
-   * add a name to `recentScenes`, and it is (correctly) skipped for a
-   * superseded load. That left such a scene fully built, holding a decoded
-   * volume, yet invisible to `evictOverflow`'s `recentScenes.length` check --
-   * permanently unevictable. Rapid modality-stepping during slow NRRD
-   * downloads (up to 53MB) hits this on every step that loses its race.
-   *
-   * Added to unconditionally, in lockstep with the bookkeeping above; removed
-   * by `evictScene` and renamed by `adoptSceneName`, exactly like
-   * `sliceStateByScene`.
-   */
-  const residentScenes = new Set<string>()
-
-  /**
-   * How many built scenes may stay resident.
-   *
-   * Before fix round 1 this needed no cap: `app.vue` keyed the case page by
-   * slug, so leaving a case tore the whole renderer down, and a single case
-   * offers at most three modalities. §7.1's crossfade needs the outgoing
-   * model, its scene and its renderer to survive a CASE navigation, so the
-   * five morph-family cases now share one page instance (app/utils/pageKey.ts)
-   * -- and with it this cache. Three keeps residency at exactly the figure
-   * the paragraph in `load()` below already reasoned about, which matters
-   * because the family's imaging volumes decode to considerably more than
-   * the 167MB they occupy compressed on disk.
-   *
-   * Anatomy costs nothing extra either way: a morph loads its model into
-   * the scene already on screen and creates none.
-   */
-  const MAX_CACHED_SCENES = 3
+  // How many built scenes may stay resident, and which ones to evict first:
+  // see sceneBudget.ts.
 
   /** Bumped on every `load()` call. Guards against a stale async result
    * (a slow network response, or a timeout/stall) landing after the user
@@ -260,6 +247,11 @@ export function useModalityScene(stage: StageApi) {
    * `loading`/`sliceState`/`loadError` with data for a scene that is no
    * longer current. */
   let loadToken = 0
+
+  /** The scene this stage is currently showing, pinned in the budget so it
+   *  can never be evicted out from under the reader -- see `touchScene` and
+   *  `onScopeDispose`. */
+  let pinnedName: string | undefined
 
   /** Set once this composable's owning scope (CopperStage's component
    * instance) is disposed -- e.g. case navigation. Mirrors useCopperStage's
@@ -289,11 +281,33 @@ export function useModalityScene(stage: StageApi) {
     scene.value = next
   }
 
-  /** Scenes are namespaced `${slug}:${modalityId}` so two cases can never
-   * collide, and switching modalities within one case can find its own
-   * previously-built scene back. */
+  /**
+   * A scene is identified by the ASSET it displays, not by the case that
+   * happens to be showing it.
+   *
+   * This used to be `${slug}:${modality.id}`, which quietly decoded the
+   * same file more than once. `the-breast` and `density-a` ship the same
+   * three files (`density-1/left/density25.glb`,
+   * `density-1/middle/m3d.nrrd`, `density-1/right/mri.nrrd`), so stepping
+   * between them built a second scene per modality and paid for a second
+   * copy of a 21MB volume -- which is what the human saw: "The Breast 页面
+   * 和 density-A 页面他们就是完全一样的内容，直接复用就行了，为何要反复
+   * 渲染？！". The same waste applied five times over to the lesion cases,
+   * which all borrow `density-3/left/density75.glb` for their anatomy.
+   *
+   * `slug` stays in the signature because every call site has it and the
+   * pairing reads correctly; it just does not contribute to identity.
+   *
+   * Two consequences worth knowing:
+   *  - The residency budget now counts each distinct file once, which is
+   *    what it was always trying to measure.
+   *  - `prepareMorph` already declined to crossfade a model against its own
+   *    twin by comparing asset URLs (controller correction C12); with names
+   *    derived from the same URL, `adoptSceneName` is a no-op in exactly
+   *    that case rather than a rename between two names for one file.
+   */
   function sceneName(slug: string, modality: Modality) {
-    return `${slug}:${modality.id}`
+    return url(modality.asset)
   }
 
   /**
@@ -342,9 +356,9 @@ export function useModalityScene(stage: StageApi) {
     evictFromSceneMap(renderer, name)
     sliceStateByScene.delete(name)
     viewpointByScene.delete(name)
-    residentScenes.delete(name)
-    const position = recentScenes.indexOf(name)
-    if (position !== -1) recentScenes.splice(position, 1)
+    boundsByScene.delete(name)
+    posedScenes.delete(name)
+    budget.release(name)
     if (!victim) return
 
     anatomyAssetByScene.delete(victim)
@@ -370,54 +384,22 @@ export function useModalityScene(stage: StageApi) {
     }
   }
 
-  /**
-   * Picks the next eviction victim out of `residentScenes`, never
-   * `currentName`.
-   *
-   * A resident that was never actually activated -- a superseded load's
-   * leftover (finding 1) -- is preferred first: the user never saw it, so
-   * there is nothing to protect by keeping it over a scene that has
-   * genuinely been on screen. `recentScenes` gives true LRU order for
-   * everything else.
-   */
-  function pickEvictionVictim(currentName: string): string | undefined {
-    for (const name of residentScenes) {
-      if (name !== currentName && !recentScenes.includes(name)) return name
-    }
-    return recentScenes.find(name => name !== currentName)
-  }
-
-  /**
-   * Caps residency at `MAX_CACHED_SCENES`, evicting least-recently-activated
-   * first and never the scene on screen.
-   *
-   * Counts `residentScenes`, not `recentScenes.length` (finding 1): a scene
-   * a superseded load finished building is resident -- it holds a decoded
-   * volume and must count against the cap -- even though it was never
-   * touched.
-   */
-  function evictOverflow(renderer: CopperRenderer, currentName: string) {
-    while (residentScenes.size > MAX_CACHED_SCENES) {
-      const victim = pickEvictionVictim(currentName)
-      // Only the current scene is left. Nothing evictable, and evicting it
-      // would blank the stage.
-      if (victim === undefined) return
-      evictScene(renderer, victim)
-    }
-  }
-
-  /** Records `name` as the most recently activated scene and applies the
-   * cap. Called only once a scene genuinely holds content AND is the one
-   * the user is actually looking at -- a failed load is evicted by
-   * `load()`'s own catch instead, and a superseded load's own success is
-   * registered as a resident directly in `load()`, never through here (see
-   * `residentScenes`). */
+  /** Records `name` as most-recently-used and applies the budget. Called
+   *  only once a scene genuinely holds content AND is the one the user is
+   *  actually looking at -- a failed load is evicted by `load()`'s own
+   *  catch instead, and a superseded load registers itself in `load()`
+   *  without touching the queue. */
   function touchScene(renderer: CopperRenderer, scene: CopperScene, name: string) {
     nameOfScene.set(scene, name)
-    const position = recentScenes.indexOf(name)
-    if (position !== -1) recentScenes.splice(position, 1)
-    recentScenes.push(name)
-    evictOverflow(renderer, name)
+    budget.touch(name)
+    // Whatever this stage is showing is off limits: three-up has up to
+    // three of these composables live at once, and evicting a visible
+    // scene to satisfy a soft byte budget would blank a panel the reader
+    // is looking at.
+    if (pinnedName && pinnedName !== name) budget.unpin(pinnedName)
+    pinnedName = name
+    budget.pin(name)
+    for (const victim of budget.overflow()) evictScene(renderer, victim)
   }
 
   /**
@@ -454,9 +436,26 @@ export function useModalityScene(stage: StageApi) {
         viewpointByScene.set(nextName, preset)
         viewpointByScene.delete(currentName)
       }
-      residentScenes.delete(currentName)
-      const position = recentScenes.indexOf(currentName)
-      if (position !== -1) recentScenes.splice(position, 1)
+      const bounds = boundsByScene.get(currentName)
+      if (bounds !== undefined) {
+        boundsByScene.set(nextName, bounds)
+        boundsByScene.delete(currentName)
+      }
+      if (posedScenes.has(currentName)) {
+        posedScenes.delete(currentName)
+        posedScenes.add(nextName)
+      }
+      // Carries the budget's bytes, queue position and pin state across --
+      // the morphed scene held content (and, if on screen, the pin) under
+      // `currentName` a moment ago, and holds content now too.
+      budget.rename(currentName, nextName)
+      if (pinnedName === currentName) pinnedName = nextName
+    }
+    else {
+      // No previous name: this scene was never registered in the budget at
+      // all (unreachable in practice -- a morph target always has one --
+      // but kept so the scene is still counted rather than silently free).
+      budget.register(nextName, GLB_ESTIMATED_BYTES)
     }
 
     renderer.sceneMap[nextName] = target
@@ -465,11 +464,75 @@ export function useModalityScene(stage: StageApi) {
     // reader of `scene.sceneName` disagree with the map it is keyed in.
     target.sceneName = nextName
     nameOfScene.set(target, nextName)
-    // The morphed scene is unconditionally resident under its new name --
-    // it held content under `currentName` a moment ago, so it holds content
-    // now too (finding 1's `residentScenes`).
-    residentScenes.add(nextName)
-    recentScenes.push(nextName)
+  }
+
+  /**
+   * Moves the current scene's camera along its existing view direction to
+   * the distance that frames the object, and renders.
+   *
+   * No-op on a scene the reader has posed: see `posedScenes`.
+   */
+  function refitCurrentScene(aspect: number) {
+    const target = scene.value
+    const renderer = stage.renderer.value
+    const name = target ? nameOfScene.get(target) : undefined
+    if (!target || !renderer || !name || posedScenes.has(name)) return
+
+    const bounds = boundsByScene.get(name)
+    const preset = viewpointByScene.get(name)
+    if (!bounds || !preset) return
+
+    const [px, py, pz] = preset.targetPosition
+    const [ex, ey, ez] = preset.eyePosition
+    const dx = ex - px
+    const dy = ey - py
+    const dz = ez - pz
+    const length = Math.hypot(dx, dy, dz)
+    // A preset whose eye sits exactly on its target has no direction to
+    // preserve; leave it to `loadView`'s own result rather than guessing one.
+    if (length === 0) return
+
+    /**
+     * Aim at the object's own centre, not at the preset's target.
+     *
+     * The presets all target the origin, which is right for the NRRD
+     * volumes -- `RASDimensions` describes a box centred there. A GLB is
+     * not: `density25.glb`'s bounding box sits well off the origin, so
+     * framing from the origin pushed half the model out of frame, and
+     * narrowing a panel made it obvious -- the human's screenshot showed
+     * the anatomy model clipped against the left edge of its own cell.
+     *
+     * `centre` is [0,0,0] for imaging scenes, so this is a no-op there and
+     * the imaging framing is unchanged.
+     */
+    const [cx, cy, cz] = bounds.center
+    const tx = px + cx
+    const ty = py + cy
+    const tz = pz + cz
+
+    const distance = fitDistance(bounds, aspect, target.camera.fov)
+    target.camera.position.set(
+      tx + (dx / length) * distance,
+      ty + (dy / length) * distance,
+      tz + (dz / length) * distance,
+    )
+    target.camera.lookAt(tx, ty, tz)
+    // TrackballControls orbits around `target`; leaving it at the preset's
+    // origin would make the first drag swing the model out of frame again.
+    target.controls.target?.set?.(tx, ty, tz)
+    target.camera.updateProjectionMatrix()
+    target.controls.handleResize?.()
+    renderer.render()
+  }
+
+  /** Called by `CopperStage` on the first real user gesture, and undone by
+   *  `Reset view`. */
+  function markPosed(posed: boolean) {
+    const target = scene.value
+    const name = target ? nameOfScene.get(target) : undefined
+    if (!name) return
+    if (posed) posedScenes.add(name)
+    else posedScenes.delete(name)
   }
 
   async function load(slug: string, modality: Modality) {
@@ -488,16 +551,14 @@ export function useModalityScene(stage: StageApi) {
     // volumes decode to raw typed arrays larger still than that compressed
     // size. The bandwidth this saves on the modality stepper's
     // back-and-forth navigation outweighs that, but it is a real tradeoff,
-    // not a free one -- which is why `MAX_CACHED_SCENES` caps it.
+    // not a free one -- which is why `budget` (sceneBudget.ts) caps it.
     //
-    // Before fix round 1 the cap was structural: `app.vue` keyed the case
-    // page by slug, so leaving a case unmounted CopperStage and
+    // Before fix round 1 residency was bounded structurally: every case had
+    // its own page key, so leaving it unmounted CopperStage and
     // `useCopperStage`'s dispose() tore the whole renderer down, GPU
-    // context included, and no case offers more than three modalities. §7.1
-    // needs the renderer to survive a case navigation within the morph
-    // family (app/utils/pageKey.ts), so that structural bound is gone for
-    // those five cases and `evictOverflow` replaces it with the same
-    // number.
+    // context included. Every case now shares one page instance
+    // (app/utils/pageKey.ts), so that structural bound is gone entirely and
+    // the byte budget replaces it.
     const existing = renderer.getSceneByName(name)
     if (existing) {
       activateScene(renderer, existing)
@@ -506,6 +567,7 @@ export function useModalityScene(stage: StageApi) {
       loading.value = false
       progress.value = 1
       touchScene(renderer, existing, name)
+      refitCurrentScene(stage.aspect())
       renderer.render()
       return
     }
@@ -551,8 +613,8 @@ export function useModalityScene(stage: StageApi) {
       next.controls.panSpeed = modality.id === 'anatomy' ? 0.2 : 0.5
 
       const slice = modality.id === 'anatomy'
-        ? await loadAnatomy(next, url(modality.asset))
-        : await loadImaging(next, Copper, modality, url(modality.asset), token)
+        ? await loadAnatomy(next, url(modality.asset), name)
+        : await loadImaging(next, Copper, modality, url(modality.asset), token, name)
 
       if (disposed) return // torn down mid-load; nothing left to update
 
@@ -568,17 +630,24 @@ export function useModalityScene(stage: StageApi) {
       nameOfScene.set(next, name)
       // Unconditional for the same reason, and just as load-bearing
       // (finding 1): this scene now holds real content and must count
-      // against `MAX_CACHED_SCENES` even though a superseded load never
-      // reaches `touchScene` below to register it there itself. Without
-      // this, a scene a superseded load finished building sat in
-      // copper3d's `sceneMap` forever, invisible to `evictOverflow`.
-      residentScenes.add(name)
+      // against the budget even though a superseded load never reaches
+      // `touchScene` below to register it there itself. Without this, a
+      // scene a superseded load finished building sat in copper3d's
+      // `sceneMap` forever, invisible to the budget's overflow check.
+      budget.register(name, sceneBytes(slice))
       // Named `preset`, not `viewpoint`, to avoid shadowing the outer
       // `viewpoint` ref this composable exposes.
       const preset = await fetchViewPoint(url(modality.viewPreset))
       if (disposed) return
       next.loadView(preset)
       viewpointByScene.set(name, preset)
+      // Frames whatever scene is genuinely on screen right now, not
+      // necessarily `next`: if a later load has already superseded this one,
+      // `scene.value` already points at ITS scene (its own `activateScene`
+      // ran before this `await`), and `refitCurrentScene` reads bounds/preset
+      // back off `scene.value`'s own name -- so this is correct either way,
+      // not just for the common case.
+      refitCurrentScene(stage.aspect())
 
       if (token !== loadToken) return // superseded by a later load() call
 
@@ -654,10 +723,36 @@ export function useModalityScene(stage: StageApi) {
     }
   }
 
-  async function loadAnatomy(target: CopperScene, assetUrl: string): Promise<null> {
+  async function loadAnatomy(target: CopperScene, assetUrl: string, name: string): Promise<null> {
     const group = await loadGlb(target, assetUrl)
     group.name = 'anatomy-model'
     anatomyAssetByScene.set(target, assetUrl)
+    const { Box3, Vector3 } = await import('three')
+    try {
+      // `Box3.setFromObject` walks real `Object3D` machinery
+      // (`updateWorldMatrix`, `matrixWorld`, ...) that only a genuine
+      // GLTFLoader group has -- which is all `loadGlb` ever hands this in
+      // production. Guarded anyway: a measurement failing must degrade to
+      // "no auto-fit for this scene" (the model still displays, at the
+      // preset's own unmodified distance), not fail a load that has already
+      // successfully added its content to the scene.
+      const box = new Box3().setFromObject(group as never)
+      const size = box.getSize(new Vector3())
+      // The centre matters as much as the size here: a GLB's box is not
+      // centred on the origin the presets target, so framing from the
+      // origin leaves part of the model outside the frame -- visible as
+      // soon as a panel narrows. See `refitCurrentScene`.
+      const centre = box.getCenter(new Vector3())
+      boundsByScene.set(name, {
+        width: size.x,
+        height: size.y,
+        depth: size.z,
+        center: [centre.x, centre.y, centre.z],
+      })
+    }
+    catch {
+      boundsByScene.delete(name)
+    }
     return null
   }
 
@@ -752,6 +847,7 @@ export function useModalityScene(stage: StageApi) {
     modality: Modality,
     assetUrl: string,
     token: number,
+    name: string,
   ): Promise<SliceState | null> {
     return new Promise((resolve, reject) => {
       const bar = Copper.loading()
@@ -862,6 +958,18 @@ export function useModalityScene(stage: StageApi) {
             void installFastSliceRepaint(slices.z)
             slices.z.repaint.call(slices.z)
 
+            const [rx, ry, rz] = volume.RASDimensions
+            // `RASDimensions` describes a box centred on the origin, which
+            // is exactly what every `*_view.json` preset targets -- so the
+            // centre offset is zero here and the imaging framing is
+            // unaffected by the GLB centring fix.
+            boundsByScene.set(name, {
+              width: rx ?? 0,
+              height: ry ?? 0,
+              depth: rz ?? 0,
+              center: [0, 0, 0],
+            })
+
             if (flat) {
               // The same two properties the legacy 2D views set
               // (frontend/components/model/Model.vue:268-269). They work now
@@ -908,9 +1016,10 @@ export function useModalityScene(stage: StageApi) {
 
   onScopeDispose(() => {
     disposed = true
+    if (pinnedName) budget.unpin(pinnedName)
   })
 
-  return { scene, loading, progress, sliceState, loadError, viewpoint, load, prepareMorph }
+  return { scene, loading, progress, sliceState, loadError, viewpoint, load, prepareMorph, refitCurrentScene, markPosed }
 }
 
 /** One mesh material enrolled in a crossfade, together with the appearance
@@ -1046,6 +1155,20 @@ async function tintFatLayer(group: SceneObject): Promise<void> {
       transparent: true,
       opacity: 0.4,
       color: FAT_LAYER_COLOR,
+      /**
+       * LOAD-BEARING. A transparent surface that still writes depth occludes
+       * whatever is drawn behind it, and three draws the opaque lobes BEFORE
+       * the transparent shell -- so the shell's depth writes decided, per
+       * pixel and per draw order, which lobes composited correctly and which
+       * did not. The visible result was that some lobes read pink and others
+       * read a muddy yellow, with nothing in the geometry to explain it:
+       * removing the fat shell shows every lobe is the same pink `#bb6666`.
+       *
+       * `setFade` below already suppresses `depthWrite` for the crossfade and
+       * says why. The same reason applies to the shell's resting state, which
+       * is transparent all the time.
+       */
+      depthWrite: false,
     }) as unknown as SceneObjectChild['material']
   }
   // The GLB's own material (and its textures) are now unreferenced. copper3d

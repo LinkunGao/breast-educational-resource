@@ -31,9 +31,7 @@ function mountLayout(slots: Record<string, string> = {}) {
 function mountLayoutWithAllRegions() {
   return mountLayout({
     heading: '<div class="heading-marker">heading</div>',
-    stepper: '<div class="stepper-marker">stepper</div>',
     stage: '<div class="stage-marker">stage</div>',
-    controls: '<div class="controls-marker">controls</div>',
     content: '<div class="content-marker">content</div>',
     prevnext: '<div class="prevnext-marker">prevnext</div>',
   })
@@ -50,32 +48,34 @@ describe('default layout', () => {
     expect(wrapper.find('.content-marker').exists()).toBe(true)
   })
 
-  it('lays out all six design doc §10.3 regions in the phone order: heading, stepper, stage, controls, content, prev/next', () => {
+  it('lays out the four regions in the phone order: heading, stage, content, prev/next', () => {
     // This is the order a single (phone-tier) column stacks in DOM order,
     // and also the order xl+'s flex-row split reads within each of its two
     // columns -- one nesting produces the right order at every tier, with
     // no CSS `order` reshuffling to separately verify.
+    //
+    // Neither `stepper` nor `controls` is a layout region any more. Both
+    // now arrive inside `stage`: the slot strip is one-up-only chrome that
+    // has to sit next to the layout decision hiding it at three-up, and
+    // each panel renders its own control bar. Their position relative to
+    // `content` is still fixed by this same nesting.
     const wrapper = mountLayoutWithAllRegions()
-    const markers = ['heading-marker', 'stepper-marker', 'stage-marker', 'controls-marker', 'content-marker', 'prevnext-marker']
+    const markers = ['heading-marker', 'stage-marker', 'content-marker', 'prevnext-marker']
     const html = wrapper.html()
     const positions = markers.map(m => html.indexOf(m))
     expect(positions.every(p => p !== -1)).toBe(true)
     expect(positions).toEqual([...positions].sort((a, b) => a - b))
   })
 
-  it('falls back to a clearly-marked Task 6/7 placeholder for every region the page has not filled yet', () => {
-    // Only stage/content are filled (as the real case page does today);
-    // heading/stepper/controls/prevnext should still render something,
-    // named for whichever future task owns it, in the correct position.
+  it('renders nothing at all for a region the page has not filled', () => {
+    // These slots used to carry "Placeholder: case heading (Task 6)" text as
+    // their fallback, and that text shipped to production and was the first
+    // thing the human asked about. An unfilled slot is now empty; the test
+    // that pinned the placeholders is gone with them, replaced by one that
+    // pins their absence.
     const wrapper = mountLayout()
-    for (const [slotName, owner] of [
-      ['case heading', 'Task 6'],
-      ['modality stepper', 'Task 6'],
-      ['control bar', 'Task 7'],
-      ['prev/next case navigation', 'Task 6'],
-    ] as const) {
-      expect(wrapper.text()).toMatch(new RegExp(`Placeholder: ${slotName} \\(${owner}\\)`))
-    }
+    expect(wrapper.text()).not.toMatch(/Placeholder/i)
+    expect(wrapper.text()).not.toMatch(/Task \d/)
   })
 
   it('starts with the drawer closed, so a narrow first load is not covered by it', () => {

@@ -2,7 +2,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { extractLegacyCopy } from '../../scripts/lib/extract-copy.mjs'
-import { cases, enabledCases, getCase, getModality, isMorphFamilyGroup, lesionSliceIndexFor } from '../content/cases'
+import { cases, enabledCases, getCase, getModality, getPanel, isMorphFamilyGroup, lesionSliceIndexFor, panelIdOf } from '../content/cases'
 import type { ModalityId } from '../content/types'
 
 /** Re-extract the source copy independently of copy.generated.ts, so the
@@ -72,11 +72,15 @@ describe('modality sequences match the asset audit (design doc §4.3)', () => {
     'density-b': ['anatomy', 'mammogram', 'mri'],
     'density-c': ['anatomy', 'mammogram', 'mri'],
     'density-d': ['anatomy', 'mammogram', 'mri'],
-    'benign-cyst': ['mammogram', 'ultrasound', 'mri'],
-    'benign-fibroadenoma': ['mammogram', 'mri'],
-    'cancer-dcis': ['mammogram', 'mri'],
-    'cancer-lobular': ['mammogram', 'mri'],
-    'cancer-ductal': ['mammogram', 'mri'],
+    // The five lesion cases gained an anatomy modality (client feedback
+    // item 2): they borrow density-3's model, which is what the client
+    // asked for, and their anatomy copy has existed in anatomyText since
+    // the extraction -- the legacy app's left panel showed it.
+    'benign-cyst': ['anatomy', 'mammogram', 'ultrasound', 'mri'],
+    'benign-fibroadenoma': ['anatomy', 'mammogram', 'mri'],
+    'cancer-dcis': ['anatomy', 'mammogram', 'mri'],
+    'cancer-lobular': ['anatomy', 'mammogram', 'mri'],
+    'cancer-ductal': ['anatomy', 'mammogram', 'mri'],
   }
 
   for (const [slug, ids] of Object.entries(expected)) {
@@ -99,17 +103,35 @@ describe('placeholder assets are never referenced (design doc §3.1)', () => {
   })
 })
 
-describe('no benign or cancer case claims an anatomy modality', () => {
-  for (const c of cases.filter(c => c.group === 'benign' || c.group === 'cancer')) {
-    it(`${c.slug} has no anatomy modality`, () => {
-      expect(c.modalities.some(m => m.id === 'anatomy')).toBe(false)
-    })
-  }
-})
+/**
+ * Client feedback item 3: "I think we can remove BIRADS".
+ *
+ * Removing only the header badge would leave the sidebar showing four bare
+ * letters, which ARE the BI-RADS grades and say nothing without the label.
+ * The nav titles carry the word instead. `heading` is untouched -- it was
+ * never a BI-RADS string.
+ */
+describe('BI-RADS is gone from the content model', () => {
+  it('no case carries a biRads or referenceDensity field', () => {
+    for (const c of cases) {
+      expect(c).not.toHaveProperty('biRads')
+      expect(c).not.toHaveProperty('referenceDensity')
+    }
+  })
 
-describe('borrowed anatomy models are declared', () => {
-  it('the-breast declares it borrows density A assets', () => {
-    expect(getCase('the-breast')?.referenceDensity).toBe('A')
+  it('the density series is titled Density A..D in navigation', () => {
+    expect(['density-a', 'density-b', 'density-c', 'density-d'].map(s => getCase(s)!.title))
+      .toEqual(['Density A', 'Density B', 'Density C', 'Density D'])
+  })
+
+  it('the density headings are untouched', () => {
+    expect(['density-a', 'density-b', 'density-c', 'density-d'].map(s => getCase(s)!.heading))
+      .toEqual([
+        'Almost entirely fat',
+        'Scattered fibroglandular densities',
+        'Heterogeneously dense',
+        'Extremely dense',
+      ])
   })
 })
 
@@ -230,7 +252,7 @@ describe('lookup helpers', () => {
   })
 
   it('getModality returns undefined for a modality the case lacks', () => {
-    expect(getModality('cancer-dcis', 'anatomy')).toBeUndefined()
+    expect(getModality('cancer-dcis', 'ultrasound')).toBeUndefined()
   })
 })
 
@@ -253,5 +275,86 @@ describe('morph family membership', () => {
     for (const c of enabledCases().filter(c => c.group === 'benign' || c.group === 'cancer')) {
       expect(isMorphFamilyGroup(c.group)).toBe(false)
     }
+  })
+})
+
+/**
+ * Client feedback item 6's foundation. The slots mirror the asset layout
+ * (`left/ middle/ right/`) and the legacy app's three text tables. Only
+ * the middle slot ever holds two modalities, and only for benign-cyst --
+ * the one case with a `u2d.nrrd`.
+ */
+describe('panel slots', () => {
+  it('every enabled case has exactly the three slots, in order', () => {
+    for (const c of enabledCases()) {
+      expect(c.panels.map(p => p.id)).toEqual(['anatomy', 'mammogram', 'mri'])
+    }
+  })
+
+  it('modalities is exactly panels flattened -- the two must never drift', () => {
+    for (const c of cases) {
+      expect(c.modalities).toEqual(c.panels.flatMap(p => p.modalities))
+    }
+  })
+
+  it('every slot holds at least one modality', () => {
+    for (const c of enabledCases()) {
+      for (const p of c.panels) {
+        expect(p.modalities.length).toBeGreaterThan(0)
+      }
+    }
+  })
+
+  it('only benign-cyst has a two-modality slot, and it is the middle one', () => {
+    for (const c of enabledCases()) {
+      const multi = c.panels.filter(p => p.modalities.length > 1)
+      if (c.slug === 'benign-cyst') {
+        expect(multi.map(p => p.id)).toEqual(['mammogram'])
+      }
+      else {
+        expect(multi).toEqual([])
+      }
+    }
+  })
+
+  it('the 3D modality is the default variant of the mammogram slot', () => {
+    const middle = getPanel(getCase('benign-cyst')!, 'mammogram')!
+    expect(middle.modalities.map(m => m.id)).toEqual(['mammogram', 'ultrasound'])
+    expect(middle.modalities[0]!.label).toBe('3D Mammogram')
+  })
+
+  it('panelIdOf maps every modality back to the slot that holds it', () => {
+    for (const c of enabledCases()) {
+      for (const p of c.panels) {
+        for (const m of p.modalities) {
+          expect(panelIdOf(c, m.id)).toBe(p.id)
+        }
+      }
+    }
+  })
+
+  it('panelIdOf returns undefined for a modality the case does not have', () => {
+    expect(panelIdOf(getCase('cancer-dcis')!, 'ultrasound')).toBeUndefined()
+  })
+})
+
+/** Client feedback item 2, stated as its own contract. */
+describe('the lesion cases borrow density-3\'s anatomy model', () => {
+  const lesionSlugs = [
+    'benign-cyst', 'benign-fibroadenoma', 'cancer-dcis', 'cancer-lobular', 'cancer-ductal',
+  ]
+
+  for (const slug of lesionSlugs) {
+    it(`${slug} has an anatomy modality pointing at density75.glb`, () => {
+      const anatomy = getModality(slug, 'anatomy')
+      expect(anatomy).toBeDefined()
+      expect(anatomy!.asset).toBe('density-3/left/density75.glb')
+      expect(anatomy!.viewPreset).toBe('left_breast_view.json')
+    })
+  }
+
+  it('all five point at the same asset, so the file is shipped once', () => {
+    const assets = new Set(lesionSlugs.map(s => getModality(s, 'anatomy')!.asset))
+    expect(assets.size).toBe(1)
   })
 })

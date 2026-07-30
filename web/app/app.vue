@@ -31,4 +31,13 @@ function pageKey(route: RouteLocationNormalizedLoaded) {
 
 <template>
   <NuxtPage :page-key="pageKey" />
+  <!--
+    Client feedback item 1. `@vite-pwa/nuxt` registers this component
+    globally but does not render it anywhere on its own -- without it here,
+    no `<link rel="manifest">` is ever emitted, in dev OR in the prerendered
+    build, even though `manifest.webmanifest` itself is generated and
+    correctly configured. It renders nothing visible; it only calls
+    `useHead` to add the one link tag.
+  -->
+  <VitePwaManifest />
 </template>
