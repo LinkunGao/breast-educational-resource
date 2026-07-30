@@ -1,6 +1,7 @@
 import { computed, inject, nextTick, onMounted, onScopeDispose, provide, reactive, ref, shallowRef, watch, watchEffect } from 'vue'
 import { vi } from 'vitest'
 import { installTrackballControls } from '../app/composables/installTrackballControls'
+import { usePrefetchNextModality } from '../app/composables/usePrefetchNextModality'
 import { useAssetUrl } from '../app/composables/useAssetUrl'
 import { provideStageControls, useStageControls } from '../app/composables/useStageControls'
 import { useViewerStore } from '../app/stores/viewer'
@@ -51,3 +52,7 @@ vi.stubGlobal('installTrackballControls', installTrackballControls)
 // A test that wants to assert on either can stub its own over the top.
 vi.stubGlobal('installFastSliceRepaint', vi.fn(async () => {}))
 vi.stubGlobal('addVolumeBoundingBox', vi.fn(async () => {}))
+// The case page mounts §9.2's prefetch. The real one: it guards itself on
+// `navigator.connection` and on the stage being ready, and a component test
+// that never gets there simply never fetches.
+vi.stubGlobal('usePrefetchNextModality', usePrefetchNextModality)

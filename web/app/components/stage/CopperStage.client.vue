@@ -306,8 +306,23 @@ if (stageControls) {
     stageControls.sliceMax.value = slice.max.value
     stageControls.settledSliceIndex.value = slice.settledIndex.value
   })
-  onMounted(() => {
-    stageControls.actions.value = { reset: onReset, locateLesion: onLocate }
+  /**
+   * Published only once the actions can DO something.
+   *
+   * This used to run in `onMounted`, before the async renderer build. The
+   * control bar takes `ready` from whether `actions` is set, so Reset and
+   * Locate rendered enabled and silently did nothing through a 53MB NRRD
+   * download -- a control that looks available and no-ops is a worse failure
+   * than a disabled one, and it contradicted StageControls' own prop
+   * documentation.
+   *
+   * `isHealthy()` is the same gate both actions check internally, so the
+   * enabled state and the actions' own guards can no longer disagree.
+   */
+  watchEffect(() => {
+    stageControls.actions.value = isHealthy()
+      ? { reset: onReset, locateLesion: onLocate }
+      : null
   })
   onScopeDispose(() => {
     stageControls.actions.value = null
@@ -322,13 +337,29 @@ defineExpose({ stage, modalityScene, host, camera, slice })
     class="relative flex-1 bg-linear-to-b from-surface-sunken to-bg"
   >
     <!--
-      `tabindex="0"` is back, together with the handlers Task 7 said to wait
-      for (controller correction C10). The focus outline is drawn INSIDE the
-      box: the stage is `absolute inset-0` inside a column that scrolls and
-      clips, so the default +2px offset would put the ring outside the
-      stage's own bounds where it can be cut off. `--color-brand` on the
-      stage background measures 3.72:1, clear of §11's 3:1 non-text floor
-      (asserted in test/nav-contrast.test.ts).
+      `role="application"`, NOT `role="img"`.
+
+      This element advertises arrow-key rotation through
+      `aria-describedby`, and with `role="img"` that was a lie: NVDA and JAWS
+      are in browse mode over an image and consume the arrow keys themselves,
+      so the keys never reached `onStageKeydown`. `application` is the
+      documented escape hatch for a widget that handles its own keys, and it
+      costs nothing here -- the only thing inside is a canvas, so there is no
+      readable content for browse mode to have been useful on. The name and
+      the key help both still come through, because `aria-label` and
+      `aria-describedby` are unaffected by the role.
+
+      The focus ring is drawn with an inset double box-shadow rather than an
+      outline, and that is a contrast fix, not a stylistic one. The stage is
+      `absolute inset-0` inside a column that scrolls and clips, so an
+      outward ring gets cut off -- but the inward `-outline-offset-2` it used
+      instead put the brand ring straight onto canvas pixels, where its
+      contrast depends on whatever the model happens to be showing and cannot
+      be guaranteed at all. The inner shadow pairs the brand ring with a 2px
+      surface-coloured ring just outside it, so it always sits against a
+      known colour: 4.95:1 on `--color-surface`, comfortably over §11's 3:1
+      non-text floor, whatever is rendered underneath. Pinned in
+      test/nav-contrast.test.ts.
 
       Always mounted, never behind a v-if (a bug fixed while wiring Task 8):
       useCopperStage builds its one WebGLRenderer against whatever DOM node
@@ -342,9 +373,9 @@ defineExpose({ stage, modalityScene, host, camera, slice })
     -->
     <div
       ref="host"
-      class="absolute inset-0 focus-visible:outline-2 focus-visible:outline-brand
-             focus-visible:-outline-offset-2"
-      role="img"
+      class="absolute inset-0 focus-visible:outline-none
+             focus-visible:shadow-[inset_0_0_0_2px_var(--color-brand),inset_0_0_0_4px_var(--color-surface)]"
+      role="application"
       tabindex="0"
       :aria-label="`${props.modality.label} viewer`"
       aria-describedby="stage-keyboard-help"

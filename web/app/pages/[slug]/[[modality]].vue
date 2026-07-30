@@ -43,7 +43,7 @@ watchEffect(() => {
 })
 
 useHead(() => ({
-  title: `${current.value!.heading} — ${modality.value.label} — Te Uma`,
+  title: `${current.value!.heading} — ${modality.value.label} — Breast Educational Resource`,
 }))
 
 /**
@@ -62,6 +62,22 @@ const stageControls = provideStageControls()
  * gate rather than a presentational one.
  */
 const lesionSliceIndex = computed(() => lesionSliceIndexFor(current.value!, modalityId.value))
+
+/**
+ * §9.2's prefetch, mounted HERE rather than inside CopperStage (controller
+ * correction C2): it needs the case's modality LIST to know what comes next,
+ * and the stage is deliberately not given the whole `Case`.
+ *
+ * Gated on the control bar becoming ready, which is this app's signal that
+ * the modality on screen has finished loading -- warming the next asset
+ * before that would have the two downloads competing over one connection,
+ * and the one the reader is waiting for would lose.
+ */
+usePrefetchNextModality(
+  current,
+  modalityId,
+  computed(() => Boolean(stageControls.actions.value)),
+)
 </script>
 
 <template>
