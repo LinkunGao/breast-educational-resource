@@ -137,6 +137,31 @@ describe('modality ink and fill are distinguishable from each other', () => {
   }
 })
 
+describe('scrollbars are the app\'s own, not the platform default', () => {
+  const css = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../app/assets/css/tokens.css'),
+    'utf8',
+  )
+
+  // Declared on :root and inherited from there, which is the whole reason
+  // no scroll container in the app needs a class for this. A regression
+  // that moved these onto one component would leave the others on the
+  // 15px platform bar, and nothing else in the suite would notice.
+  it('sets the standard scrollbar properties on :root, where they inherit from', () => {
+    const root = css.match(/:root\s*\{([\s\S]*?)\n {2}\}/)
+    expect(root, 'no :root block found in tokens.css').not.toBeNull()
+    expect(root![1]!).toMatch(/scrollbar-width:\s*thin/)
+    expect(root![1]!).toMatch(/scrollbar-color:\s*var\(--color-border-strong\)\s+transparent/)
+  })
+
+  // Safari has neither standard property. Chromium ignores these once
+  // scrollbar-width is set, so the two blocks never both apply.
+  it('keeps the -webkit- fallback for engines without those properties', () => {
+    expect(css).toMatch(/::-webkit-scrollbar\s*\{/)
+    expect(css).toMatch(/::-webkit-scrollbar-thumb\s*\{/)
+  })
+})
+
 describe('prefers-reduced-motion disables motion globally, not just here', () => {
   // Global constraint: this must DISABLE motion, not shorten it. A CSS
   // engine isn't available in happy-dom, so this can only check the source

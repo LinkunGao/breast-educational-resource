@@ -140,6 +140,66 @@
 @layer base {
   :root {
     color-scheme: light;
+
+    /**
+     * Scrollbars, app-wide.
+     *
+     * The platform default is a ~15px opaque bar with a grey track, and on
+     * the case sidebar it sat right against the nav rows -- heavier than
+     * anything else in the panel, and the widest single element in a
+     * 240px column. §16's "avoid heavy shadows" and §1's "over-decoration"
+     * are about the same instinct: nothing structural should shout.
+     *
+     * Both properties are INHERITED, so declaring them once on :root
+     * reaches every scroll container in the app -- the sidebar, the
+     * content panel, `main`, and the tab strip's horizontal overflow --
+     * without a utility class on each. `thin` is ~8px with a transparent
+     * track, so the bar reads as a thumb floating on the surface rather
+     * than as a second column beside it.
+     *
+     * The thumb is --color-border-strong: 1.48:1 on white, which is
+     * deliberately below the 3:1 non-text floor and is allowed to be.
+     * WCAG 1.4.11 exempts controls whose appearance is determined by the
+     * user agent, and the scrollbar is never the only way to reach
+     * anything here -- every scroll container is keyboard- and
+     * wheel-scrollable, and the sidebar's links are all in the tab order
+     * whether or not the bar is visible.
+     */
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-strong) transparent;
+  }
+
+  /**
+   * Safari, which has no `scrollbar-width`/`scrollbar-color`.
+   *
+   * Chromium ignores these pseudo-elements entirely once `scrollbar-width`
+   * is set to anything but `auto` (the standard property wins), so this
+   * block is not a duplicate treatment fighting the one above -- it is the
+   * only one of the two that any given engine applies.
+   *
+   * The transparent border plus `background-clip: padding-box` is what
+   * insets a 4px thumb inside an 8px gutter; a plain 8px thumb touches the
+   * content it is scrolling.
+   */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-border-strong);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-text-subtle);
   }
 
   body {
