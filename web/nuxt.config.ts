@@ -190,8 +190,16 @@ export default defineNuxtConfig({
           // Absolute-from-root and baseURL-prefixed, not a bare relative
           // filename: case pages are nested (`/te-uma/density-c/anatomy/`),
           // and a relative href resolves against the *document* URL, not
-          // the site root, so it would break at that depth.
+          // the site root, so it would break at that depth. `rel: 'icon'`
+          // below needs the same treatment and for the same reason: without
+          // it, a browser falls back to requesting `/favicon.ico` at the
+          // ORIGIN root, which under the `/te-uma/` GitHub Pages deploy is
+          // a 404 -- the generated favicon.ico is never fetched at all.
           href: publicUrl('apple-touch-icon-180x180.png', appBaseURL),
+        },
+        {
+          rel: 'icon',
+          href: publicUrl('favicon.ico', appBaseURL),
         },
       ],
       meta: [
@@ -201,6 +209,10 @@ export default defineNuxtConfig({
           name: 'description',
           content: 'Auckland Bioengineering Institute Breast Research App',
         },
+        // iOS Safari reads this for the standalone status bar; Android reads
+        // `pwa.manifest.theme_color` instead. Same value in both places so
+        // the two cannot drift apart.
+        { name: 'theme-color', content: '#ffffff' },
       ],
     },
   },

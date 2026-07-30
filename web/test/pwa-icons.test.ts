@@ -40,6 +40,13 @@ describe('generated PWA icons', () => {
   }
 
   it('the source is the legacy mark, unmodified', () => {
+    // This pin is load-bearing, not incidental: several places in this
+    // codebase promise that upgrading to a higher-resolution source is "no
+    // code change, just drop a new web/public/icon.png and re-run `yarn
+    // icons`" (see scripts/generate-pwa-icons.mjs's header). This test is
+    // the cost that promise omits -- swapping the source is exactly what
+    // should make this pin fail, and the fix is to update the three
+    // numbers below to match the new file, not to loosen the assertion.
     const buffer = png('icon.png')
     expect(buffer.readUInt32BE(16)).toBe(88)
     expect(buffer.readUInt32BE(20)).toBe(88)
@@ -83,8 +90,10 @@ describe('generated PWA icons', () => {
     const maskableRow = centreRow(image)
     const plainRow = centreRow(plain)
     const corner = image.data[0]!
-    // The outer 10% of each side is untouched background on the maskable
-    // version and, on the unpadded one, is not.
+    // The outer 5% of each side is untouched background on the maskable
+    // version and, on the unpadded one, is not. (Conservative on purpose --
+    // the real safe margin is wider, at MASKABLE_CONTENT = 0.8 i.e. 10% per
+    // side -- this just has to land inside it, not match it exactly.)
     const edge = Math.floor(512 * 0.05)
     expect(maskableRow.slice(0, edge).every(v => v === corner)).toBe(true)
     expect(plainRow.slice(0, edge).every(v => v === corner)).toBe(false)

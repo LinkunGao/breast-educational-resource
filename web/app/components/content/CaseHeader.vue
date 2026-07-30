@@ -1,20 +1,14 @@
 <script setup lang="ts">
+import { CASE_GROUP_LABEL } from '~~/content/cases'
 import type { Case } from '~~/content/types'
 
 const props = defineProps<{ case: Case }>()
-
-const GROUP_LABEL = {
-  overview: 'Overview',
-  density: 'Breast Density',
-  benign: 'Benign Condition',
-  cancer: 'Breast Cancer',
-} as const
 </script>
 
 <template>
   <header>
     <p class="text-caption font-bold uppercase tracking-wide text-text-muted">
-      {{ GROUP_LABEL[props.case.group] }}
+      {{ CASE_GROUP_LABEL[props.case.group] }}
     </p>
 
     <!--

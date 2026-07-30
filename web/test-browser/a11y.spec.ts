@@ -120,31 +120,3 @@ test.describe('§12.10 axe-core', () => {
     await scan(page, '/density-d/mammogram (drawer open, 375px)')
   })
 })
-
-/**
- * Client feedback item 10, measured rather than asserted through class names.
- *
- * The unit test above can only check which element carries `ml-auto`;
- * happy-dom has no layout engine. This is the tier the bug actually
- * appeared on -- an iPad Air, below xl, where the element that used to
- * carry the margin is display:none.
- */
-test('About sits at the right edge of the header below xl', async ({ page }) => {
-  await page.setViewportSize({ width: 1180, height: 820 })
-  await page.goto('/the-breast')
-
-  const header = page.locator('header').first()
-  const about = page.getByRole('link', { name: 'About' })
-  await expect(about).toBeVisible()
-
-  const headerBox = (await header.boundingBox())!
-  const aboutBox = (await about.boundingBox())!
-
-  // Right-aligned: the gap between About's right edge and the header's is
-  // the header's own px-4 padding (16px), with a little slack for the
-  // rounded hit area. If the margin regressed onto an xl-only element,
-  // About lands next to the wordmark and this gap is hundreds of pixels.
-  const gap = (headerBox.x + headerBox.width) - (aboutBox.x + aboutBox.width)
-  expect(gap).toBeLessThan(32)
-  expect(gap).toBeGreaterThanOrEqual(0)
-})

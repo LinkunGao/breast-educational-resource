@@ -1,16 +1,10 @@
 <script setup lang="ts">
-import { enabledCases } from '~~/content/cases'
+import { CASE_GROUP_LABEL, enabledCases } from '~~/content/cases'
 import { organisations } from '~~/content/team'
 import type { CaseGroup } from '~~/content/types'
 
 const store = useViewerStore()
 const { publicUrl } = useAssetUrl()
-
-const GROUP_LABEL: Record<Exclude<CaseGroup, 'overview'>, string> = {
-  density: 'Breast Density',
-  benign: 'Benign Conditions',
-  cancer: 'Breast Cancer',
-}
 
 /**
  * Per-group icon paths (client feedback item 9), drawn stroke-only at
@@ -72,7 +66,7 @@ const groups = computed(() => {
   const order = ['density', 'benign', 'cancer'] as const
   return order.map(group => ({
     group,
-    label: GROUP_LABEL[group],
+    label: CASE_GROUP_LABEL[group],
     icon: GROUP_ICON[group],
     items: enabledCases().filter(c => c.group === group),
   })).filter(g => g.items.length > 0)

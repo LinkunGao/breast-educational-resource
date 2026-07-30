@@ -217,6 +217,30 @@ test.describe('§12 acceptance, against the generated site', () => {
     }
   })
 
+  /**
+   * The half of the Task 4 -> Task 5 filename contract the manifest test
+   * above does not cover. `favicon.ico` and `apple-touch-icon-180x180.png`
+   * are never listed in `manifest.icons` -- they are referenced from
+   * `nuxt.config.ts`'s `app.head.link` instead (`rel="icon"` and
+   * `rel="apple-touch-icon"`), which is a second, independent place a
+   * filename has to agree with what Task 4 actually generated. A rename on
+   * either side 404s silently: no browser install prompt, no PWA check,
+   * fails -- the tab and the home-screen icon just go blank.
+   */
+  test('the two icons outside the manifest resolve: favicon.ico and apple-touch-icon', async ({ page }) => {
+    await page.goto(`${base}/the-breast`)
+
+    const faviconHref = await page.locator('link[rel="icon"]').getAttribute('href')
+    const appleHref = await page.locator('link[rel="apple-touch-icon"]').getAttribute('href')
+    expect(faviconHref, 'no <link rel="icon"> in the served HTML').toBeTruthy()
+    expect(appleHref, 'no <link rel="apple-touch-icon"> in the served HTML').toBeTruthy()
+
+    for (const href of [faviconHref!, appleHref!]) {
+      const response = await page.request.get(new URL(href, base).href)
+      expect(response.ok(), `${href} -> ${response.status()}`).toBe(true)
+    }
+  })
+
   test('the service worker script is served and the HTML references the manifest', async ({ page }) => {
     await page.goto(`${base}/the-breast`)
     await expect(page.locator('link[rel="manifest"]')).toHaveCount(1)

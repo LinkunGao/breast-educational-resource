@@ -1,11 +1,29 @@
-import { describe, expect, it } from 'vitest'
-import config from '../nuxt.config'
+import { defineNuxtConfig } from 'nuxt/config'
+import { describe, expect, it, vi } from 'vitest'
+
+// This file imports nuxt.config.ts directly to assert on its `pwa` block.
+// `defineNuxtConfig` is normally injected by Nuxt's build tooling
+// (unimport), which plain Vitest never runs, so the module throws
+// ReferenceError on import without this. The real implementation from
+// `nuxt/config` is just `(config) => config`, so this is not a fake. Scoped
+// to this file rather than test/setup.ts (which every other unit test also
+// pays the cost of loading), because this is the only file that needs it.
+//
+// The stub has to be in place BEFORE nuxt.config.ts is evaluated, and a
+// static `import config from '../nuxt.config'` does not allow that: ESM
+// hoists and resolves all of a module's static imports, in order, before
+// any of the module's own top-level statements run -- so a `vi.stubGlobal`
+// written below a static import of nuxt.config still executes after that
+// import has already thrown. A dynamic `import()` is an ordinary
+// expression, evaluated in place, so it runs after the stub below.
+vi.stubGlobal('defineNuxtConfig', defineNuxtConfig)
+const config = (await import('../nuxt.config')).default as Record<string, any>
 
 /**
  * Client feedback item 1. Asserts the CONFIGURATION rather than a built
  * service worker: a real build takes minutes and pulls 355MB of public
  * assets through the prerenderer, which no unit run should do. The
- * built-artefact side is covered in test-browser/pwa.spec.ts.
+ * built-artefact side is covered in test-browser/production.spec.ts.
  */
 const pwa = (config as Record<string, any>).pwa
 

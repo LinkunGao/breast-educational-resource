@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { enabledCases } from '~~/content/cases'
-import type { Case, CaseGroup } from '~~/content/types'
+import { CASE_GROUP_LABEL, enabledCases } from '~~/content/cases'
+import type { Case } from '~~/content/types'
 
 /**
  * Previous / next case, at the foot of the content column.
@@ -24,13 +24,6 @@ import type { Case, CaseGroup } from '~~/content/types'
  * field that says what the reader is about to look at.
  */
 const props = defineProps<{ slug: string }>()
-
-const GROUP_LABEL: Record<CaseGroup, string> = {
-  overview: 'Overview',
-  density: 'Breast Density',
-  benign: 'Benign Conditions',
-  cancer: 'Breast Cancer',
-}
 
 const neighbours = computed<{ previous?: Case, next?: Case }>(() => {
   const all = enabledCases()
@@ -60,7 +53,7 @@ const neighbours = computed<{ previous?: Case, next?: Case }>(() => {
             <svg viewBox="0 0 24 24" class="size-3 transition-transform group-hover:-translate-x-0.5" aria-hidden="true">
               <path fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="m15 5-7 7 7 7" />
             </svg>
-            {{ GROUP_LABEL[neighbours.previous.group] }}
+            {{ CASE_GROUP_LABEL[neighbours.previous.group] }}
           </span>
           <span class="mt-1 block text-body font-medium leading-snug text-text
                        decoration-brand/40 underline-offset-4 group-hover:text-brand group-hover:underline">
@@ -79,7 +72,7 @@ const neighbours = computed<{ previous?: Case, next?: Case }>(() => {
       >
         <NuxtLink :to="`/${neighbours.next.slug}`" class="group block">
           <span class="flex items-center gap-1.5 text-caption uppercase tracking-[0.14em] text-text-muted sm:justify-end">
-            {{ GROUP_LABEL[neighbours.next.group] }}
+            {{ CASE_GROUP_LABEL[neighbours.next.group] }}
             <svg viewBox="0 0 24 24" class="size-3 transition-transform group-hover:translate-x-0.5" aria-hidden="true">
               <path fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7" />
             </svg>

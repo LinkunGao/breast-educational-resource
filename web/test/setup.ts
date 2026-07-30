@@ -1,5 +1,4 @@
 import { computed, inject, nextTick, onMounted, onScopeDispose, provide, reactive, ref, shallowRef, watch, watchEffect } from 'vue'
-import { defineNuxtConfig } from 'nuxt/config'
 import { vi } from 'vitest'
 import { installTrackballControls } from '../app/composables/installTrackballControls'
 import { useAssetUrl } from '../app/composables/useAssetUrl'
@@ -27,12 +26,6 @@ vi.stubGlobal('inject', inject)
 vi.stubGlobal('provideStageControls', provideStageControls)
 vi.stubGlobal('useStageControls', useStageControls)
 vi.stubGlobal('useViewerStore', useViewerStore)
-// test/pwa.test.ts imports nuxt.config.ts directly to assert on its `pwa`
-// block. `defineNuxtConfig` is normally injected by Nuxt's build tooling
-// (unimport), which plain Vitest never runs, so the module throws
-// ReferenceError on import without this. The real implementation from
-// `nuxt/config` is just `(config) => config`, so this is not a fake.
-vi.stubGlobal('defineNuxtConfig', defineNuxtConfig)
 // useModalityScene calls the real useAssetUrl, which itself calls
 // useRuntimeConfig -- a Nuxt global with no plain-Vitest equivalent.
 // Mirrors nuxt.config.ts's actual defaults (assetBase '/modelView/', root
