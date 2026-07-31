@@ -39,12 +39,16 @@
  * ## Fidelity
  *
  * The pixel loop below is copied from the original, byte for byte in its
- * arithmetic, including the threshold and window-level handling. The ONLY
- * differences are the ones described above: cached `ImageData`, and geometry
- * work skipped while the plane dimensions are unchanged. `label` volumes are
- * handed back to the original implementation -- the original only logs an
- * error for those, and this app ships none, but silently doing something
- * different from upstream on a data type nobody tested is not worth it.
+ * arithmetic, including the threshold and window-level handling. The
+ * differences are the ones described above -- cached `ImageData`, and
+ * geometry work skipped while the plane dimensions are unchanged -- plus the
+ * optional exposure LUT, which is the one thing here that changes what a
+ * pixel comes out as. See `sliceExposure.ts` for why it lives in a lookup
+ * table on top of the original arithmetic rather than in the window the
+ * original arithmetic reads. `label` volumes are handed back to the original
+ * implementation -- the original only logs an error for those, and this app
+ * ships none, but silently doing something different from upstream on a data
+ * type nobody tested is not worth it.
  */
 
 /** copper3d's `VolumeSlice`, as far as this file needs it. Deliberately not
@@ -89,11 +93,20 @@ interface RawSlice {
 
 const PATCHED = Symbol('fast-repaint')
 
-export async function installFastSliceRepaint(rawSlice: unknown): Promise<void> {
+/** `out = 255 * (in/255) ** exponent`, precomputed. Monotonic with both ends
+ *  fixed, so it lifts mid-tones without clipping either end. */
+function exposureLut(exponent: number): Uint8Array {
+  const lut = new Uint8Array(256)
+  for (let v = 0; v < 256; v++) lut[v] = Math.round(255 * (v / 255) ** exponent)
+  return lut
+}
+
+export async function installFastSliceRepaint(rawSlice: unknown, exposure = 1): Promise<void> {
   const slice = rawSlice as RawSlice & { [PATCHED]?: true }
   if (!slice || slice[PATCHED]) return
   if (slice.volume?.dataType === 'label') return
 
+  const lut = exposure === 1 ? null : exposureLut(exposure)
   const { PlaneGeometry } = await import('three')
 
   const original = slice.repaint
@@ -158,6 +171,7 @@ export async function installFastSliceRepaint(rawSlice: unknown): Promise<void> 
         const alpha = upperThreshold >= raw ? (lowerThreshold <= raw ? 0xFF : 0) : 0
         let value = Math.floor((raw - windowLow) * scale)
         value = value > 255 ? 255 : (value < 0 ? 0 : value | 0)
+        if (lut) value = lut[value]!
 
         const at = 4 * pixelCount
         data[at] = value

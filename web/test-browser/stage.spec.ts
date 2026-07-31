@@ -1,6 +1,7 @@
-import type { Locator, Page } from '@playwright/test'
+import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 import { PNG } from 'pngjs'
+import { focusedStage, waitForModality } from './helpers'
 
 /**
  * The first tests on this branch that actually run copper3d.
@@ -13,44 +14,6 @@ import { PNG } from 'pngjs'
  */
 
 /**
- * The stage host: the focusable div copper3d appends its canvas into.
- *
- * `application`, not `img`. It was `img` until the a11y pass, and this
- * locator was not updated with it -- so two of the three tests below spent a
- * commit resolving to nothing and failing on the screenshot call. Matching
- * the role by name rather than by a `[data-*]` hook is deliberate: it means
- * a change to the stage's exposed semantics cannot pass silently again.
- */
-function stage(page: Page): Locator {
-  return page.getByRole('application', { name: /viewer$/ })
-}
-
-/**
- * Waits for the modality to finish loading, then fails loudly on the two
- * ways the app reports giving up. Without the error check a failed 31MB
- * fetch would look identical to a slow one until the timeout.
- */
-async function waitForModality(page: Page) {
-  const failed = page.getByRole('alert')
-  // Scoped to the spinner's own text on purpose. Once an imaging modality
-  // has loaded, Task 10's slice readout is ALSO a `role="status"` live
-  // region ("Slice 12 of 24"), so an unscoped role lookup never goes
-  // hidden -- an earlier version of this helper timed out against a stage
-  // that had in fact loaded perfectly.
-  const loading = page.getByRole('status').filter({ hasText: /^Loading/ })
-
-  // The canvas, not the spinner, is the readiness signal to wait on FIRST.
-  // Waiting on the spinner alone is a race: the stage host is visible from
-  // the first paint and the spinner only appears once `stage.ready` flips,
-  // so "spinner is hidden" is trivially true before loading has even
-  // started -- an earlier version of this helper returned instantly and
-  // made the assertions below check an empty page.
-  await expect(page.locator('canvas')).toHaveCount(1, { timeout: 60_000 })
-  await expect(loading).toBeHidden({ timeout: 150_000 })
-  await expect(failed).toHaveCount(0)
-}
-
-/**
  * Proves a real WebGL context exists on the canvas copper3d created, by
  * asking the canvas itself rather than by inferring it from the DOM.
  *
@@ -59,10 +22,15 @@ async function waitForModality(page: Page) {
  * a passing result by creating a second one: a canvas that copper3d never
  * initialised returns a fresh context whose `drawingBufferWidth` is the
  * untouched default, which the size assertion below rejects.
+ *
+ * Scoped to the FOCUSED panel: three are mounted, and the two hidden ones
+ * hold a context whose drawing buffer is whatever they last measured.
  */
 async function webglReport(page: Page) {
   return page.evaluate(() => {
-    const canvas = document.querySelector('canvas')
+    const canvas = document.querySelector<HTMLCanvasElement>(
+      '[data-panel][data-focused="true"] canvas',
+    )
     if (!canvas) return { present: false as const }
     const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl')
     if (!gl) return { present: true as const, context: null }
@@ -100,7 +68,7 @@ async function webglReport(page: Page) {
  * one without hard-coding either.
  */
 async function drawnFraction(page: Page): Promise<number> {
-  const png = PNG.sync.read(await stage(page).screenshot())
+  const png = PNG.sync.read(await focusedStage(page).screenshot())
   const { data, width, height } = png
   const [br, bg, bb] = [data[0], data[1], data[2]]
 
@@ -159,17 +127,20 @@ test.describe('3D stage', () => {
     if (consoleErrors.length) console.log('console errors:', consoleErrors)
   })
 
-  test('keeps one canvas across a modality switch', async ({ page }) => {
-    // Design doc §8.2 -- "switch the scene, not the renderer". A second
-    // canvas here means the renderer was rebuilt, which is the leak
-    // app.vue's page key exists to prevent.
+  test('keeps one canvas per panel across a modality switch', async ({ page }) => {
+    // Design doc §8.2 -- "switch the scene, not the renderer". A fourth
+    // canvas here means a renderer was rebuilt, which is the leak
+    // app.vue's page key exists to prevent. Three, not one: three-up mounts
+    // a stage per panel and never unmounts one, which is what stops a
+    // revisited panel reloading.
     await page.goto('/density-d')
     await waitForModality(page)
+    await expect(page.locator('[data-panel] canvas')).toHaveCount(3)
 
-    await page.getByRole('link', { name: /3D Mammogram/i }).click()
+    await page.getByRole('link', { name: /^Mammogram$/i }).click()
     await waitForModality(page)
 
-    await expect(page.locator('canvas')).toHaveCount(1)
+    await expect(page.locator('[data-panel] canvas')).toHaveCount(3)
     if (consoleErrors.length) console.log('console errors:', consoleErrors)
   })
 
@@ -194,11 +165,14 @@ test.describe('3D stage', () => {
     const afterFirst = volumeRequests.length
     expect(afterFirst).toBeGreaterThan(0)
 
-    await page.getByRole('link', { name: 'Fibroadenoma' }).click()
+    // Scoped to the sidebar: the prev/next cards name the current case too,
+    // and this test is specifically about the sidebar's own navigation.
+    const sidebar = page.locator('#case-sidebar')
+    await sidebar.getByRole('link', { name: 'Fibroadenoma' }).click()
     await waitForModality(page)
 
     const beforeReturn = volumeRequests.length
-    await page.getByRole('link', { name: 'Ductal' }).click()
+    await sidebar.getByRole('link', { name: 'Ductal' }).click()
     await waitForModality(page)
 
     expect(volumeRequests.length).toBe(beforeReturn)

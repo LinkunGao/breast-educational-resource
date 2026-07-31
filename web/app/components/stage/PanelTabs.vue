@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import type { Case, ModalityId, PanelId } from '~~/content/types'
+// Imported, not auto-imported: the unit suite runs on plain Vitest with
+// Nuxt's auto-imports stubbed out.
+import { MODALITY_INK } from '~/utils/modalityInk'
 
 /**
  * The one-up slot strip.
@@ -29,9 +32,10 @@ const props = defineProps<{
 const emit = defineEmits<{ variant: [{ panel: PanelId, modality: ModalityId }] }>()
 
 /**
- * Per-modality ink token and icon, carried over from `ModalityStepper`
- * unchanged -- including `ultrasound`, which is still drawn, just inside
- * the variant control below rather than as a tab of its own.
+ * Per-modality icon, carried over from `ModalityStepper` unchanged --
+ * including `ultrasound`, which is still drawn, just inside the variant
+ * control below rather than as a tab of its own. The matching ink token
+ * lives in `MODALITY_INK`, shared with the prev/next cards.
  *
  * Each icon draws HOW THE IMAGE IS MADE, which is the one thing that
  * actually distinguishes the four. An earlier set was abstract geometry and
@@ -46,32 +50,20 @@ const emit = defineEmits<{ variant: [{ panel: PanelId, modality: ModalityId }] }
  * All stroke, no fill, so they hold up at 16px and inherit the tab's own
  * colour without a second token.
  */
-const STYLE: Record<ModalityId, { ink: string, paths: string[] }> = {
-  anatomy: {
-    ink: 'text-anatomy-ink',
-    // A semicircle off a vertical chest wall, plus the nipple. Drawn as an
-    // arc rather than a shallow bezier because the bezier came out as a
-    // play triangle at 16px.
-    paths: ['M4.5 3.5v17', 'M4.5 5.5a6.5 6.5 0 0 1 0 13', 'M11 12h3.5'],
-  },
-  mammogram: {
-    ink: 'text-mammogram-ink',
-    // The same breast, flattened between two compression plates -- which is
-    // literally what a mammogram does to it, and reads against the anatomy
-    // icon precisely because the two share a shape.
-    paths: ['M3 6.5h18', 'M3 17.5h18', 'M4.5 9v6', 'M4.5 9c7 0 11 .9 11 3s-4 3-11 3'],
-  },
-  ultrasound: {
-    ink: 'text-ultrasound-ink',
-    // Transducer plus the sector it insonates. The sector is deliberately
-    // wide and the arc inside it is what makes it read as a beam rather
-    // than as a lampshade.
-    paths: ['M9.5 3h5v3.5h-5z', 'M9.5 6.5 4.5 19.5h15L14.5 6.5', 'M8 14.5a6.6 6.6 0 0 1 8 0'],
-  },
-  mri: {
-    ink: 'text-mri-ink',
-    paths: ['M12 3.5 3.5 8 12 12.5 20.5 8z', 'M3.5 12 12 16.5 20.5 12', 'M3.5 16 12 20.5 20.5 16'],
-  },
+const ICON: Record<ModalityId, string[]> = {
+  // A semicircle off a vertical chest wall, plus the nipple. Drawn as an
+  // arc rather than a shallow bezier because the bezier came out as a play
+  // triangle at 16px.
+  anatomy: ['M4.5 3.5v17', 'M4.5 5.5a6.5 6.5 0 0 1 0 13', 'M11 12h3.5'],
+  // The same breast, flattened between two compression plates -- which is
+  // literally what a mammogram does to it, and reads against the anatomy
+  // icon precisely because the two share a shape.
+  mammogram: ['M3 6.5h18', 'M3 17.5h18', 'M4.5 9v6', 'M4.5 9c7 0 11 .9 11 3s-4 3-11 3'],
+  // Transducer plus the sector it insonates. The sector is deliberately wide
+  // and the arc inside it is what makes it read as a beam rather than as a
+  // lampshade.
+  ultrasound: ['M9.5 3h5v3.5h-5z', 'M9.5 6.5 4.5 19.5h15L14.5 6.5', 'M8 14.5a6.6 6.6 0 0 1 8 0'],
+  mri: ['M12 3.5 3.5 8 12 12.5 20.5 8z', 'M3.5 12 12 16.5 20.5 12', 'M3.5 16 12 20.5 20.5 16'],
 }
 
 /** Each slot paired with the modality it is currently showing, so a tab's
@@ -122,12 +114,15 @@ function onKeydown(event: KeyboardEvent) {
              after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-t-full
              after:bg-current after:transition-opacity"
       :class="t.panel.id === props.activePanel
-        ? [STYLE[t.current.id].ink, 'font-bold after:opacity-100']
-        : 'text-text-muted after:opacity-0'"
+        ? [MODALITY_INK[t.current.id], 'font-bold after:opacity-100']
+        // `hover:` on the inactive branch only. As a static class on the
+        // link it also matched the active tab, so hovering it dropped its
+        // modality ink back to plain text.
+        : 'text-text-muted hover:text-text after:opacity-0'"
     >
       <NuxtLink
         :to="`/${props.case.slug}/${t.current.id}`"
-        class="flex min-h-12 items-center gap-2 px-3 text-body-sm hover:text-text"
+        class="flex min-h-12 items-center gap-2 px-3 text-body-sm"
         :aria-current="t.panel.id === props.activePanel ? 'step' : undefined"
       >
         <svg
@@ -140,7 +135,7 @@ function onKeydown(event: KeyboardEvent) {
           stroke-linejoin="round"
           aria-hidden="true"
         >
-          <path v-for="d in STYLE[t.current.id].paths" :key="d" :d="d" />
+          <path v-for="d in ICON[t.current.id]" :key="d" :d="d" />
         </svg>
 
         <span class="whitespace-nowrap">{{ t.panel.label }}</span>

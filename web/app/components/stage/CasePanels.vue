@@ -149,10 +149,22 @@ function onVariant(choice: { panel: PanelId, modality: ModalityId }) {
           >
             {{ panel.label }}
           </span>
+          <!--
+            `.stop` on both, and it is load-bearing. The cell focuses itself
+            on pointerdown/focusin, which navigates to whatever modality
+            that slot is currently on -- so on an UNFOCUSED panel a click
+            here fired two navigations, the focus one to the slot's current
+            modality and the button's to the chosen one, and the first won.
+            Clicking "2D" on the mammogram panel landed on 3D mammogram.
+            `onVariant` navigates to the chosen modality, which focuses the
+            slot anyway, so nothing is lost by suppressing it here.
+          -->
           <span
             v-if="panel.modalities.length > 1"
             data-variant
             class="ml-auto flex gap-1"
+            @pointerdown.stop
+            @focusin.stop
           >
             <button
               v-for="m in panel.modalities"

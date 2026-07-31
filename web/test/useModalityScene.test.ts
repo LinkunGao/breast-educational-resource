@@ -813,6 +813,101 @@ describe('useModalityScene', () => {
     expect(meshes.z.material.map.dispose).not.toHaveBeenCalled()
   })
 
+  /**
+   * Client feedback: the MRIs are too dark. `sliceExposure.test.ts` covers
+   * the curve; this covers where it is handed over, and -- the client's
+   * other requirement -- that it is in place before anything is painted, so
+   * nobody watches the image change colour.
+   */
+  describe('the MRI exposure', () => {
+    /** Air, tissue, and a bright tail -- the shape that made copper3d's
+     *  min/max window map tissue to almost black. */
+    const VOXELS = [
+      ...Array.from({ length: 600 }, () => 0),
+      ...Array.from({ length: 390 }, (_, i) => 100 + (i % 21)),
+      ...Array.from({ length: 10 }, (_, i) => 130 + i * 52),
+    ]
+
+    /** Runs a load and returns the exposure argument handed to the repaint
+     *  patch, plus how many times the slice was actually painted. */
+    async function loadImaging(id: 'mri' | 'mammogram') {
+      const scene = makeFakeScene()
+      const stage = makeFakeStage(makeFakeRenderer(scene))
+      const modalityScene = useModalityScene(stage)
+      const slice = fakeSlice()
+      let painted = 0
+      slice.repaint = () => { painted++ }
+
+      // The patch stub is file-wide (test/setup.ts) and keeps every earlier
+      // test's calls, so this has to start from a clean slate.
+      const install = vi.mocked(installFastSliceRepaint)
+      install.mockClear()
+
+      const loadPromise = modalityScene.load('the-breast', makeModality({ id, asset: `x/${id}.nrrd` }))
+      const [, , , callback] = vi.mocked(scene.loadNrrd).mock.calls[0]!
+      callback(fakeVolume(VOXELS), fakeMeshes(), { z: slice })
+      await loadPromise
+
+      return { exposure: install.mock.calls[0]![1], painted }
+    }
+
+    it('hands the repaint patch a lift for the MRI', async () => {
+      const { exposure, painted } = await loadImaging('mri')
+      // Below 1 is a lift: `out = 255 * (in/255) ** exposure`.
+      expect(exposure).toBeLessThan(1)
+      expect(exposure).toBeGreaterThan(0)
+      expect(painted).toBe(1)
+    })
+
+    it('leaves the mammogram alone, whose range the client did not report', async () => {
+      const { exposure } = await loadImaging('mammogram')
+      expect(exposure).toBe(1)
+    })
+
+    /**
+     * Asserted as ORDERING, like the bounding box above. The lift lives in
+     * the patched repaint, so painting before the patch lands draws one dark
+     * frame and corrects it on the reader's first scrub -- which is the
+     * colour change the client asked not to see. Holding the patch's promise
+     * open is the only shape that fails against that code.
+     */
+    it('does not paint the slice until the patch carrying the lift is in', async () => {
+      const scene = makeFakeScene()
+      const renderer = makeFakeRenderer(scene)
+      const modalityScene = useModalityScene(makeFakeStage(renderer))
+
+      let installed!: () => void
+      const pending = new Promise<void>((resolve) => { installed = resolve })
+      const realStub = (globalThis as unknown as Record<string, unknown>).installFastSliceRepaint
+      vi.stubGlobal('installFastSliceRepaint', vi.fn(() => pending))
+
+      try {
+        const slice = fakeSlice()
+        let painted = 0
+        slice.repaint = () => { painted++ }
+
+        const load = modalityScene.load('the-breast', makeModality({ id: 'mri', asset: 'x/mri.nrrd' }))
+        const [, , , callback] = vi.mocked(scene.loadNrrd).mock.calls[0]!
+        callback(fakeVolume(VOXELS), fakeMeshes(), { z: slice })
+
+        // Microtasks, not timers: this suite runs on fake timers.
+        for (let i = 0; i < 20; i++) await Promise.resolve()
+        expect(painted, 'painted before the exposure patch landed').toBe(0)
+        expect(renderer.render, 'a frame was drawn before the exposure landed').not.toHaveBeenCalled()
+
+        installed()
+        await load
+        expect(painted).toBe(1)
+        expect(renderer.render).toHaveBeenCalled()
+      }
+      finally {
+        // afterEach's restoreAllMocks does not undo stubGlobal, and this one
+        // shadows test/setup.ts's file-wide stub.
+        vi.stubGlobal('installFastSliceRepaint', realStub)
+      }
+    })
+  })
+
   it('tints only the anatomy model\'s fat-layer mesh, leaving other meshes untouched', async () => {
     const scene = makeFakeScene()
     const renderer = makeFakeRenderer(scene)
@@ -1458,8 +1553,12 @@ describe('useModalityScene', () => {
   })
 })
 
-function fakeVolume() {
-  return { RASDimensions: [1, 1, 1], windowHigh: 1, repaintAllSlices: vi.fn() }
+/** `data`/`min`/`max` mirror what copper3d's NRRD loader leaves on the
+ *  volume; the window starts at min/max, exactly as it does there. */
+function fakeVolume(data: number[] = []) {
+  const min = data.length ? Math.min(...data) : 0
+  const max = data.length ? Math.max(...data) : 1
+  return { RASDimensions: [1, 1, 1], data, min, max, windowHigh: max, repaintAllSlices: vi.fn() }
 }
 
 /** The three slice-plane meshes copper3d hands back. `z` is a real

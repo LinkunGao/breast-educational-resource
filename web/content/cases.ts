@@ -77,10 +77,10 @@ function densityCase(
  * above-the-title eyebrow and CaseSidebar's nav-group heading used to type
  * this out independently -- 'Benign Condition' (singular) in one,
  * 'Benign Conditions' (plural) in the other -- and disagreed on every
- * benign case page. CaseNav's prev/next overline read a third, separately
- * typed copy that happened to already agree. All three now read this one
- * map, so the three cannot drift apart again; 'Benign Conditions' (plural,
- * a group of cases) is the wording kept.
+ * benign case page. Both now read this one map, so they cannot drift apart
+ * again; 'Benign Conditions' (plural, a group of cases) is the wording kept.
+ * (CaseNav's prev/next overline was a third copy; it now names the slot
+ * instead and no longer shows the group at all.)
  */
 export const CASE_GROUP_LABEL: Record<CaseGroup, string> = {
   overview: 'Overview',

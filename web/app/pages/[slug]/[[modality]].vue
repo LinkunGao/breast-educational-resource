@@ -117,7 +117,7 @@ useHead(() => ({
     </template>
 
     <template #prevnext>
-      <CaseNav :slug="slug" />
+      <CaseNav :slug="slug" :modality-id="modalityId" />
     </template>
   </NuxtLayout>
 </template>
