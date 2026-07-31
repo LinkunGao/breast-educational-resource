@@ -11,6 +11,10 @@ plan
 # record once a plan has been executed.
 .superpowers/sdd
 
+# Design docs and implementation plans. Working notes, kept local like
+# `plan/` above.
+docs/superpowers
+
 # Uncompressed source imaging. scripts/optimize-assets.mjs reads this and
 # writes the compressed build into web/public/modelView.
 assets-src/
