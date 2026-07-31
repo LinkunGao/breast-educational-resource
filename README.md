@@ -26,9 +26,7 @@ node scripts/optimize-assets.mjs   # -> web/public/modelView/
 ```
 
 The pipeline re-encodes NRRD volumes as gzip, compresses GLB geometry with
-Draco, and skips the 12 files an md5 audit identified as placeholder copies
-(see `docs/superpowers/specs/2026-07-28-foundation-rebuild-design.md` section
-3.1).
+Draco, and skips the 12 files an md5 audit identified as placeholder copies.
 
 The generated `web/public/modelView/` **is** committed. GitHub Pages builds
 straight from the repository, so leaving it out would deploy a site with no
