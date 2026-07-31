@@ -165,11 +165,14 @@ test.describe('3D stage', () => {
     const afterFirst = volumeRequests.length
     expect(afterFirst).toBeGreaterThan(0)
 
-    await page.getByRole('link', { name: 'Fibroadenoma' }).click()
+    // Scoped to the sidebar: the prev/next cards name the current case too,
+    // and this test is specifically about the sidebar's own navigation.
+    const sidebar = page.locator('#case-sidebar')
+    await sidebar.getByRole('link', { name: 'Fibroadenoma' }).click()
     await waitForModality(page)
 
     const beforeReturn = volumeRequests.length
-    await page.getByRole('link', { name: 'Ductal' }).click()
+    await sidebar.getByRole('link', { name: 'Ductal' }).click()
     await waitForModality(page)
 
     expect(volumeRequests.length).toBe(beforeReturn)

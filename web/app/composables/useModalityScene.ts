@@ -4,6 +4,7 @@ import type { FitBounds } from './fitToView'
 import type { SceneBudget } from './sceneBudget'
 import { fitDistance } from './fitToView'
 import { getSceneBudget } from './sceneBudget'
+import { exposureExponent } from './sliceExposure'
 
 /**
  * GLBs are all <=1.28MB (this app's four `density*.glb` anatomy assets --
@@ -937,6 +938,10 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
             disposeUnusedSlicePlane(meshes.x)
             disposeUnusedSlicePlane(meshes.y)
 
+            // MRI only: that is the modality the client reported too dark,
+            // and the mammograms' dynamic range is already even.
+            const exposure = modality.id === 'mri' ? exposureExponent(volume) : 1
+
             // copper3d's `loadNrrd` builds the slice objects and their
             // canvas-backed textures but never PAINTS them, so the plane
             // renders as solid black until something moves the slice.
@@ -953,11 +958,19 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
             // Called via `.call` because copper3d's own scrubbing does the
             // same (`frontend/plugins/copper.js:110`): `repaint` is taken
             // off the slice object and needs its `this` bound back.
-            // Before the first paint, so that paint already uses it. Async,
-            // but the `repaint` below is safe either way: it is the original
-            // until the patch lands, and the patch is a drop-in replacement.
-            void installFastSliceRepaint(slices.z)
-            slices.z.repaint.call(slices.z)
+            //
+            // AWAITED, not fire-and-forget. The exposure LUT lives in the
+            // patched repaint, so painting before the patch lands would draw
+            // one dark frame and correct it on the reader's first scrub --
+            // exactly the colour change the client asked not to see. This
+            // promise gates `resolve` below, and `load()` draws its only
+            // frame after that. A failed patch still paints, just with
+            // copper3d's own repaint and no lift.
+            const painted = installFastSliceRepaint(slices.z, exposure)
+              .catch(() => {})
+              .then(() => {
+                slices.z.repaint.call(slices.z)
+              })
 
             const [rx, ry, rz] = volume.RASDimensions
             // `RASDimensions` describes a box centred on the origin, which
@@ -980,7 +993,7 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
               // no-oped, and left every flat view rotatable.
               target.controls.noRotate = true
               target.controls.noPan = true
-              resolve(null)
+              painted.then(() => resolve(null), reject)
             }
             else {
               // 3D modalities only, exactly like the legacy app: the flat
@@ -993,9 +1006,9 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
               // `load()` had drawn its only frame -- invisible until the
               // reader touched the canvas. The catch keeps it decorative.
               const z = slices.z
-              void addVolumeBoundingBox(target, volume.RASDimensions)
-                .catch(() => {})
-                .then(() => resolve({ max: z.MaxIndex, raw: z, mesh: meshes.z }))
+              const boxed = addVolumeBoundingBox(target, volume.RASDimensions).catch(() => {})
+              Promise.all([painted, boxed])
+                .then(() => resolve({ max: z.MaxIndex, raw: z, mesh: meshes.z }), reject)
             }
           },
           { openGui: false },

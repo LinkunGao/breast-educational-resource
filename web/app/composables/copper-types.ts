@@ -170,6 +170,16 @@ export interface NrrdMeshes {
 export interface NrrdVolume {
   RASDimensions: number[]
   windowHigh: number
+  /**
+   * three's `Volume.computeMinMax()` result, cached on the instance. The
+   * display window is set to exactly these (bundle.esm.js:61725), which is
+   * why the tissue comes out dark -- see `sliceExposure.ts`.
+   */
+  min: number
+  max: number
+  /** The decoded voxels. Read-only here: `exposureExponent` measures their
+   *  distribution and never writes one. */
+  data: ArrayLike<number>
   repaintAllSlices: () => void
 }
 

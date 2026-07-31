@@ -124,10 +124,43 @@ test.describe('three-up', () => {
     await expect(page).toHaveURL(/\/density-a\/mri/)
     await expect(panel(page, 'mri')).toHaveAttribute('data-focused', 'true')
 
-    await page.getByRole('link', { name: 'Density B' }).click()
+    // Scoped to the sidebar: the next card names the same case, and it
+    // carries a modality, which is exactly what this test must not use --
+    // only a bare `/density-b` falls back to the remembered slot.
+    await page.locator('#case-sidebar').getByRole('link', { name: 'Density B' }).click()
     await expect(page).toHaveURL(/\/density-b/)
     await expect(panel(page, 'mri'), 'the focused panel was not remembered')
       .toHaveAttribute('data-focused', 'true')
+  })
+
+  /**
+   * Client feedback: "when you click the next panel button, would be great
+   * to go to the next panel ... then the only thing the person needs to do
+   * is to press next". The unit suite pins where each card points; this
+   * pins that pressing it moves the focus, and that the walk carries on
+   * into the next case.
+   */
+  test('pressing next steps through the panels, then into the next case', async ({ page }) => {
+    await page.setViewportSize(WIDE)
+    await page.goto('/density-a/anatomy')
+    await waitForModality(page)
+
+    const next = page.getByRole('navigation', { name: 'Previous and next view' })
+      .getByRole('link').last()
+
+    await next.click()
+    await expect(page).toHaveURL(/\/density-a\/mammogram/)
+    await expect(panel(page, 'mammogram')).toHaveAttribute('data-focused', 'true')
+
+    await next.click()
+    await expect(page).toHaveURL(/\/density-a\/mri/)
+    await expect(panel(page, 'mri')).toHaveAttribute('data-focused', 'true')
+
+    // Off the end of the case: the next case's first slot, not the next
+    // case's remembered one.
+    await next.click()
+    await expect(page).toHaveURL(/\/density-b\/anatomy/)
+    await expect(panel(page, 'anatomy')).toHaveAttribute('data-focused', 'true')
   })
 
   /**

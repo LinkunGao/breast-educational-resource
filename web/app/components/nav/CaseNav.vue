@@ -1,37 +1,75 @@
 <script setup lang="ts">
-import { CASE_GROUP_LABEL, enabledCases } from '~~/content/cases'
-import type { Case } from '~~/content/types'
-import { GROUP_INK } from '~/utils/groupInk'
+import { enabledCases, getCase, panelIdOf } from '~~/content/cases'
+import type { Case, ModalityId, Panel } from '~~/content/types'
+import { MODALITY_INK } from '~/utils/modalityInk'
 
 /**
- * Previous / next case, at the foot of the content column.
+ * Previous / next VIEW, at the foot of the content column.
  *
- * This is what the layout's `prevnext` slot was reserved for. It stood empty
- * behind a "Placeholder: prev/next case navigation (Task 6)" fallback that
- * shipped to the browser and was the first thing the human asked about
- * (the human asked what that "Placeholder" was).
+ * A stop is a case's slot, not a case: anatomy -> mammogram -> MRI, then on
+ * to the next case's anatomy. The client asked for exactly this -- clicking
+ * next should go to the next panel, so the only thing the reader has to do
+ * is press next -- and each stop has its own paragraph in this column, so
+ * pressing next now walks the whole resource, copy included.
  *
- * Order comes from `enabledCases()` -- the same declaration order the sidebar
- * groups and renders, so "next" always means the entry visibly below the
- * current one there, and the two navigations can never disagree.
+ * The 2D/3D variant is NOT a stop. That was settled earlier, in the same
+ * words `PanelTabs` records: the reader switches between the 3D mammogram
+ * and the 2D ultrasound rather than passing through one on the way to the
+ * other. So a slot holding both is one stop, opening on its 3D default.
+ *
+ * Order comes from `enabledCases()` -- the same declaration order the
+ * sidebar groups and renders, so the two navigations can never disagree.
  *
  * ## On the presentation
  *
- * Each side shows the case's GROUP as a quiet overline and its HEADING as the
- * link text -- "Breast Density / Extremely dense", not "Breast Density / D".
- * The density cases are titled with bare letters, so a first pass that used
- * `title` produced a link whose entire label was the character "D". The
- * heading is the sentence the case page itself leads with, and it is the only
- * field that says what the reader is about to look at.
+ * The overline is the SLOT ("MRI"), in that modality's own ink; below it is
+ * the case, as "Density A: Almost entirely fat". The slot leads because it
+ * is what changes on two presses out of every three. The group label
+ * ("Breast Density") used to be the overline and is gone from this card:
+ * the page's own eyebrow and the sidebar both still show it, and it was the
+ * one line here that never changed.
+ *
+ * Both `title` and `heading`, weighted apart rather than run together: the
+ * density cases are titled with bare letters, so heading-only produced a
+ * link whose entire label was the character "D", while title-only says
+ * nothing about what "Density A" looks like. `caption` collapses to one of
+ * them for the six cases where the two fields are the same string.
  */
-const props = defineProps<{ slug: string }>()
+const props = defineProps<{ slug: string, modalityId: ModalityId }>()
 
-const neighbours = computed<{ previous?: Case, next?: Case }>(() => {
-  const all = enabledCases()
-  const at = all.findIndex(c => c.slug === props.slug)
-  // -1 cannot happen behind the page's `validate` guard, but a missing case
-  // must degrade to "no neighbours" rather than wrapping around to the ends
-  // of the list, which `at - 1` on -1 would do.
+interface Stop {
+  case: Case
+  panel: Panel
+  /** Every slot opens on its 3D default -- see the variant note above. */
+  to: string
+  ink: string
+  /** The case's own words, or nothing when `title` already is them. */
+  caption?: string
+}
+
+const stops = computed<Stop[]>(() =>
+  enabledCases().flatMap(c => c.panels.map((panel) => {
+    const modality = panel.modalities[0]!
+    return {
+      case: c,
+      panel,
+      to: `/${c.slug}/${modality.id}`,
+      ink: MODALITY_INK[modality.id],
+      caption: c.heading === c.title ? undefined : c.heading,
+    }
+  })),
+)
+
+const neighbours = computed<{ previous?: Stop, next?: Stop }>(() => {
+  const here = getCase(props.slug)
+  const panelId = here && panelIdOf(here, props.modalityId)
+  if (!panelId) return {}
+
+  const all = stops.value
+  const at = all.findIndex(s => s.case.slug === props.slug && s.panel.id === panelId)
+  // -1 cannot happen behind the page's `validate` guard, but an unknown
+  // stop must degrade to "no neighbours" rather than wrapping around to the
+  // ends of the list, which `at - 1` on -1 would do.
   if (at === -1) return {}
   return { previous: all[at - 1], next: all[at + 1] }
 })
@@ -43,7 +81,7 @@ const neighbours = computed<{ previous?: Case, next?: Case }>(() => {
        broke long headings across three lines. -->
   <nav
     v-if="neighbours.previous || neighbours.next"
-    aria-label="Previous and next case"
+    aria-label="Previous and next view"
     class="@container border-t border-border px-6 py-6"
   >
     <ul class="grid gap-3 @[30rem]:grid-cols-2">
@@ -52,51 +90,57 @@ const neighbours = computed<{ previous?: Case, next?: Case }>(() => {
              competing with the stage's control bar; each stage owns its
              own bar now, so nothing here is left to compete with. -->
         <NuxtLink
-          :to="`/${neighbours.previous.slug}`"
+          :to="neighbours.previous.to"
           class="group flex h-full flex-col rounded-card border border-border bg-surface p-4
                  transition-[box-shadow,border-color,transform] duration-200
                  hover:-translate-y-px hover:border-border-strong hover:shadow-sm"
         >
           <span
             class="flex items-center gap-1.5 text-caption font-bold uppercase tracking-[0.14em]"
-            :class="GROUP_INK[neighbours.previous.group]"
+            :class="neighbours.previous.ink"
           >
             <svg viewBox="0 0 24 24" class="size-3 transition-transform group-hover:-translate-x-0.5" aria-hidden="true">
               <path fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="m15 5-7 7 7 7" />
             </svg>
-            {{ CASE_GROUP_LABEL[neighbours.previous.group] }}
+            {{ neighbours.previous.panel.label }}
           </span>
-          <span class="mt-1.5 block text-body-sm font-bold leading-snug text-text
-                       transition-colors group-hover:text-brand-hover">
-            {{ neighbours.previous.heading }}
+          <!-- One text node, no whitespace between the two spans: they read
+               as one sentence, "Density A: Almost entirely fat". -->
+          <span class="mt-1.5 block text-body-sm leading-snug">
+            <span class="font-bold text-text transition-colors group-hover:text-brand-hover">{{ neighbours.previous.case.title }}</span><span
+              v-if="neighbours.previous.caption"
+              class="text-text-muted"
+            >: {{ neighbours.previous.caption }}</span>
           </span>
         </NuxtLink>
       </li>
 
       <!-- Keeps "next" in the right-hand column when there is no
-           "previous" (the overview case). -->
+           "previous" (the very first stop). -->
       <li
         v-if="neighbours.next"
         :class="neighbours.previous ? '' : '@[30rem]:col-start-2'"
       >
         <NuxtLink
-          :to="`/${neighbours.next.slug}`"
+          :to="neighbours.next.to"
           class="group flex h-full flex-col rounded-card border border-border bg-surface p-4
                  text-right transition-[box-shadow,border-color,transform] duration-200
                  hover:-translate-y-px hover:border-border-strong hover:shadow-sm"
         >
           <span
             class="flex items-center justify-end gap-1.5 text-caption font-bold uppercase tracking-[0.14em]"
-            :class="GROUP_INK[neighbours.next.group]"
+            :class="neighbours.next.ink"
           >
-            {{ CASE_GROUP_LABEL[neighbours.next.group] }}
+            {{ neighbours.next.panel.label }}
             <svg viewBox="0 0 24 24" class="size-3 transition-transform group-hover:translate-x-0.5" aria-hidden="true">
               <path fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7" />
             </svg>
           </span>
-          <span class="mt-1.5 block text-body-sm font-bold leading-snug text-text
-                       transition-colors group-hover:text-brand-hover">
-            {{ neighbours.next.heading }}
+          <span class="mt-1.5 block text-body-sm leading-snug">
+            <span class="font-bold text-text transition-colors group-hover:text-brand-hover">{{ neighbours.next.case.title }}</span><span
+              v-if="neighbours.next.caption"
+              class="text-text-muted"
+            >: {{ neighbours.next.caption }}</span>
           </span>
         </NuxtLink>
       </li>

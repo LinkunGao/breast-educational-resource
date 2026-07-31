@@ -397,15 +397,13 @@ Workbox `globPatterns` 只含 HTML / JS / CSS / 字体 / `logos/` / `team/`，**
 
 ---
 
-## 11. 本轮不做：第 4 条
+## 11. 第 4 条（已于第二轮落地，见 §13）
 
 甲方原话是「The camera for threejs for the MRI might need to be repositioned as all the images a very dark」。
 
 初步判断根因不是相机而是窗宽窗位：[`installFastSliceRepaint.ts`](../../../web/app/composables/installFastSliceRepaint.ts) 的灰度映射为 `(raw - windowLow) * 255 / (windowHigh - windowLow)`，而 `windowLow`/`windowHigh` 由 copper3d 直接取自体数据的 min/max。MRI 中少数极亮体素（脂肪、噪声尖峰）会把窗口拉满，组织灰阶被压到很低。乳腺 X 线的动态范围更均匀，所以只有 MRI 被抱怨。
 
-**该判断未经实测，本文档不据此设计。** §6.3 的 fit-to-view 会让 MRI 画面显著变大，可能部分缓解主观感受，但**不视为对第 4 条的答复**。
-
-待甲方确认后，另起一轮，先用 playwright 实测 canvas 像素直方图确认根因（仓库已有 `pngjs` 依赖与画布像素测量先例），再决定是修改默认窗口、还是在控件条上提供 brightness/contrast 控件（旧版 copper3d GUI 本有这组控件，新版以 `openGui: false` 关闭）。
+**该判断当时未经实测。** 甲方确认后按上述计划实测，判断成立 —— 见 §13.1。
 
 ---
 
@@ -414,3 +412,42 @@ Workbox `globPatterns` 只含 HTML / JS / CSS / 字体 / `logos/` / `team/`，**
 彼此独立、可并行的小项：§8.4（About）、§9（PWA）、§8.1（BI-RADS）、§8.2 + §8.3（侧栏）。
 
 有依赖链的主干：§4（槽位模型）→ §5（三实例）→ §6（布局与取景）→ §7（缓存预算）。§7 也可先于 §5 单独落地（只改 pageKey 与预算），能独立验证第 5 条。
+
+---
+
+## 13. 第二轮反馈
+
+### 13.1 MRI 过暗（第 4 条）
+
+先量数据再改代码。用 node 解析全部九个 `right/mri.nrrd`，按 copper3d 现有的 `[min, max]` 窗口换算，**组织的中位体素落在灰阶 31–55 / 255**；九个体积的 max 从 246 到 27014，没有任何一个固定窗宽能同时适配。根因确认是窗宽窗位，不是相机。
+
+**收窄窗口试了两次，两次都被否，记在这里。** 第一次是裁掉最亮的 1% 当 `windowHigh`，第二次是把窗口锚在组织中位数上（Otsu 分出空气/组织，中位体素映到灰阶 90）。甲方两次的回复都是「看不到 tumour 和它的 boundingbox 了」。
+
+**这不是参数没调好，是方向错了。** 任何足以提亮组织的**线性**窗口都会把量程顶端压掉，而增强扫描里病灶正是量程顶端 —— 病灶上还画着一个**白色**的 bounding box，窗口把病灶变白，box 就真的消失了。这条不靠调 `TARGET_GREY` 能绕开。
+
+最终做法是 **gamma 曲线**，见 [`sliceExposure.ts`](../../../web/app/composables/sliceExposure.ts)：`out = 255 * (in/255) ** exponent`，在 [`installFastSliceRepaint.ts`](../../../web/app/composables/installFastSliceRepaint.ts) 的像素循环里用一张 256 项 LUT 应用。曲线单调、两端固定（0 还是 0，255 还是 255），所以**中间抬多少都不可能裁切**，病灶与周围组织的差异保留，白 box 也还有底可衬。窗口 `windowLow`/`windowHigh` 一律不动。
+
+exponent 逐体积求解，让组织中位体素落到 `TARGET_GREY = 75`：这才是九个 max 相差两个数量级的体积能看起来一致的原因。组织/空气仍用 Otsu 分割 —— max 正是这九个体积唯一互相差 100 倍的量，任何从 max 推出来的阈值在每个体积里落点都不一样。
+
+时序：LUT 在打过补丁的 repaint 里，所以 `installFastSliceRepaint` 从「发射后不管」改成**被 await**，第一次 `repaint` 排在它后面，`load()` 又在这之后才画唯一那一帧。**首帧即最终曝光**，甲方要求的「调整完才渲染」得到满足。仅作用于 MRI。
+
+浏览器实测（同一台机器，同样的帧，开关各跑一次；指标为舞台上非背景像素的平均亮度，即切片本身的曝光，覆盖率两例分别稳定在 0.28 / 0.22）：
+
+| | 关 | 开 |
+|---|---|---|
+| density-a | 9.1 | 28.8 |
+| cancer-ductal | 19.9 | 42.0 |
+
+阈值取两列之间，见 [`mri-exposure.spec.ts`](../../../web/test-browser/mri-exposure.spec.ts)。「不可能裁切」这条不靠浏览器统计，由 [`sliceExposure.test.ts`](../../../web/test/sliceExposure.test.ts) 直接证明：除了本来就等于 max 的体素，没有任何体素能映到 255。
+
+### 13.2 next 按钮逐面板前进
+
+甲方原话：「When you click the next panel button, would be great to go to the next panel (anatomy -> mammography -> MRI ...). Then the only thing the person needs to do is to press next」。
+
+[`CaseNav.vue`](../../../web/app/components/nav/CaseNav.vue) 的一站从「病例」改成「病例的槽位」：anatomy → mammogram → MRI → 下一病例的 anatomy，九个病例共 27 站。顺序仍取自 `enabledCases()`，与侧栏同源，两处导航不可能对不上。
+
+2D/3D 变体**不算一站** —— 这是第一轮已经定下的（`PanelTabs` 的注释记着原话：读者在 3D 乳腺 X 线和 2D 超声之间切换，而不是路过其中一个才能到另一个）。所以 benign-cyst 的中槽是一站，落在它的 3D 默认值上。
+
+卡片的上行从「分组」改成「槽位」（用该模态自己的 ink，与 tab 条同色）。理由是三次按下里有两次只换槽位，最常变的那个信息应该在最上面；分组标签在页面 eyebrow 和侧栏都还在。`CASE_GROUP_LABEL` 的一致性守卫（§8.1）相应缩到剩下的两处。
+
+下行是「`title`: `heading`」，`title` 加粗、`heading` 用 muted：只写 heading 的话密度病例的链接文字整个就是一个字母「D」，只写 title 又不说明 Density A 长什么样。九个病例里有六个两个字段是同一个串（Cyst、Fibroadenoma、DCIS…），那六个只显示一次，不写成「Cyst: Cyst」。
