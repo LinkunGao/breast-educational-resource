@@ -136,6 +136,23 @@ describe('tour director', () => {
     expect(useTourStore().phase).toBe('fallback')
   })
 
+  it('steady progress keeps the tour waiting instead of tripping the stall window', async () => {
+    let p = 0
+    const api = stage({ isReady: () => false, loadProgress: () => (p += 0.05) })
+    registerTourStage('anatomy', api)
+    // stallMs is short and ceilingMs is long -- the opposite of the ceiling
+    // test above. With a real progress signal this must still be 'waiting'
+    // well past stallMs; a frozen signal (e.g. sliceMax(), constant in this
+    // fake) would have declared it stalled by then.
+    const { director } = makeDirector({ stallMs: 50, ceilingMs: 2000 })
+    const store = useTourStore()
+    const running = director.runStep(ORBIT_STEP)
+    await new Promise(r => setTimeout(r, 250))
+    expect(store.phase).toBe('waiting')
+    store.next() // bump runToken so the pending wait exits promptly instead of running to the ceiling
+    await running
+  })
+
   it('a throwing dep degrades to fallback instead of rejecting', async () => {
     const { director } = makeDirector({
       navigate: vi.fn(() => { throw new Error('boom') }),
