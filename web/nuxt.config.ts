@@ -2,6 +2,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { publicUrl } from './app/composables/assetUrl'
 import { enabledCases } from './content/cases'
 import { LEGACY_ROUTES } from './content/legacyRoutes'
+import { readAppVersion } from './version'
 
 // Mirrors @nuxt/schema's own default resolution for `app.baseURL` (it reads
 // this same env var with this same fallback). Needed at config-eval time
@@ -43,6 +44,9 @@ export default defineNuxtConfig({
       // live somewhere else entirely, in which case give an absolute URL
       // (e.g. `https://cdn.example/modelView/`), which is used verbatim.
       assetBase: '/modelView/',
+      // Displayed in the sidebar footer and on the About page. Read from
+      // package.json at build time so there is one source of truth.
+      appVersion: readAppVersion(),
     },
   },
 

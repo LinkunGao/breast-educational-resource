@@ -1,7 +1,35 @@
+import { fileURLToPath } from 'node:url'
 import { computed, inject, nextTick, onMounted, onScopeDispose, provide, reactive, ref, shallowRef, watch, watchEffect } from 'vue'
 import { vi } from 'vitest'
 import { useAssetUrl } from '../app/composables/useAssetUrl'
 import { useViewerStore } from '../app/stores/viewer'
+
+/**
+ * Mock node:fs to handle URL objects in readFileSync.
+ * Converts URL objects to file paths automatically.
+ */
+vi.mock('node:fs', async () => {
+  const actual = await vi.importActual<typeof import('node:fs')>('node:fs')
+  return {
+    ...actual,
+    readFileSync: (path: string | Buffer | number | URL, ...args: any[]) => {
+      let filePath: string | Buffer | number
+      if (path instanceof URL) {
+        try {
+          filePath = fileURLToPath(path)
+        }
+        catch {
+          // Fallback to pathname or string representation
+          filePath = (path as any).pathname || String(path).replace('file://', '')
+        }
+      }
+      else {
+        filePath = path
+      }
+      return actual.readFileSync(filePath, ...args)
+    },
+  }
+})
 
 /**
  * copper3d's real `installFastSliceRepaint` patches a `VolumeSlice` with a
@@ -38,7 +66,7 @@ vi.stubGlobal('useViewerStore', useViewerStore)
 // Mirrors nuxt.config.ts's actual defaults (assetBase '/modelView/', root
 // baseURL), so tests exercise the same URL-joining logic production does.
 vi.stubGlobal('useRuntimeConfig', () => ({
-  public: { assetBase: '/modelView/' },
+  public: { assetBase: '/modelView/', appVersion: '0.0.0-test' },
   app: { baseURL: '/' },
 }))
 vi.stubGlobal('useAssetUrl', useAssetUrl)

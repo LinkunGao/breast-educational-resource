@@ -15,6 +15,7 @@ import { citations, FEEDBACK_FORM_URL, organisations } from '~~/content/team'
 useHead({ title: 'About — Breast Educational Resource' })
 
 const { publicUrl } = useAssetUrl()
+const appVersion = useRuntimeConfig().public.appVersion
 
 /**
  * The two-person partner groups share one row; the twelve-person research
@@ -192,6 +193,9 @@ const fullWidthOrgs = computed(() =>
           class="font-bold text-brand-hover underline decoration-brand/40 underline-offset-2 hover:decoration-brand"
         >online form</a>
         to give us your valuable feedback about this app.
+      </p>
+      <p class="mt-4 text-caption tabular-nums text-text-subtle" data-app-version>
+        Breast Educational Resource v{{ appVersion }}
       </p>
     </section>
   </main>

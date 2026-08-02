@@ -8,6 +8,8 @@ import { GROUP_INK } from '~/utils/groupInk'
 
 const store = useViewerStore()
 const { publicUrl } = useAssetUrl()
+// Build-time value from package.json; see web/version.ts.
+const appVersion = useRuntimeConfig().public.appVersion
 
 /**
  * Per-group icon paths (client feedback item 9), drawn stroke-only at
@@ -253,5 +255,15 @@ function onKeydown(event: KeyboardEvent) {
         loading="lazy"
       >
     </NuxtLink>
+
+    <!-- Provenance lives at the foot of the persistent chrome, next to the
+         partner logos. A version is only ever wanted when something has
+         gone wrong, so it does not earn header space. -->
+    <p
+      data-app-version
+      class="px-2 pb-1 text-caption tabular-nums text-text-subtle"
+    >
+      v{{ appVersion }}
+    </p>
   </nav>
 </template>
