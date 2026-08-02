@@ -55,6 +55,7 @@ describe('TourLayer: superseded steps do not paint', () => {
         runStep: (step: TourStep) => new Promise<void>((resolve) => { pending.set(step.id, resolve) }),
         startTour: vi.fn(),
         exitTour: vi.fn(async () => { store.exit() }),
+        finishTour: vi.fn(() => { store.exit() }),
       }
     })
   })
@@ -150,7 +151,7 @@ describe('TourLayer: does not pre-paint a stale target across navigation', () =>
         runStep: (step: TourStep) => new Promise<void>((resolve) => { pending.set(step.id, resolve) }),
         startTour: vi.fn(),
         exitTour: vi.fn(async () => { store.exit() }),
-        capturedPose: () => undefined,
+        finishTour: vi.fn(() => { store.exit() }),
       }
     })
   })

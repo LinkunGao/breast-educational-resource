@@ -8,7 +8,6 @@ import type { PanelId } from '~~/content/types'
 // Imported, not auto-imported: exported so the decision rule can be unit-
 // tested without mounting this `.client` component.
 import { decideTourKeydown } from '~/utils/tourKeydown'
-import { getTourStage } from '~/composables/useTourStageBridge'
 
 /**
  * The tour's one stateful component.
@@ -134,17 +133,8 @@ function onKeydown(event: KeyboardEvent) {
  * would contradict it.
  */
 function advance() {
-  if (store.atEnd) finishTour()
+  if (store.atEnd) director.finishTour()
   else store.next()
-}
-
-function finishTour() {
-  for (const panel of ['anatomy', 'mammogram', 'mri'] as PanelId[]) {
-    const api = getTourStage(panel)
-    const pose = director.capturedPose(panel)
-    if (api && pose) api.applyPose(pose)
-  }
-  store.exit()
 }
 
 function onChapter(id: ChapterId) {

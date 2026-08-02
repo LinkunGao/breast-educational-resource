@@ -328,11 +328,11 @@ describe('tour director', () => {
   })
 
   // The brief this test came from claimed "'Finish' is exitTour in
-  // TourLayer" -- that is exactly backwards (see finishTour() in
-  // TourLayer.client.vue): exiting navigates back to the entry route,
-  // finishing does not. What this test actually pins is narrower and still
-  // true: exitTour() itself must behave the same regardless of stepIndex --
-  // it is TourLayer's advance() that branches on atEnd, not exitTour().
+  // TourLayer" -- that is exactly backwards (see finishTour() below):
+  // exiting navigates back to the entry route, finishing does not. What
+  // this test actually pins is narrower and still true: exitTour() itself
+  // must behave the same regardless of stepIndex -- it is TourLayer's
+  // advance() that branches on atEnd, not exitTour().
   it('exitTour returns to the entry route even when the reader is at the last step', async () => {
     const { director, navigate } = makeDirector({ currentRoute: () => '/cancer-ductal/mri' })
     const store = useTourStore()
@@ -343,21 +343,54 @@ describe('tour director', () => {
     expect(navigate).toHaveBeenCalledWith('/the-breast/anatomy')
   })
 
-  it('capturedPose exposes an interrupted demo\'s pose, which finishTour reads to restore it', async () => {
+  it('finishTour ends the tour and restores captured poses without navigating', async () => {
     const pose = { position: [7, 8, 9], up: [0, 1, 0], target: [0, 0, 0] }
     const store = useTourStore()
-    // Bump the run token mid-orbit so runDemo's own restore is skipped and
-    // the entry is left in `captured` -- same interruption as the existing
-    // "exiting mid-orbit" test, but read directly instead of via exitTour.
+    // Interrupted mid-orbit, so runDemo's own restore never runs and the
+    // entry is left in `captured` for finishTour to pick up.
+    const api = stage({
+      snapshot: () => pose,
+      orbit: vi.fn(async () => { store.next() }),
+    })
+    registerTourStage('anatomy', api)
+    const { director, navigate } = makeDirector()
+    store.start('wide', 14, '/the-breast/anatomy')
+    await director.runStep(ORBIT_STEP)
+    director.finishTour()
+    expect(api.applyPose).toHaveBeenCalledWith(pose)
+    expect(store.active).toBe(false)
+    expect(navigate).not.toHaveBeenCalled()
+  })
+
+  /**
+   * Fix round 1: finishTour() used to restore captured poses without
+   * clearing the map (TourLayer's old, local copy). A pose captured on one
+   * run then survived into the NEXT run, so exiting the next run before any
+   * demo captured anything of its own re-applied the stale pose from the
+   * previous run -- exactly the case this pins.
+   */
+  it('finishTour clears what it restores, so the next run\'s exitTour cannot re-apply a stale pose', async () => {
+    const pose = { position: [7, 8, 9], up: [0, 1, 0], target: [0, 0, 0] }
+    const store = useTourStore()
     const api = stage({
       snapshot: () => pose,
       orbit: vi.fn(async () => { store.next() }),
     })
     registerTourStage('anatomy', api)
     const { director } = makeDirector()
+
+    // First run: the orbit demo is interrupted, leaving `pose` captured;
+    // finishTour restores and (should) clear it.
     store.start('wide', 14, '/the-breast/anatomy')
-    expect(director.capturedPose('anatomy')).toBeUndefined()
     await director.runStep(ORBIT_STEP)
-    expect(director.capturedPose('anatomy')).toEqual(pose)
+    director.finishTour()
+    ;(api.applyPose as ReturnType<typeof vi.fn>).mockClear()
+
+    // Second run: exits immediately, before any demo of its own runs. If
+    // the first run's pose were still sitting in `captured`, this would
+    // wrongly re-apply it.
+    store.start('wide', 14, '/the-breast/anatomy')
+    await director.exitTour()
+    expect(api.applyPose).not.toHaveBeenCalledWith(pose)
   })
 })

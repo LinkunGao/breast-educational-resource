@@ -198,22 +198,33 @@ export function useTourDirector(deps: TourDirectorDeps) {
     store.start(scope, tourSteps(scope).length, deps.currentRoute())
   }
 
-  /** Puts everything back: every captured pose, then the entry route. */
-  async function exitTour() {
+  /** Restores every captured pose and clears the map. Shared by exitTour
+   *  and finishTour -- exiting then also navigates, finishing does not. */
+  function restoreCaptured() {
     for (const [panel, pose] of captured) getTourStage(panel)?.applyPose(pose)
     captured.clear()
+  }
+
+  /** Puts everything back: every captured pose, then the entry route. */
+  async function exitTour() {
+    restoreCaptured()
     const back = store.entryRoute
     store.exit()
     if (deps.currentRoute() !== back) await deps.navigate(back)
   }
 
-  /** The pose captured before a demo on this panel, if any. */
-  function capturedPose(panel: PanelId): Pose | undefined {
-    return captured.get(panel)
+  /** Restores every captured pose and ends the tour WITHOUT navigating --
+   *  finishing leaves the reader on the last step's page; only exiting
+   *  returns them to where they started. Without the clear in
+   *  restoreCaptured, a pose captured on one run would still be sitting in
+   *  `captured` for the next run's exitTour to wrongly restore. */
+  function finishTour() {
+    restoreCaptured()
+    store.exit()
   }
 
   return {
     steps, currentStep, resolveTarget, isWideLayout, layoutScope, runStep, startTour, exitTour,
-    capturedPose,
+    finishTour,
   }
 }
