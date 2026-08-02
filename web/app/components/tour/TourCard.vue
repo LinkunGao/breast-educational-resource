@@ -22,13 +22,52 @@ const GAP = 16
 const RAIL_CLEARANCE = 96
 
 /**
+ * The card's own footprint, measured rather than guessed.
+ *
+ * Fix round 1 (Task 9): a target rect spanning nearly the full viewport
+ * (chapter 2's `panels-wide` step) put a `bottom`-placement card's `top`
+ * at or past the viewport's bottom edge -- the card rendered entirely
+ * off-screen, Next included, with no keyboard-free way to reach it. GAP and
+ * RAIL_CLEARANCE alone guarded the anchor's OWN edge; nothing capped the
+ * anchor against the card's OTHER edge, because that edge's position was
+ * never known. This is the real number, not another guessed constant.
+ */
+const cardEl = ref<HTMLElement>()
+const size = ref({ width: 0, height: 0 })
+function measure() {
+  if (cardEl.value) size.value = { width: cardEl.value.offsetWidth, height: cardEl.value.offsetHeight }
+}
+let observer: ResizeObserver | undefined
+onMounted(() => {
+  measure()
+  observer = new ResizeObserver(measure)
+  if (cardEl.value) observer.observe(cardEl.value)
+})
+onScopeDispose(() => observer?.disconnect())
+
+/** An anchor measured from the near edge (top/left): floored at `GAP` off
+ *  that edge, and capped so the card's FAR edge stays `farClearance` clear
+ *  of the opposite one. */
+function clampNear(raw: number, farClearance: number, extent: number, cardSize: number): number {
+  return Math.max(GAP, Math.min(raw, extent - farClearance - cardSize))
+}
+/** An anchor measured from the far edge (bottom/right): floored at
+ *  `nearFloor` off that edge (GAP, or RAIL_CLEARANCE at the bottom), and
+ *  capped so the card's NEAR edge stays clear of the opposite one. */
+function clampFar(raw: number, nearFloor: number, extent: number, cardSize: number): number {
+  return Math.max(nearFloor, Math.min(raw, extent - GAP - cardSize))
+}
+
+/**
  * Where the card sits.
  *
  * Anchored from whichever edge faces the target rather than guessing the
  * card's own height/width: `top` placement sets `bottom`, `left` placement
  * sets `right`, and so on. The browser positions from that edge, so no
  * height/width constant is needed and a taller card never grows through its
- * own target.
+ * own target. `clampNear`/`clampFar` then cap each anchor against the
+ * card's real, measured OTHER edge, so the whole box stays on screen
+ * regardless of target geometry.
  */
 const style = computed(() => {
   if (!props.rect || props.placement === 'center') {
@@ -37,30 +76,32 @@ const style = computed(() => {
   const r = props.rect
   const vw = globalThis.innerWidth || 1024
   const vh = globalThis.innerHeight || 768
+  const w = size.value.width
+  const h = size.value.height
 
   // Cross-axis anchor: pick the side that puts the card's near edge flush
   // with the target's near edge, chosen by which half of the viewport the
   // target sits in. Same edge-anchoring trick as the main axis, so a wide
   // or tall card is still sized by the browser, not by a guessed constant.
   const hSide = (r.left + r.right) / 2 > vw / 2
-    ? { right: `${Math.max(GAP, vw - r.right)}px` }
-    : { left: `${Math.max(GAP, r.left)}px` }
+    ? { right: `${clampFar(vw - r.right, GAP, vw, w)}px` }
+    : { left: `${clampNear(r.left, GAP, vw, w)}px` }
   const vSide = (r.top + r.bottom) / 2 > vh / 2
-    ? { bottom: `${Math.max(RAIL_CLEARANCE, vh - r.bottom)}px` }
-    : { top: `${Math.max(GAP, r.top)}px` }
+    ? { bottom: `${clampFar(vh - r.bottom, RAIL_CLEARANCE, vh, h)}px` }
+    : { top: `${clampNear(r.top, RAIL_CLEARANCE, vh, h)}px` }
 
   if (props.placement === 'right') {
-    return { ...vSide, left: `${Math.max(GAP, r.right + GAP)}px` }
+    return { ...vSide, left: `${clampNear(r.right + GAP, GAP, vw, w)}px` }
   }
   if (props.placement === 'left') {
-    return { ...vSide, right: `${Math.max(GAP, vw - r.left + GAP)}px` }
+    return { ...vSide, right: `${clampFar(vw - r.left + GAP, GAP, vw, w)}px` }
   }
   if (props.placement === 'bottom') {
-    return { top: `${Math.max(GAP, r.bottom + GAP)}px`, ...hSide }
+    return { top: `${clampNear(r.bottom + GAP, RAIL_CLEARANCE, vh, h)}px`, ...hSide }
   }
   // 'top': anchor the card's bottom edge above the target instead of its
   // top edge, so the card grows upward and never covers the target.
-  return { bottom: `${Math.max(RAIL_CLEARANCE, vh - r.top + GAP)}px`, ...hSide }
+  return { bottom: `${clampFar(vh - r.top + GAP, RAIL_CLEARANCE, vh, h)}px`, ...hSide }
 })
 
 const btn = 'flex min-h-11 items-center rounded-full px-4 text-body-sm font-bold'
@@ -68,10 +109,11 @@ const btn = 'flex min-h-11 items-center rounded-full px-4 text-body-sm font-bold
 
 <template>
   <div
+    ref="cardEl"
     role="dialog"
     :aria-labelledby="titleId"
     data-tour-card
-    class="fixed z-50 w-80 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto
+    class="fixed z-50 w-80 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-7rem)] overflow-y-auto
            rounded-card border border-border bg-surface/95 p-5 shadow-lg backdrop-blur-sm"
     :style="style"
   >

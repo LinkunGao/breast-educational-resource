@@ -206,6 +206,31 @@ describe('TourCard clears the chapter rail', () => {
   })
 })
 
+describe('TourCard stays inside the viewport', () => {
+  // Fix round 1 (Task 9): chapter 2's `panels-wide` step targets
+  // `[data-tour="panels"]`, a rect spanning nearly the full viewport
+  // height. With `placement: 'bottom'`, the old main-axis anchor
+  // (`top: r.bottom + GAP`, no cap) landed at or past the viewport's
+  // bottom edge -- a real reader on a real desktop could not reach the
+  // card's own Next button. This must fail if the clamp in TourCard.vue
+  // is removed.
+  it("a nearly-full-height target with placement 'bottom' does not push the card's top at or beyond the viewport height", () => {
+    // Unclamped, `top = r.bottom + GAP` = 990 + 16 = 1006 -- past the
+    // 1000px viewport outright, not merely inside the rail's footprint.
+    const nearlyFullHeightRect = { top: 20, left: 100, width: 800, height: 970, right: 900, bottom: 990 } as DOMRect
+    const style = withViewport(1024, 1000, () => {
+      const w = mount(TourCard, { props: { ...cardProps, rect: nearlyFullHeightRect, placement: 'bottom' } })
+      return w.get('[data-tour-card]').attributes('style')!
+    })
+    const match = style.match(/top: (-?\d+)px/)
+    expect(match, `expected a top anchor in "${style}"`).not.toBeNull()
+    const top = Number(match![1])
+    expect(top).toBeLessThan(1000)
+    // Clamped clear of the chapter rail too, not merely inside the box.
+    expect(top).toBeLessThanOrEqual(1000 - 96)
+  })
+})
+
 describe('TourRail', () => {
   const railProps = {
     chapters: TOUR_CHAPTERS, activeChapter: 'interacting' as const,
