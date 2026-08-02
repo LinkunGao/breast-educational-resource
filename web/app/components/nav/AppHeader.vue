@@ -96,11 +96,31 @@ const store = useViewerStore()
         </svg>
       </button>
 
+      <!--
+        A filled control, not a text link.
+
+        It used to be `text-body-sm text-text-muted` with a hover background
+        and nothing else, so on a touch device -- where nothing ever hovers
+        -- it read as a grey word rather than a control. Below xl the
+        content-panel toggle beside it is display:none too, leaving it the
+        lone item on the right with no context that this strip is controls
+        at all.
+
+        Filled with `--color-text`, NOT `--color-brand`: rose is this app's
+        focus semantic (the focused panel's ring, the sidebar's current row,
+        Locate lesion), and spending it on a permanent header button would
+        blur what "current" means everywhere else.
+      -->
       <NuxtLink
         to="/about"
-        class="flex min-h-11 items-center rounded-ctl px-3 text-body-sm text-text-muted hover:bg-surface-sunken hover:text-text"
+        class="flex min-h-11 items-center gap-1.5 rounded-full bg-text px-4
+               text-body-sm font-bold text-surface transition-opacity hover:opacity-90"
       >
-        About
+        <svg viewBox="0 0 24 24" class="size-4 shrink-0" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" />
+          <path fill="currentColor" d="M11 10.5h2V17h-2zM11 7h2v2h-2z" />
+        </svg>
+        <span data-about-label>About</span>
       </NuxtLink>
     </div>
   </header>

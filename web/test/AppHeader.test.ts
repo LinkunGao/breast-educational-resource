@@ -197,5 +197,37 @@ describe('AppHeader', () => {
       expect(headerGap).toBeDefined()
       expect(groupGap).toBe(headerGap)
     })
+
+    it('About is a filled control, not bare text: it reads as a button without hover', () => {
+      // The bug this fixes: About had only `hover:bg-surface-sunken`, and a
+      // touch device never hovers, so on iPad and phone it was a grey word.
+      const wrapper = mountHeader()
+      const about = wrapper.get('[data-header-actions] a[href="/about"]')
+      expect(about.classes()).toContain('bg-text')
+      expect(about.classes()).toContain('text-surface')
+    })
+
+    it('About keeps its visible label at every width', () => {
+      // It outranks the tour button (Task 8), so it must never collapse to
+      // an icon the way that one does below md.
+      const wrapper = mountHeader()
+      const about = wrapper.get('[data-header-actions] a[href="/about"]')
+      const label = about.get('[data-about-label]')
+      expect(label.text()).toBe('About')
+      expect(label.classes().some(c => c.endsWith(':hidden') || c === 'hidden')).toBe(false)
+    })
+
+    it('About is the last control in the cluster (the end position)', () => {
+      const wrapper = mountHeader()
+      const group = wrapper.get('[data-header-actions]')
+      const last = group.element.lastElementChild as HTMLElement
+      expect(last.getAttribute('href')).toBe('/about')
+    })
+
+    it('About still meets the 44px tap-target floor', () => {
+      const wrapper = mountHeader()
+      const about = wrapper.get('[data-header-actions] a[href="/about"]')
+      expect(about.classes()).toContain('min-h-11')
+    })
   })
 })
