@@ -13,6 +13,7 @@ function fakeStage(overrides: Partial<TourStageApi> = {}): TourStageApi {
     orbit: vi.fn(async () => {}),
     scrubTo: vi.fn(),
     sliceMax: () => 100,
+    loadProgress: () => 1,
     lesionSliceIndex: () => 62,
     locate: vi.fn(),
     reset: vi.fn(),

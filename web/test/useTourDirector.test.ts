@@ -15,6 +15,7 @@ function stage(overrides: Partial<TourStageApi> = {}): TourStageApi {
     orbit: vi.fn(async () => {}),
     scrubTo: vi.fn(),
     sliceMax: () => 100,
+    loadProgress: () => 1,
     lesionSliceIndex: () => 62,
     locate: vi.fn(),
     reset: vi.fn(),
@@ -122,6 +123,27 @@ describe('tour director', () => {
     ready = true
     await running
     expect(api.orbit).not.toHaveBeenCalled()
+  })
+
+  it('gives up at the ceiling even when progress keeps ticking (never trips the stall window)', async () => {
+    let progress = 0
+    const api = stage({ isReady: () => false, loadProgress: () => (progress += 0.01) })
+    registerTourStage('anatomy', api)
+    // stallMs is large enough that steadily-increasing progress never trips
+    // it; only the absolute ceiling can end this wait.
+    const { director } = makeDirector({ stallMs: 1000, ceilingMs: 250 })
+    await director.runStep(ORBIT_STEP)
+    expect(useTourStore().phase).toBe('fallback')
+  })
+
+  it('a throwing dep degrades to fallback instead of rejecting', async () => {
+    const { director } = makeDirector({
+      navigate: vi.fn(() => { throw new Error('boom') }),
+    })
+    await expect(director.runStep({
+      id: 'x', chapter: 'lesion', title: 'T', body: 'B', route: '/cancer-ductal/mri',
+    })).resolves.toBeUndefined()
+    expect(useTourStore().phase).toBe('fallback')
   })
 
   it('navigates first when the step names a route', async () => {

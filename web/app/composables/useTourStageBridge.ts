@@ -18,6 +18,9 @@ export interface TourStageApi {
   orbit: (yawRad: number, durationMs: number) => Promise<void>
   scrubTo: (index: number) => void
   sliceMax: () => number
+  /** Fractional load progress, 0..1. NaN is possible mid-flight; treat any
+   *  change as progress. GLB loads only ever report 0 then 1. */
+  loadProgress: () => number
   lesionSliceIndex: () => number
   locate: () => void
   reset: () => void

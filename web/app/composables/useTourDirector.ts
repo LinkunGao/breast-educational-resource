@@ -83,15 +83,20 @@ export function useTourDirector(deps: TourDirectorDeps) {
     store.phase = 'waiting'
     const began = Date.now()
     let lastChange = Date.now()
-    let lastMax = api.sliceMax()
+    // sliceMax() is binary -- 0 until the whole asset lands, then final --
+    // so it can never show a slow download progressing. loadProgress() is
+    // copper3d's real fractional byte progress; it can be NaN mid-flight,
+    // so compare with Object.is (NaN !== NaN, but Object.is(NaN, NaN) is
+    // true, and a number-to-NaN transition still reads as a change).
+    let lastProgress = api.loadProgress()
 
     while (Date.now() - began < ceilingMs) {
       await new Promise(r => setTimeout(r, 100))
       if (token !== store.runToken) return false
       if (api.isFailed()) return false
       if (api.isReady()) return true
-      const max = api.sliceMax()
-      if (max !== lastMax) { lastMax = max; lastChange = Date.now() }
+      const progress = api.loadProgress()
+      if (!Object.is(progress, lastProgress)) { lastProgress = progress; lastChange = Date.now() }
       if (Date.now() - lastChange > stallMs) return false
     }
     return false
@@ -100,9 +105,6 @@ export function useTourDirector(deps: TourDirectorDeps) {
   async function runDemo(demo: TourDemo, token: number) {
     const api = getTourStage(demo.panel)
     if (!api) return
-
-    const pose = api.snapshot()
-    if (pose) captured.set(demo.panel, pose)
 
     if (demo.kind === 'focusPanel') {
       deps.focusPanel(demo.panel)
@@ -113,10 +115,20 @@ export function useTourDirector(deps: TourDirectorDeps) {
       return
     }
     if (demo.kind === 'orbit') {
+      // Only the orbit demo moves the camera, so only it needs to capture
+      // and restore a pose. Captured here (not up front) and deleted right
+      // after its own restore, so exitTour only ever restores a demo that
+      // was interrupted before it could put the camera back itself --
+      // never a reader's own rotation made after the demo finished.
+      const pose = api.snapshot()
+      if (pose) captured.set(demo.panel, pose)
       await api.orbit(demo.degrees * DEG, demo.durationMs)
       if (token !== store.runToken) return
       const entry = captured.get(demo.panel)
-      if (entry) api.applyPose(entry)
+      if (entry) {
+        api.applyPose(entry)
+        captured.delete(demo.panel)
+      }
       return
     }
     // scrubSlices: step to the far end of the volume and back to where the
@@ -132,6 +144,19 @@ export function useTourDirector(deps: TourDirectorDeps) {
 
   /** Runs one step end to end. Never throws; never blocks indefinitely. */
   async function runStep(step: TourStep) {
+    try {
+      await runStepBody(step)
+    }
+    catch {
+      // A caller-supplied dep (navigate, focusPanel, a TourStageApi method,
+      // ...) can throw synchronously or reject. The tour must never die
+      // mid-step for it -- fall back to the manual copy like any other
+      // degraded step.
+      store.phase = 'fallback'
+    }
+  }
+
+  async function runStepBody(step: TourStep) {
     const token = store.runToken
 
     if (step.route && deps.currentRoute() !== step.route) {
