@@ -8,11 +8,11 @@ import { focusedStage, waitForModality } from './helpers'
  *
  * copper3d windows a volume on its own min/max, and on these MRIs the max is
  * a handful of bright outliers, so the tissue sits in the bottom of the
- * range. `sliceExposure.ts` lifts the mid-tones with a gamma curve.
+ * range. `ts/Utils/volumeExposure.ts` lifts the mid-tones with a gamma curve.
  *
  * That the curve cannot clip -- the other half of the client's feedback, and
  * what sank two earlier attempts -- is proved exactly in
- * `test/sliceExposure.test.ts`. What is left for a browser is the half no
+ * `ts/__tests__/volumeExposure.test.ts`. What is left for a browser is the half no
  * unit test can reach: that the lift survives copper3d's repaint and reaches
  * the screen at all.
  */

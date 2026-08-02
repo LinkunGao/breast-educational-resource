@@ -2,34 +2,50 @@ import { effectScope, shallowRef } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Modality } from '../content/types'
 import type { CopperModule, CopperRenderer, CopperScene, CopperViewPoint, StageApi } from '../app/composables/copper-types'
-import { loadGltfModel } from '../app/composables/loadGltfModel'
-import { createSceneBudget } from '../app/composables/sceneBudget'
+import { VOLUME_BOUNDS_NAME, createSceneBudget, installFastSliceRepaint, setDracoDecoderPath } from '../app/composables/copperExtras'
 import { useModalityScene } from '../app/composables/useModalityScene'
 
 /**
- * useModalityScene drives copper3d's own NRRD loader (loadNrrd) and this
- * app's loadGltfModel wrapper around three's GLTFLoader for GLBs (mocked
- * below, same as loadNrrd) -- happy-dom has no WebGL and cannot decode a
- * real GLB/NRRD file. What's under test here is the bookkeeping around
- * those calls: scene naming/reuse, the shared-canvas controls hand-off, the
- * resize-listener leak workaround, stall-based failure detection (copper3d's
- * loadNrrd has no onError to lean on; the GLB path gets a flat wall-clock
- * timeout instead, see GLB_LOAD_TIMEOUT_MS's own comment), the stale-load
- * bookkeeping guard, disposal safety, the view-preset render-after-fetch
- * sequencing, and the ultrasound control flags -- exactly what the task
- * brief and its review call out as testable without a browser.
+ * useModalityScene drives copper3d's own loaders (`scene.loadNrrd` and
+ * `scene.loadGltf`, both faked below) -- happy-dom has no WebGL and cannot
+ * decode a real GLB/NRRD file. What's under test here is the bookkeeping
+ * around those calls: scene naming/reuse, the resize-listener leak
+ * workaround, failure detection (a no-progress stall for NRRD, a wall-clock
+ * timeout under `onError` for GLB), the stale-load bookkeeping guard,
+ * disposal safety, the view-preset render-after-fetch sequencing, and the
+ * ultrasound control flags.
  */
 
 /**
- * `loadGltfModel` is a plain module export that useModalityScene's `loadGlb`
- * calls as a Nuxt-auto-imported bare global (there is no local `import` for
- * it in the source file -- same convention as `useAssetUrl`/
- * `useRuntimeConfig`, which test/setup.ts already stubs globally for the
- * same reason). Mocking the module here and re-exposing the mocked binding
- * globally (see beforeEach below) lets every test drive it exactly the way
- * the old `scene.loadGltf` mock it replaces used to be driven.
+ * Extends test/setup.ts's own mock of this barrel. `setDracoDecoderPath` is
+ * a spy here so the subpath-deploy test can assert what the decoder was
+ * pointed at without a real decoder existing.
  */
-vi.mock('../app/composables/loadGltfModel', () => ({ loadGltfModel: vi.fn() }))
+vi.mock('../app/composables/copperExtras', async importOriginal => ({
+  ...(await importOriginal<typeof import('../app/composables/copperExtras')>()),
+  installFastSliceRepaint: vi.fn(async () => {}),
+  setDracoDecoderPath: vi.fn(),
+}))
+
+/**
+ * Stands in for `scene.loadGltf(url, onLoad, opts)`. Module-level so a test
+ * can queue behaviour before the scene it will land on exists.
+ *
+ * Copper3d's own `loadGltf` adds the group to the scene itself, so the fake
+ * scene does too -- `loadGlb` no longer adds anything, and a fake that left
+ * the group out would hide that.
+ */
+const gltfLoad = vi.fn<(url: string, onLoad: (group: any) => void, opts?: any) => void>()
+
+/** Queues the next `loadGltf` to succeed with `group`. */
+function resolveGltfWith(group: unknown) {
+  gltfLoad.mockImplementationOnce((_url, onLoad) => { onLoad(group) })
+}
+
+/** A group shaped enough for `tintFatLayer`'s traverse and the Box3 measure. */
+function plainGroup() {
+  return { name: '', traverse: () => {} }
+}
 
 const DEFAULT_VIEWPOINT: CopperViewPoint = {
   farPlane: 1000, nearPlane: 0.01, eyePosition: [0, 0, 1], targetPosition: [0, 0, 0], upVector: [0, 1, 0],
@@ -55,21 +71,14 @@ function makeModality(overrides: Partial<Modality> = {}): Modality {
  * `getObjectByName` that always returned undefined would let both of those
  * "pass" by doing nothing at all.
  */
-/** What `copperSceneOnDemond`'s constructor leaves on `scene.controls`:
- * OrbitControls. Deliberately WITHOUT `noRotate`/`noPan`/`staticMoving`, so
- * production code that writes those onto an un-swapped instance is visible
- * as a stray property rather than passing silently. */
-function makeOrbitControlsDouble() {
-  return {
-    rotateSpeed: 1,
-    panSpeed: 1,
-    enabled: true,
-    removeEventListener: vi.fn(),
-    dispose: vi.fn(),
-  }
-}
-
-/** What `installTrackballControls` puts there instead. */
+/**
+ * What `createScene(name, { controls: 'copper3d' })` leaves on
+ * `scene.controls`: a `Copper3dTrackballControls`, with the trackball's own
+ * `noRotate`/`noPan` spelling rather than OrbitControls' `enableRotate`/
+ * `enablePan`. Writing the wrong pair is a silent no-op on the real class,
+ * which is how every flat view stayed rotatable for so long, so the double
+ * deliberately carries only the names the real object has.
+ */
 function makeTrackballDouble() {
   return {
     rotateSpeed: 1,
@@ -77,6 +86,7 @@ function makeTrackballDouble() {
     noRotate: false,
     noPan: false,
     staticMoving: false,
+    updateOnInput: true,
     enabled: true,
     handleResize: vi.fn(),
     addEventListener: vi.fn(),
@@ -105,20 +115,16 @@ function makeFakeCamera() {
 
 function makeFakeScene(): CopperScene {
   const objects: Array<{ name: string }> = []
+  const add = vi.fn((obj: { name: string }) => { objects.push(obj) })
   const scene = {
     camera: makeFakeCamera() as unknown as CopperScene['camera'],
-    // The OrbitControls instance copper3d's constructor builds. Production
-    // code replaces this via `installTrackballControls` before touching it,
-    // so it is shaped the way copper3d leaves it, NOT the way the app then
-    // uses it -- a fake that started out trackball-shaped would hide a
-    // regression where the install stopped happening.
-    controls: makeOrbitControlsDouble(),
+    controls: makeTrackballDouble(),
     renderer: { domElement: document.createElement('canvas') },
     sceneName: '',
     requestRenderIfNotRequested: vi.fn(),
     objects,
     scene: {
-      add: vi.fn((obj: { name: string }) => { objects.push(obj) }),
+      add,
       remove: vi.fn((obj: { name: string }) => {
         const at = objects.indexOf(obj)
         if (at !== -1) objects.splice(at, 1)
@@ -133,12 +139,10 @@ function makeFakeScene(): CopperScene {
     // copper3d's own addObject is `this.scene.add(obj)` (bundle.esm.js:68800).
     addObject: vi.fn((obj: { name: string }) => { objects.push(obj) }),
     loadNrrd: vi.fn(),
-    // Deliberately no `loadGltf` here: `loadGlb` (useModalityScene.ts) no
-    // longer calls it at all -- it calls the module-level `loadGltfModel`
-    // instead (mocked globally, see this file's header) and adds the result
-    // to `scene.scene` itself. Leaving `loadGltf` off this fake entirely
-    // means a stray production regression back to `scene.loadGltf` fails
-    // loudly (calling an undefined method) instead of silently no-opping.
+    // Routed through the module-level spy, but the `scene.add` is done HERE
+    // because copper3d's own `loadGltf` does it -- `loadGlb` adds nothing.
+    loadGltf: vi.fn((url: string, onLoad: (g: any) => void, opts?: unknown) =>
+      gltfLoad(url, (group) => { add(group); onLoad(group) }, opts)),
     loadView: vi.fn(),
     onWindowResize: vi.fn(),
     confirmResize: vi.fn(),
@@ -161,7 +165,7 @@ function makeFakeRenderer(scene: CopperScene): CopperRenderer {
   return {
     sceneMap,
     getSceneByName: vi.fn(() => undefined),
-    createScene: vi.fn((name: string) => {
+    createScene: vi.fn((name: string, _opt?: unknown) => {
       sceneMap[name] = scene
       return scene
     }),
@@ -173,9 +177,7 @@ function makeFakeRenderer(scene: CopperScene): CopperRenderer {
   }
 }
 
-/** A real DOM node, so a genuine MutationObserver can watch it -- matches
- * what `Copper.loading()` actually returns (LoadingBar's `progress` is a
- * real HTMLDivElement, not a plain object). */
+/** Real DOM nodes, matching what `Copper.loading()` actually returns. */
 function makeLoadingBar() {
   return { loadingContainer: document.createElement('div'), progress: document.createElement('div') }
 }
@@ -184,13 +186,6 @@ function makeFakeCopperModule(): CopperModule {
   return {
     copperRendererOnDemond: vi.fn() as unknown as CopperModule['copperRendererOnDemond'],
     loading: vi.fn(() => makeLoadingBar()),
-    // A `function`, not an arrow: `installTrackballControls` calls this with
-    // `new`, and an arrow function is not a constructor. Returning an object
-    // from a constructor overrides `this`, so the double is what comes back.
-    Copper3dTrackballControls: vi.fn(
-      function () { return makeTrackballDouble() },
-    ) as unknown as CopperModule['Copper3dTrackballControls'],
-    addBoxHelper: vi.fn(),
   }
 }
 
@@ -203,7 +198,7 @@ function makeFakeStage(renderer: CopperRenderer): StageApi {
     requestContinuous: vi.fn(),
     releaseContinuous: vi.fn(),
     // Fixed at 1 (square): no test here cares about a non-square host, and
-    // `fitToView.test.ts` already covers `fitDistance`'s own aspect handling
+    // `orbitFraming.test.ts` already covers `fitDistance`'s own aspect handling
     // in isolation.
     aspect: vi.fn(() => 1),
   }
@@ -220,12 +215,12 @@ describe('useModalityScene', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     stubFetchOk()
-    // Mirrors how production resolves this Nuxt-auto-imported composable --
-    // see this file's header. `mockReset` (not `mockClear`) so a previous
-    // test's queued `mockResolvedValueOnce`/`mockImplementationOnce`
-    // behaviour and call history never leak into the next one.
-    vi.stubGlobal('loadGltfModel', loadGltfModel)
-    vi.mocked(loadGltfModel).mockReset()
+    // `mockReset` (not `mockClear`) so a previous test's queued
+    // `mockImplementationOnce` behaviour and call history never leak into
+    // the next one; the default below stands in for a GLB that loads.
+    gltfLoad.mockReset()
+    gltfLoad.mockImplementation((_url, onLoad) => { onLoad(plainGroup()) })
+    vi.mocked(setDracoDecoderPath).mockClear()
   })
 
   afterEach(() => {
@@ -256,7 +251,12 @@ describe('useModalityScene', () => {
     const modalityScene = useModalityScene(stage)
 
     const loadPromise = modalityScene.load('the-breast', makeModality({ id: 'mri', asset: 'density-1/right/mri.nrrd' }))
-    expect(renderer.createScene).toHaveBeenCalledWith('/modelView/density-1/right/mri.nrrd')
+    // `controls: 'copper3d'` is the trackball, which is also what turns on
+    // `updateOnInput` -- without it an on-demand viewer ignores the mouse.
+    expect(renderer.createScene).toHaveBeenCalledWith(
+      '/modelView/density-1/right/mri.nrrd',
+      { controls: 'copper3d' },
+    )
     expect(renderer.setCurrentScene).toHaveBeenCalledWith(scene)
 
     // Resolve loadNrrd's callback synchronously, as a fast local fixture load would.
@@ -277,47 +277,38 @@ describe('useModalityScene', () => {
   })
 
   /**
-   * Asserted as ORDERING, not presence: the broken version added the box
-   * too, just one microtask after `load()` had drawn its only frame, so
-   * it was invisible until the reader touched the canvas. Holding the
-   * box's promise open is the only shape that fails against that code.
+   * The wireframe box is the only thing giving a lone slice plane spatial
+   * context. It used to be added by an app-local async helper, and a
+   * fire-and-forget call landed it one microtask after `load()` had drawn
+   * its only frame -- invisible until the reader touched the canvas.
+   * copper3d's `addVolumeBoundingBox` is synchronous, so it cannot race the
+   * render at all; what is left to hold is that it is called, sized from the
+   * volume, and in the scene by the time the frame is drawn.
    */
-  it('does not finish the load until the volume bounding box is in the scene', async () => {
+  it('puts the volume bounding box in the scene before the frame is drawn', async () => {
     const scene = makeFakeScene()
     const renderer = makeFakeRenderer(scene)
     const stage = makeFakeStage(renderer)
     const modalityScene = useModalityScene(stage)
+    const objects = (scene as unknown as { objects: Array<{ name: string }> }).objects
 
-    let addBox!: () => void
-    const boxPending = new Promise<void>((resolve) => { addBox = resolve })
-    const realStub = (globalThis as unknown as Record<string, unknown>).addVolumeBoundingBox
-    vi.stubGlobal('addVolumeBoundingBox', vi.fn(() => boxPending))
+    vi.mocked(renderer.render).mockImplementation(() => {
+      expect(
+        objects.some(o => o.name === VOLUME_BOUNDS_NAME),
+        'a frame was drawn before the box existed',
+      ).toBe(true)
+    })
 
-    try {
-      const load = modalityScene.load(
-        'density-a',
-        makeModality({ id: 'mri', asset: 'density-1/right/mri.nrrd' }),
-      )
-      const [, , , callback] = vi.mocked(scene.loadNrrd).mock.calls[0]!
-      callback(fakeVolume(), fakeMeshes(), { z: fakeSlice() })
+    const load = modalityScene.load(
+      'density-a',
+      makeModality({ id: 'mri', asset: 'density-1/right/mri.nrrd' }),
+    )
+    const [, , , callback] = vi.mocked(scene.loadNrrd).mock.calls[0]!
+    callback(fakeVolume(), fakeMeshes(), { z: fakeSlice() })
+    await load
 
-      let settled = false
-      void load.then(() => { settled = true })
-      // Microtasks, not timers: this suite runs on fake timers.
-      for (let i = 0; i < 20; i++) await Promise.resolve()
-
-      expect(settled, 'load() resolved while the bounding box was still pending').toBe(false)
-      expect(renderer.render, 'a frame was drawn before the box existed').not.toHaveBeenCalled()
-
-      addBox()
-      await load
-      expect(renderer.render).toHaveBeenCalled()
-    }
-    finally {
-      // afterEach's restoreAllMocks does not undo stubGlobal, and this one
-      // shadows test/setup.ts's file-wide stub.
-      vi.stubGlobal('addVolumeBoundingBox', realStub)
-    }
+    expect(renderer.render).toHaveBeenCalled()
+    expect(objects.filter(o => o.name === VOLUME_BOUNDS_NAME)).toHaveLength(1)
   })
 
   it('reuses an existing scene instead of recreating it or re-downloading', async () => {
@@ -442,8 +433,10 @@ describe('useModalityScene', () => {
     expect(scene.controls.noRotate).toBe(false)
     expect(scene.controls.noPan).toBe(false)
     expect(scene.controls.staticMoving).toBe(true)
-    // The legacy app's tuned value, on the class it was tuned for.
-    expect(scene.controls.rotateSpeed).toBe(3.0)
+    // Half the legacy app's 3.0: `updateOnInput` integrates the whole
+    // gesture instead of only the last event before each frame, so the same
+    // number now produces several times more rotation. See the source.
+    expect(scene.controls.rotateSpeed).toBe(1.5)
   })
 
   // Review fix #1 (second half): the resize listener is removed the moment
@@ -488,7 +481,7 @@ describe('useModalityScene', () => {
     // inside the 15s stall window individually.
     for (let i = 0; i < 3; i++) {
       await vi.advanceTimersByTimeAsync(10_000)
-      bar.progress.textContent = `File: m3d.nrrd ${(i + 1) * 20} % loaded`
+      nrrdProgress(scene, (i + 1) * 20, 100)
       await flushMicrotasks()
     }
 
@@ -558,15 +551,14 @@ describe('useModalityScene', () => {
     expect(retryScene.loadView).toHaveBeenCalledWith(DEFAULT_VIEWPOINT)
   })
 
-  it('parses the real load percentage out of copper3d\'s own progress text', async () => {
+  it('reports the real fraction downloaded', async () => {
     const scene = makeFakeScene()
     const renderer = makeFakeRenderer(scene)
     const stage = makeFakeStage(renderer)
     const modalityScene = useModalityScene(stage)
-    const bar = captureNextLoadingBar(stage)
 
     const loadPromise = modalityScene.load('the-breast', makeModality())
-    bar.progress.textContent = 'File: m3d.nrrd 42 % loaded'
+    nrrdProgress(scene, 42, 100)
     await flushMicrotasks()
 
     expect(modalityScene.progress.value).toBeCloseTo(0.42)
@@ -575,21 +567,18 @@ describe('useModalityScene', () => {
     await loadPromise
   })
 
-  // Review round 2, fix #3: when the server omits Content-Length,
-  // copper3d's own percentage math divides by zero and writes the literal
-  // string "File: x Infinity % loaded" (Loader/copperNrrdLoader.js:152).
-  // The old digit-only regex simply didn't match, silently freezing
-  // `progress` at whatever it last held (0, on the very first event) --
-  // this should read as indeterminate instead.
-  it('treats a missing-Content-Length "Infinity %" as indeterminate, not stuck at 0', async () => {
+  // Review round 2, fix #3: a gzipped or chunked response has no
+  // Content-Length, so `event.total` is 0. Bytes are still arriving, there
+  // is just no fraction to express -- freezing `progress` at whatever it
+  // last held (0, on the very first event) reads as a stuck download.
+  it('treats a missing Content-Length as indeterminate, not stuck at 0', async () => {
     const scene = makeFakeScene()
     const renderer = makeFakeRenderer(scene)
     const stage = makeFakeStage(renderer)
     const modalityScene = useModalityScene(stage)
-    const bar = captureNextLoadingBar(stage)
 
     const loadPromise = modalityScene.load('the-breast', makeModality())
-    bar.progress.textContent = 'File: m3d.nrrd Infinity % loaded'
+    nrrdProgress(scene, 4096, 0)
     await flushMicrotasks()
 
     expect(modalityScene.progress.value).toBeNaN()
@@ -603,11 +592,11 @@ describe('useModalityScene', () => {
     const renderer = makeFakeRenderer(scene)
     const stage = makeFakeStage(renderer)
     const modalityScene = useModalityScene(stage)
-    // loadGltfModel's mock never resolves, simulating a genuinely dead
+    // the loadGltf fake never calls back, simulating a genuinely dead
     // connection -- it has a real onError unlike copper3d's own loadGltf,
     // but nothing here ever calls it, so the flat wall-clock timeout in
     // `loadGlb` (GLB_LOAD_TIMEOUT_MS) is the only way out.
-    vi.mocked(loadGltfModel).mockImplementationOnce(() => new Promise(() => {}))
+    gltfLoad.mockImplementationOnce(() => {})
 
     const loadPromise = modalityScene.load('density-a', makeModality({
       id: 'anatomy', label: 'Anatomy', asset: 'density-1/left/density25.glb', viewPreset: 'left_breast_view.json',
@@ -644,7 +633,7 @@ describe('useModalityScene', () => {
     expect(modalityScene.scene.value).toBe(freshScene)
   })
 
-  // Review round 2, fix #2: the observer callback had no token guard, so
+  // Review round 2, fix #2: the progress handler had no token guard, so
   // once a load was superseded, its own late progress events still landed
   // in the shared `progress` ref -- once design doc §13.1's progress ring
   // is wired to this value, that would jitter between two unrelated
@@ -655,14 +644,12 @@ describe('useModalityScene', () => {
     const renderer = makeFakeRenderer(stalledScene)
     const stage = makeFakeStage(renderer)
     const modalityScene = useModalityScene(stage)
-    const stalledBar = captureNextLoadingBar(stage)
 
     void modalityScene.load('the-breast', makeModality({ id: 'mammogram' }))
 
     vi.mocked(renderer.createScene).mockReturnValueOnce(freshScene)
-    const freshBar = captureNextLoadingBar(stage)
     const secondLoad = modalityScene.load('the-breast', makeModality({ id: 'mri', asset: 'x/mri.nrrd' }))
-    freshBar.progress.textContent = 'File: mri.nrrd 10 % loaded'
+    nrrdProgress(freshScene, 10, 100)
     await flushMicrotasks()
 
     expect(modalityScene.progress.value).toBeCloseTo(0.1)
@@ -670,7 +657,7 @@ describe('useModalityScene', () => {
     // The superseded (mammogram) load's own progress event arrives late --
     // must not overwrite the current (mri) load's progress, still in
     // flight at 10%.
-    stalledBar.progress.textContent = 'File: m3d.nrrd 77 % loaded'
+    nrrdProgress(stalledScene, 77, 100)
     await flushMicrotasks()
 
     expect(modalityScene.progress.value).toBeCloseTo(0.1)
@@ -788,7 +775,7 @@ describe('useModalityScene', () => {
   // alive by `volume.sliceList` off the very `slices.z.volume` this
   // composable caches long-term. Chosen fix: dispose them immediately at
   // load time, since nothing in this app is ever going to need them.
-  it('disposes the x and y slice planes at load time, since nothing ever displays them', async () => {
+  it('never extracts the x and y slice planes, since nothing ever displays them', async () => {
     const scene = makeFakeScene()
     const renderer = makeFakeRenderer(scene)
     const stage = makeFakeStage(renderer)
@@ -800,21 +787,19 @@ describe('useModalityScene', () => {
     callback(fakeVolume(), meshes, { z: fakeSlice() })
     await loadPromise
 
-    expect(meshes.x.geometry.dispose).toHaveBeenCalledTimes(1)
-    expect(meshes.x.material.dispose).toHaveBeenCalledTimes(1)
-    expect(meshes.x.material.map.dispose).toHaveBeenCalledTimes(1)
-    expect(meshes.y.geometry.dispose).toHaveBeenCalledTimes(1)
-    expect(meshes.y.material.dispose).toHaveBeenCalledTimes(1)
-    expect(meshes.y.material.map.dispose).toHaveBeenCalledTimes(1)
-    // z is the plane actually shown on the stage -- must survive load time
-    // untouched; it is only ever disposed later, on eviction.
+    // They used to be extracted and disposed immediately here, which still
+    // paid for two full passes over a 10-50MB buffer. copper3d 3.9.0's
+    // `axes` option means they are never built at all.
+    expect(nrrdOpts(scene).axes).toEqual(['z'])
+    // z is the plane actually shown on the stage -- it must survive load
+    // time untouched; it is only ever disposed later, on eviction.
     expect(meshes.z.geometry.dispose).not.toHaveBeenCalled()
     expect(meshes.z.material.dispose).not.toHaveBeenCalled()
     expect(meshes.z.material.map.dispose).not.toHaveBeenCalled()
   })
 
   /**
-   * Client feedback: the MRIs are too dark. `sliceExposure.test.ts` covers
+   * Client feedback: the MRIs are too dark. `volumeExposure.test.ts` covers
    * the curve; this covers where it is handed over, and -- the client's
    * other requirement -- that it is in place before anything is painted, so
    * nobody watches the image change colour.
@@ -838,10 +823,11 @@ describe('useModalityScene', () => {
       let painted = 0
       slice.repaint = () => { painted++ }
 
-      // The patch stub is file-wide (test/setup.ts) and keeps every earlier
-      // test's calls, so this has to start from a clean slate.
+      // The patch mock is file-wide and keeps every earlier test's calls,
+      // so this has to start from a clean slate.
       const install = vi.mocked(installFastSliceRepaint)
       install.mockClear()
+      install.mockResolvedValue(undefined)
 
       const loadPromise = modalityScene.load('the-breast', makeModality({ id, asset: `x/${id}.nrrd` }))
       const [, , , callback] = vi.mocked(scene.loadNrrd).mock.calls[0]!
@@ -878,33 +864,27 @@ describe('useModalityScene', () => {
 
       let installed!: () => void
       const pending = new Promise<void>((resolve) => { installed = resolve })
-      const realStub = (globalThis as unknown as Record<string, unknown>).installFastSliceRepaint
-      vi.stubGlobal('installFastSliceRepaint', vi.fn(() => pending))
+      const install = vi.mocked(installFastSliceRepaint)
+      install.mockClear()
+      install.mockReturnValueOnce(pending)
 
-      try {
-        const slice = fakeSlice()
-        let painted = 0
-        slice.repaint = () => { painted++ }
+      const slice = fakeSlice()
+      let painted = 0
+      slice.repaint = () => { painted++ }
 
-        const load = modalityScene.load('the-breast', makeModality({ id: 'mri', asset: 'x/mri.nrrd' }))
-        const [, , , callback] = vi.mocked(scene.loadNrrd).mock.calls[0]!
-        callback(fakeVolume(VOXELS), fakeMeshes(), { z: slice })
+      const load = modalityScene.load('the-breast', makeModality({ id: 'mri', asset: 'x/mri.nrrd' }))
+      const [, , , callback] = vi.mocked(scene.loadNrrd).mock.calls[0]!
+      callback(fakeVolume(VOXELS), fakeMeshes(), { z: slice })
 
-        // Microtasks, not timers: this suite runs on fake timers.
-        for (let i = 0; i < 20; i++) await Promise.resolve()
-        expect(painted, 'painted before the exposure patch landed').toBe(0)
-        expect(renderer.render, 'a frame was drawn before the exposure landed').not.toHaveBeenCalled()
+      // Microtasks, not timers: this suite runs on fake timers.
+      for (let i = 0; i < 20; i++) await Promise.resolve()
+      expect(painted, 'painted before the exposure patch landed').toBe(0)
+      expect(renderer.render, 'a frame was drawn before the exposure landed').not.toHaveBeenCalled()
 
-        installed()
-        await load
-        expect(painted).toBe(1)
-        expect(renderer.render).toHaveBeenCalled()
-      }
-      finally {
-        // afterEach's restoreAllMocks does not undo stubGlobal, and this one
-        // shadows test/setup.ts's file-wide stub.
-        vi.stubGlobal('installFastSliceRepaint', realStub)
-      }
+      installed()
+      await load
+      expect(painted).toBe(1)
+      expect(renderer.render).toHaveBeenCalled()
     })
   })
 
@@ -927,7 +907,7 @@ describe('useModalityScene', () => {
       traverse: (fn: (child: unknown) => void) => { fn(fatMesh); fn(glandMesh) },
     }
 
-    vi.mocked(loadGltfModel).mockResolvedValueOnce({ group: group as never, size: 10 })
+    resolveGltfWith(group)
 
     await modalityScene.load('density-a', makeModality({
       id: 'anatomy', label: 'Anatomy', asset: 'density-1/left/density25.glb', viewPreset: 'left_breast_view.json',
@@ -991,16 +971,17 @@ describe('useModalityScene', () => {
       const renderer = makeFakeRenderer(scene)
       const stage = makeFakeStage(renderer)
       const modalityScene = useModalityScene(stage)
-      vi.mocked(loadGltfModel).mockResolvedValueOnce({ group: { name: '', traverse: () => {} } as never, size: 1 })
+      resolveGltfWith(plainGroup())
 
       await modalityScene.load('density-a', makeModality({
         id: 'anatomy', label: 'Anatomy', asset: 'density-1/left/density25.glb', viewPreset: 'left_breast_view.json',
       }))
 
-      expect(loadGltfModel).toHaveBeenCalledWith(
-        '/te-uma/modelView/density-1/left/density25.glb',
-        '/te-uma/draco/',
-      )
+      expect(gltfLoad.mock.calls[0]![0])
+        .toBe('/te-uma/modelView/density-1/left/density25.glb')
+      // three appends the file names to this verbatim, applying no base of
+      // its own, so the deployment base has to be baked in here.
+      expect(setDracoDecoderPath).toHaveBeenCalledWith('/te-uma/draco/')
     }
     finally {
       // Restore test/setup.ts's site-root default: this file's other tests
@@ -1074,15 +1055,7 @@ describe('useModalityScene', () => {
       const modalityScene = useModalityScene(stage)
 
       const objects = (scene as unknown as { objects: Array<{ name: string }> }).objects
-      /** Resolves the next `loadGltfModel` call with `group`. Unlike the old
-       * `scene.loadGltf` mock this replaces, it does NOT push into `objects`
-       * itself: `loadGlb` (useModalityScene.ts) now calls `target.scene.add(group)`
-       * on the resolved value, so `scene.scene.add`'s own mock (above, backed
-       * by the same array) is what populates `objects` -- exercising the
-       * real code path rather than a test double standing in for it. */
-      const resolveGltf = (group: { name: string }, size = 10) => {
-        vi.mocked(loadGltfModel).mockResolvedValueOnce({ group: group as never, size })
-      }
+      const resolveGltf = (group: { name: string }) => { resolveGltfWith(group) }
 
       const initial = makeAnatomyGroup()
       resolveGltf(initial.group)
@@ -1100,7 +1073,7 @@ describe('useModalityScene', () => {
 
       expect(morph).not.toBeNull()
       // §7.1: the SAME scene, so the camera cannot move. Only the model changes.
-      expect(vi.mocked(loadGltfModel).mock.calls[1]![0]).toBe('/modelView/density-2/left/density50.glb')
+      expect(gltfLoad.mock.calls[1]![0]).toBe('/modelView/density-2/left/density50.glb')
       // The new guarantee this app now owns instead of copper3d: without
       // this call the incoming model would decode perfectly and simply
       // never appear.
@@ -1195,7 +1168,7 @@ describe('useModalityScene', () => {
       const morph = await modalityScene.prepareMorph('the-breast', anatomy('density-1/left/density25.glb'))
 
       expect(morph).toBeNull()
-      expect(loadGltfModel).toHaveBeenCalledTimes(1) // no second download
+      expect(gltfLoad).toHaveBeenCalledTimes(1) // no second download
     })
 
     it('tracks what each scene actually displays, so morphing back is allowed again', async () => {
@@ -1227,9 +1200,9 @@ describe('useModalityScene', () => {
      */
     it('leaves the on-screen model intact when the incoming one never arrives', async () => {
       const { modalityScene, initial, objects, resolveGltf } = await loadInitialAnatomy()
-      // loadGltfModel's mock never resolves, so the 30s wall-clock timeout
+      // the loadGltf fake never calls back, so the 30s wall-clock timeout
       // in `loadGlb` is what has to end this.
-      vi.mocked(loadGltfModel).mockImplementationOnce(() => new Promise(() => {}))
+      gltfLoad.mockImplementationOnce(() => {})
 
       const attempt = modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb'))
       await expect(advanceAndSettle(attempt, 31_000)).rejects.toThrow(/Timed out/)
@@ -1251,15 +1224,17 @@ describe('useModalityScene', () => {
      */
     it('refuses a second morph on a scene whose incoming model is still downloading', async () => {
       const { modalityScene } = await loadInitialAnatomy()
-      let land!: (value: { group: unknown, size: number }) => void
-      vi.mocked(loadGltfModel).mockImplementationOnce(() => new Promise((resolve) => { land = resolve }))
+      let land!: () => void
+      gltfLoad.mockImplementationOnce((_url, onLoad) => {
+        land = () => onLoad(makeAnatomyGroup().group)
+      })
 
       const first = modalityScene.prepareMorph('density-b', anatomy('density-2/left/density50.glb'))
       // Second navigation arrives while the first model is still in flight.
       expect(await modalityScene.prepareMorph('density-c', anatomy('density-3/left/density75.glb'))).toBeNull()
-      expect(loadGltfModel).toHaveBeenCalledTimes(2) // no third download started
+      expect(gltfLoad).toHaveBeenCalledTimes(2) // no third download started
 
-      land({ group: makeAnatomyGroup().group, size: 10 })
+      land()
       expect(await first).not.toBeNull()
     })
 
@@ -1511,7 +1486,7 @@ describe('useModalityScene', () => {
       )
 
       await visit(modalityScene, renderer, 'density-d', 'mammogram')
-      expect(modalityScene.loadError.value?.message).toMatch(/survived eviction/)
+      expect(modalityScene.loadError.value?.message).toMatch(/survived disposal/)
     })
 
     // Task 2 (three-up plan). Three-up shows up to three panels at once, so
@@ -1525,10 +1500,7 @@ describe('useModalityScene', () => {
       const renderer = makeMultiSceneRenderer()
       const modalityScene = useModalityScene(makeFakeStage(renderer), budget)
 
-      vi.mocked(loadGltfModel).mockResolvedValueOnce({
-        group: { name: '', traverse: () => {} } as never,
-        size: 1,
-      })
+      resolveGltfWith(plainGroup())
       await modalityScene.load('density-a', makeModality({
         id: 'anatomy', label: 'Anatomy', asset: 'density-1/left/density25.glb', viewPreset: 'left_breast_view.json',
       }))
@@ -1593,6 +1565,21 @@ function fakeSlice(overrides: { index?: number, MaxIndex?: number, spacing?: num
     volume: { spacing: overrides.spacing ?? [1, 1, 1] },
     repaint() {},
   }
+}
+
+/** The `opts` object copper3d's `loadNrrd` was handed on its Nth call --
+ *  where `axes`, `onProgress` and `onError` live (copper3d 3.9.0). */
+function nrrdOpts(scene: CopperScene, call = 0) {
+  return vi.mocked(scene.loadNrrd).mock.calls[call]![4] as {
+    axes?: readonly string[]
+    onProgress?: (event: ProgressEvent) => void
+    onError?: (error: unknown) => void
+  }
+}
+
+/** Feeds one download-progress event to the Nth `loadNrrd` call. */
+function nrrdProgress(scene: CopperScene, loaded: number, total: number, call = 0) {
+  nrrdOpts(scene, call).onProgress?.({ loaded, total } as ProgressEvent)
 }
 
 /** Invokes the most recent `loadNrrd` call's success callback with fixture

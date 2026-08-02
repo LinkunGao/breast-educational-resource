@@ -21,3 +21,5 @@ assets-src/
 
 # web/ ignores its own build outputs, node_modules and staging directories
 # in web/.gitignore -- do not duplicate them here.
+
+web/app/ts

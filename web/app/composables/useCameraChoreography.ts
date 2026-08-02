@@ -1,6 +1,6 @@
 import type { Ref } from 'vue'
-import { easeInOutCubic, interpolateFlightPose, orbitStepPose, orbitSwingAngle, poseDistance, rotateAroundAxis, zoomPose } from './cameraTransitions'
-import type { Pose } from './cameraTransitions'
+import { easeInOutCubic, orbitStepPose, zoomPose } from './copperExtras'
+import type { Pose } from './copperExtras'
 import type { CopperScene, NrrdSlice, StageApi, Vec3 } from './copper-types'
 
 /**
