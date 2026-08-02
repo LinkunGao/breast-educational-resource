@@ -38,7 +38,7 @@ vi.stubGlobal('useViewerStore', useViewerStore)
 // Mirrors nuxt.config.ts's actual defaults (assetBase '/modelView/', root
 // baseURL), so tests exercise the same URL-joining logic production does.
 vi.stubGlobal('useRuntimeConfig', () => ({
-  public: { assetBase: '/modelView/' },
+  public: { assetBase: '/modelView/', appVersion: '0.0.0-test' },
   app: { baseURL: '/' },
 }))
 vi.stubGlobal('useAssetUrl', useAssetUrl)

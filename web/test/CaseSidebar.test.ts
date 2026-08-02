@@ -234,4 +234,16 @@ describe('CaseSidebar', () => {
       expect(store.sidebarOpen).toBe(true) // unaffected -- desktop nav ignores Escape
     })
   })
+
+  it('shows the app version at the foot of the sidebar', () => {
+    const wrapper = mountSidebar()
+    const version = wrapper.get('[data-app-version]')
+    expect(version.text()).toBe('v0.0.0-test')
+  })
+
+  it('renders the version below the partner logos, not above them', () => {
+    const wrapper = mountSidebar()
+    const html = wrapper.html()
+    expect(html.indexOf('data-app-version')).toBeGreaterThan(html.indexOf('logos/'))
+  })
 })
