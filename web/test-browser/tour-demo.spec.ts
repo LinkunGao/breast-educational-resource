@@ -95,4 +95,35 @@ test.describe('guided tour demos', () => {
     await page.locator('[data-tour-next]').click()
     await expect(cardTitle).toHaveText('Per-view controls')
   })
+
+  /**
+   * Task 11: the design doc's distinction (§4.4) between finishing and
+   * exiting, proved end to end. `waitForHydration` is required here --
+   * "Start the guided tour" is AppHeader's server-rendered button, and a
+   * click on it before TourLauncher.client.vue hydrates hits inert markup.
+   */
+  test('finishing leaves the reader on the lesion case; exiting returns them', async ({ page }) => {
+    await page.goto('/the-breast/anatomy')
+    await waitForHydration(page)
+    await page.getByRole('button', { name: 'Start the guided tour' }).click()
+
+    for (let i = 0; i < 25; i++) {
+      const title = await page.locator('[data-tour-card] h2').textContent()
+      if (title === "That's the tour") break
+      await page.locator('[data-tour-next]').click()
+    }
+    await page.locator('[data-tour-next]').click() // Finish
+    await expect(page).toHaveURL(/cancer-ductal/)
+
+    // waitForHydration's own precondition (a fresh context, tour never
+    // "seen") no longer holds after finishing above -- restore it so the
+    // second half of this test can rely on the same helper.
+    await page.evaluate(() => localStorage.removeItem('teuma.tour.seen'))
+    await page.goto('/the-breast/anatomy')
+    await waitForHydration(page)
+    await page.getByRole('button', { name: 'Start the guided tour' }).click()
+    await page.locator('[data-tour-next]').click()
+    await page.keyboard.press('Escape')
+    await expect(page).toHaveURL(/the-breast/)
+  })
 })

@@ -207,5 +207,13 @@ export function useTourDirector(deps: TourDirectorDeps) {
     if (deps.currentRoute() !== back) await deps.navigate(back)
   }
 
-  return { steps, currentStep, resolveTarget, isWideLayout, layoutScope, runStep, startTour, exitTour }
+  /** The pose captured before a demo on this panel, if any. */
+  function capturedPose(panel: PanelId): Pose | undefined {
+    return captured.get(panel)
+  }
+
+  return {
+    steps, currentStep, resolveTarget, isWideLayout, layoutScope, runStep, startTour, exitTour,
+    capturedPose,
+  }
 }

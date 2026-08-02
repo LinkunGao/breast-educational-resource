@@ -308,4 +308,56 @@ describe('tour director', () => {
     })
     expect(api.scrubTo).not.toHaveBeenCalled()
   })
+
+  it('navigates to the lightest cancer case before the lesion steps', async () => {
+    const { director, navigate } = makeDirector({ currentRoute: () => '/the-breast/anatomy' })
+    await director.runStep({
+      id: 'lesion-case', chapter: 'lesion', route: '/cancer-ductal/mri',
+      target: ['[data-panel="mri"]'], title: 'T', body: 'B',
+    })
+    expect(navigate).toHaveBeenCalledWith('/cancer-ductal/mri')
+  })
+
+  it('does not re-navigate when already on the step\'s route', async () => {
+    const { director, navigate } = makeDirector({ currentRoute: () => '/cancer-ductal/mri' })
+    await director.runStep({
+      id: 'lesion-case', chapter: 'lesion', route: '/cancer-ductal/mri',
+      title: 'T', body: 'B',
+    })
+    expect(navigate).not.toHaveBeenCalled()
+  })
+
+  // The brief this test came from claimed "'Finish' is exitTour in
+  // TourLayer" -- that is exactly backwards (see finishTour() in
+  // TourLayer.client.vue): exiting navigates back to the entry route,
+  // finishing does not. What this test actually pins is narrower and still
+  // true: exitTour() itself must behave the same regardless of stepIndex --
+  // it is TourLayer's advance() that branches on atEnd, not exitTour().
+  it('exitTour returns to the entry route even when the reader is at the last step', async () => {
+    const { director, navigate } = makeDirector({ currentRoute: () => '/cancer-ductal/mri' })
+    const store = useTourStore()
+    store.start('wide', 14, '/the-breast/anatomy')
+    store.goToStep(13)
+    expect(store.atEnd).toBe(true)
+    await director.exitTour()
+    expect(navigate).toHaveBeenCalledWith('/the-breast/anatomy')
+  })
+
+  it('capturedPose exposes an interrupted demo\'s pose, which finishTour reads to restore it', async () => {
+    const pose = { position: [7, 8, 9], up: [0, 1, 0], target: [0, 0, 0] }
+    const store = useTourStore()
+    // Bump the run token mid-orbit so runDemo's own restore is skipped and
+    // the entry is left in `captured` -- same interruption as the existing
+    // "exiting mid-orbit" test, but read directly instead of via exitTour.
+    const api = stage({
+      snapshot: () => pose,
+      orbit: vi.fn(async () => { store.next() }),
+    })
+    registerTourStage('anatomy', api)
+    const { director } = makeDirector()
+    store.start('wide', 14, '/the-breast/anatomy')
+    expect(director.capturedPose('anatomy')).toBeUndefined()
+    await director.runStep(ORBIT_STEP)
+    expect(director.capturedPose('anatomy')).toEqual(pose)
+  })
 })

@@ -8,6 +8,7 @@ import type { PanelId } from '~~/content/types'
 // Imported, not auto-imported: exported so the decision rule can be unit-
 // tested without mounting this `.client` component.
 import { decideTourKeydown } from '~/utils/tourKeydown'
+import { getTourStage } from '~/composables/useTourStageBridge'
 
 /**
  * The tour's one stateful component.
@@ -84,8 +85,15 @@ watch([() => store.active, () => store.stepIndex], async () => {
   // Best effort: runStep may navigate or run prepare actions that change
   // the DOM first, so resolveTarget can legitimately miss here. The pass
   // after runStep is still the authoritative one.
+  //
+  // A step whose route differs from where we are now is about to navigate
+  // away -- resolving its selector here would hit whatever element on THIS
+  // (soon-to-be-unmounted) page happens to match, which is only harmless by
+  // coincidence when every case shares the same panel grid. Clear instead
+  // and let the post-runStep pass, run after the navigation lands, be the
+  // only one that paints.
   await nextTick()
-  targetEl.value = director.resolveTarget(s)
+  targetEl.value = (s.route && s.route !== route.path) ? null : director.resolveTarget(s)
   paintRegions()
   measure()
 
@@ -119,9 +127,24 @@ function onKeydown(event: KeyboardEvent) {
   else if (action === 'back') store.back()
 }
 
+/**
+ * Design doc §4.4: exiting is like closing a modal and returns you to where
+ * you started; FINISHING does not. The last step has just said "pressing
+ * Next is enough to walk the whole resource", so bouncing the reader back
+ * would contradict it.
+ */
 function advance() {
-  if (store.atEnd) void director.exitTour()
+  if (store.atEnd) finishTour()
   else store.next()
+}
+
+function finishTour() {
+  for (const panel of ['anatomy', 'mammogram', 'mri'] as PanelId[]) {
+    const api = getTourStage(panel)
+    const pose = director.capturedPose(panel)
+    if (api && pose) api.applyPose(pose)
+  }
+  store.exit()
 }
 
 function onChapter(id: ChapterId) {

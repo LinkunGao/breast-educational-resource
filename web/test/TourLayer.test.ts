@@ -104,3 +104,80 @@ describe('TourLayer: superseded steps do not paint', () => {
     expect(document.querySelectorAll('[data-tour-focus]')).toHaveLength(0)
   })
 })
+
+/**
+ * Task 11, carried-over finding from Task 10's review: a step that NAVIGATES
+ * (`lesion-case`, route `/cancer-ductal/mri`) used to get the same "paint
+ * before runStep" pass as any other step, which resolved its target against
+ * whatever page the reader was still ON -- a stale, about-to-be-unmounted
+ * element. Invisible in the real app only because every case shares the
+ * same panel grid, so the stale rect coincides with the correct one; not a
+ * guarantee, and not something a browser rect-position assertion could
+ * distinguish (the two rects are the same by construction). So this pins
+ * the decision at the level TourLayer actually makes it: DOM is unmounted
+ * only by real navigation, which this fake `navigateTo`/`useRoute` stub
+ * deliberately does not perform, leaving the pre-navigation element in
+ * place -- the exact condition the fix must refuse to paint.
+ */
+describe('TourLayer: does not pre-paint a stale target across navigation', () => {
+  const pending = new Map<string, () => void>()
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    pending.clear()
+    document.body.innerHTML = `
+      <div data-tour-region data-region="nav"><div data-target="nav">Nav</div></div>
+    `
+
+    vi.stubGlobal('useRoute', () => ({ path: '/test' }))
+    vi.stubGlobal('navigateTo', vi.fn(async () => {}))
+
+    const steps: TourStep[] = [
+      { id: 'a', chapter: 'layout', title: 'A', body: 'a' },
+      {
+        id: 'nav', chapter: 'lesion', title: 'Nav', body: 'b',
+        route: '/other', target: ['[data-target="nav"]'],
+      },
+    ]
+    vi.stubGlobal('useTourDirector', () => {
+      const store = useTourStore()
+      return {
+        steps: computed(() => steps),
+        currentStep: computed(() => steps[store.stepIndex]),
+        resolveTarget: (step: TourStep) => document.querySelector<HTMLElement>(`[data-target="${step.id}"]`),
+        isWideLayout: () => true,
+        layoutScope: () => 'wide' as const,
+        runStep: (step: TourStep) => new Promise<void>((resolve) => { pending.set(step.id, resolve) }),
+        startTour: vi.fn(),
+        exitTour: vi.fn(async () => { store.exit() }),
+        capturedPose: () => undefined,
+      }
+    })
+  })
+
+  it("does not paint a navigating step's pre-navigation target before runStep resolves", async () => {
+    const store = useTourStore()
+    mount(TourLayer)
+
+    store.start('wide', 2, '/test') // step 'a', no target
+    await flushPromises()
+    pending.get('a')!()
+    await flushPromises()
+
+    store.next() // step 'nav': route '/other' differs from the stubbed '/test'
+    await flushPromises()
+    expect(pending.has('nav')).toBe(true)
+
+    // The pre-paint pass has already run (it happens before `runStep` is
+    // awaited); the fix must have refused to paint here, not found the
+    // still-present, coincidentally-matching element.
+    const region = document.querySelector('[data-region="nav"]')!
+    expect(region.hasAttribute('data-tour-focus')).toBe(false)
+
+    // Once runStep (standing in for the navigation) resolves, the
+    // post-runStep pass is authoritative and paints normally.
+    pending.get('nav')!()
+    await flushPromises()
+    expect(region.hasAttribute('data-tour-focus')).toBe(true)
+  })
+})
