@@ -76,6 +76,19 @@ watch([() => store.active, () => store.stepIndex], async () => {
   // the older step's tail could overwrite the newer step's target after the
   // reader has already moved on, or after the tour has already exited.
   const token = store.runToken
+
+  // Paint first, so the halo and the dimming match the card that is already
+  // on screen -- otherwise the spotlight rings the PREVIOUS step's target
+  // for as long as this step's demo takes to run (2500ms for the rotate
+  // step), while the card and the demo both already point at the new one.
+  // Best effort: runStep may navigate or run prepare actions that change
+  // the DOM first, so resolveTarget can legitimately miss here. The pass
+  // after runStep is still the authoritative one.
+  await nextTick()
+  targetEl.value = director.resolveTarget(s)
+  paintRegions()
+  measure()
+
   await director.runStep(s)
   if (token !== store.runToken || !store.active) return
   await nextTick()

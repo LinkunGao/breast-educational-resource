@@ -30,20 +30,15 @@ test.describe('guided tour demos', () => {
     }
     await expect(cardTitle).toHaveText('Rotate the model')
 
-    // The halo must be over the anatomy panel, not over a neighbour.
-    //
-    // Polled, not read once: the card's title updates the instant the step's
-    // reactive state changes, but TourLayer only resolves/measures the new
-    // target AFTER `director.runStep()` resolves -- which for this step
-    // includes the entire 2500ms orbit demo (see the token-guard comment in
-    // TourLayer.client.vue). For that whole window the halo still shows the
-    // PREVIOUS step's target, so a same-tick read races it. 6s comfortably
-    // clears the 2.5s demo.
+    // The halo must already be over the anatomy panel here -- WHILE the
+    // 2500ms orbit demo is still running, not once it finishes. TourLayer
+    // paints the target in a pass that runs before the demo starts, so this
+    // is a direct read, not a poll: polling for up to the demo's own
+    // duration would let a regression that re-introduces the old lag (halo
+    // stuck on the previous step's target until the demo ends) pass anyway.
+    const halo = await page.locator('[data-tour-halo]').boundingBox()
     const panel = await page.locator('[data-panel="anatomy"]').boundingBox()
-    await expect.poll(async () => {
-      const halo = await page.locator('[data-tour-halo]').boundingBox()
-      return halo ? Math.abs(halo.x - panel!.x) : Number.POSITIVE_INFINITY
-    }, { timeout: 6000 }).toBeLessThan(4)
+    expect(Math.abs(halo!.x - panel!.x)).toBeLessThan(4)
   })
 
   test('theatre mode dims the other regions and never uses blur', async ({ page }) => {
