@@ -208,6 +208,31 @@ describe('tour director', () => {
     expect(director.isWideLayout()).toBe(true)
   })
 
+  it('the focus demo asks the host to focus, and does not need a pose snapshot', async () => {
+    const api = stage()
+    registerTourStage('mammogram', api)
+    const { director, focusPanel } = makeDirector()
+    await director.runStep({
+      id: 'focus', chapter: 'reading', title: 'T',
+      body: 'B', bodyFallback: 'F',
+      demo: { kind: 'focusPanel', panel: 'mammogram' }, requiresStage: 'mammogram',
+    })
+    expect(focusPanel).toHaveBeenCalledWith('mammogram')
+    expect(api.orbit).not.toHaveBeenCalled()
+  })
+
+  it('the focus demo still degrades when the mammogram stage never arrives', async () => {
+    registerTourStage('mammogram', stage({ isReady: () => false }))
+    const { director, focusPanel } = makeDirector()
+    await director.runStep({
+      id: 'focus', chapter: 'reading', title: 'T',
+      body: 'B', bodyFallback: 'F',
+      demo: { kind: 'focusPanel', panel: 'mammogram' }, requiresStage: 'mammogram',
+    })
+    expect(focusPanel).not.toHaveBeenCalled()
+    expect(useTourStore().phase).toBe('fallback')
+  })
+
   it('exitTour restores the entry route and every captured pose', async () => {
     const api = stage()
     registerTourStage('anatomy', api)

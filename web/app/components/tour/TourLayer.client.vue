@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getCase } from '~~/content/cases'
 import { TOUR_CHAPTERS } from '~~/content/tour'
 import type { ChapterId } from '~~/content/tourTypes'
 // PanelId lives in content/types, not tourTypes -- tourTypes imports it but
@@ -21,23 +22,24 @@ const route = useRoute()
 
 const director = useTourDirector({
   navigate: async (path) => { await navigateTo(path) },
-  focusPanel: (panel: PanelId) => { focusRequest.value = panel },
+  focusPanel: (panel: PanelId) => { void focusPanelByRoute(panel) },
   openSidebar: () => { viewer.sidebarOpen = true },
   expandSheet: () => { viewer.contentOpen = true },
   currentRoute: () => route.path,
 })
 
 /**
- * A panel the tour asked to focus. CasePanels owns focus (it is derived
- * from the URL), so this navigates rather than reaching into it.
+ * Focus a slot the way the app itself does: by navigating to the modality
+ * that slot is showing. Synthesising a pointerdown on the panel worked but
+ * depended on CasePanels keeping that exact listener; the URL is the real
+ * contract -- it always names the focused modality.
  */
-const focusRequest = ref<PanelId | null>(null)
-watch(focusRequest, async (panel) => {
-  if (!panel) return
-  const el = document.querySelector<HTMLElement>(`[data-panel="${panel}"]`)
-  el?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
-  focusRequest.value = null
-})
+async function focusPanelByRoute(panel: PanelId) {
+  const slug = String(route.params.slug ?? '')
+  const c = getCase(slug)
+  const target = c?.panels.find(p => p.id === panel)?.modalities[0]
+  if (target) await navigateTo(`/${slug}/${target.id}`)
+}
 
 const step = computed(() => director.currentStep.value)
 const rect = ref<DOMRect | null>(null)
