@@ -16,32 +16,36 @@ const emit = defineEmits<{ next: [], back: [], exit: [] }>()
 const titleId = `tour-card-title-${Math.random().toString(36).slice(2, 8)}`
 
 const GAP = 16
-const CARD_W = 320
 
 /**
  * Where the card sits.
  *
- * Clamped into the viewport on both axes rather than flipped: a flip moves
- * the card to the far side of the target, which on a three-up stage can put
- * it over a different panel than the one being described.
+ * Anchored from whichever edge faces the target rather than guessing the
+ * card's own height/width: `top` placement sets `bottom`, `left` placement
+ * sets `right`, and so on. The browser positions from that edge, so no
+ * height/width constant is needed and a taller card never grows through its
+ * own target.
  */
 const style = computed(() => {
   if (!props.rect || props.placement === 'center') {
     return { top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }
   }
   const r = props.rect
-  let top = r.top
-  let left = r.left
-  if (props.placement === 'right') { left = r.right + GAP; top = r.top }
-  else if (props.placement === 'left') { left = r.left - CARD_W - GAP; top = r.top }
-  else if (props.placement === 'bottom') { top = r.bottom + GAP }
-  else { top = r.top - GAP }
+  const vw = globalThis.innerWidth || 1024
+  const vh = globalThis.innerHeight || 768
 
-  const maxLeft = (globalThis.innerWidth || 1024) - CARD_W - GAP
-  return {
-    top: `${Math.max(GAP, Math.min(top, (globalThis.innerHeight || 768) - GAP - 200))}px`,
-    left: `${Math.max(GAP, Math.min(left, Math.max(GAP, maxLeft)))}px`,
+  if (props.placement === 'right') {
+    return { top: `${Math.max(GAP, r.top)}px`, left: `${Math.max(GAP, r.right + GAP)}px` }
   }
+  if (props.placement === 'left') {
+    return { top: `${Math.max(GAP, r.top)}px`, right: `${Math.max(GAP, vw - r.left + GAP)}px` }
+  }
+  if (props.placement === 'bottom') {
+    return { top: `${Math.max(GAP, r.bottom + GAP)}px`, left: `${Math.max(GAP, r.left)}px` }
+  }
+  // 'top': anchor the card's bottom edge above the target instead of its
+  // top edge, so the card grows upward and never covers the target.
+  return { bottom: `${Math.max(GAP, vh - r.top + GAP)}px`, left: `${Math.max(GAP, r.left)}px` }
 })
 
 const btn = 'flex min-h-11 items-center rounded-full px-4 text-body-sm font-bold'
@@ -52,8 +56,8 @@ const btn = 'flex min-h-11 items-center rounded-full px-4 text-body-sm font-bold
     role="dialog"
     :aria-labelledby="titleId"
     data-tour-card
-    class="fixed z-50 w-80 max-w-[calc(100vw-2rem)] rounded-card border border-border
-           bg-surface/95 p-5 shadow-lg backdrop-blur-sm"
+    class="fixed z-50 w-80 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto
+           rounded-card border border-border bg-surface/95 p-5 shadow-lg backdrop-blur-sm"
     :style="style"
   >
     <div class="flex items-center justify-between gap-2">
@@ -92,7 +96,7 @@ const btn = 'flex min-h-11 items-center rounded-full px-4 text-body-sm font-bold
         type="button"
         data-tour-exit
         aria-label="Close the guided tour"
-        :class="`${btn} px-3 text-text-muted hover:bg-surface-sunken`"
+        :class="`${btn} text-text-muted hover:bg-surface-sunken`"
         @click="emit('exit')"
       >
         ✕

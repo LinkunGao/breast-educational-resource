@@ -5,7 +5,10 @@ import TourRail from '../app/components/tour/TourRail.vue'
 import TourSpotlight from '../app/components/tour/TourSpotlight.vue'
 import { TOUR_CHAPTERS } from '../content/tour'
 
-const rect = { top: 100, left: 200, width: 300, height: 150 } as DOMRect
+// right/bottom included: a real getBoundingClientRect() always computes
+// them (right = left + width, bottom = top + height); a plain object
+// literal cast to DOMRect does not unless they're spelled out.
+const rect = { top: 100, left: 200, width: 300, height: 150, right: 500, bottom: 250 } as DOMRect
 
 describe('TourSpotlight', () => {
   it('positions itself over the target rect', () => {
@@ -68,6 +71,53 @@ describe('TourCard', () => {
   })
 })
 
+describe('TourCard placement', () => {
+  it('right: anchors left of/past the target, never guessing a height', () => {
+    const w = mount(TourCard, { props: { ...cardProps, placement: 'right' } })
+    const style = w.get('[data-tour-card]').attributes('style')!
+    expect(style).toContain('top:')
+    expect(style).toContain('left:')
+    expect(style).not.toContain('bottom:')
+    expect(style).not.toContain('right:')
+  })
+
+  it('left: anchors from the right edge instead of a guessed card width', () => {
+    const w = mount(TourCard, { props: { ...cardProps, placement: 'left' } })
+    const style = w.get('[data-tour-card]').attributes('style')!
+    expect(style).toContain('top:')
+    expect(style).toContain('right:')
+    expect(style).not.toContain('left:')
+  })
+
+  it('bottom: anchors from the top edge, below the target', () => {
+    const w = mount(TourCard, { props: { ...cardProps, placement: 'bottom' } })
+    const style = w.get('[data-tour-card]').attributes('style')!
+    expect(style).toContain('top:')
+    expect(style).toContain('left:')
+    expect(style).not.toContain('bottom:')
+  })
+
+  it('top: anchors from the bottom edge so the card never covers its target', () => {
+    const w = mount(TourCard, { props: { ...cardProps, placement: 'top' } })
+    const style = w.get('[data-tour-card]').attributes('style')!
+    expect(style).toContain('bottom:')
+    expect(style).toContain('left:')
+    expect(style).not.toContain('top:')
+  })
+
+  it('center: centres via a transform', () => {
+    const w = mount(TourCard, { props: { ...cardProps, placement: 'center' } })
+    const style = w.get('[data-tour-card]').attributes('style')!
+    expect(style).toContain('transform:')
+  })
+
+  it('null rect: centres regardless of the requested placement', () => {
+    const w = mount(TourCard, { props: { ...cardProps, rect: null, placement: 'right' } })
+    const style = w.get('[data-tour-card]').attributes('style')!
+    expect(style).toContain('transform:')
+  })
+})
+
 describe('TourRail', () => {
   const railProps = {
     chapters: TOUR_CHAPTERS, activeChapter: 'interacting' as const,
@@ -86,6 +136,12 @@ describe('TourRail', () => {
     const w = mount(TourRail, { props: railProps })
     await w.findAll('[data-tour-chapter]')[0]!.trigger('click')
     expect(w.emitted('chapter')![0]).toEqual(['layout'])
+  })
+
+  it('the chapter segment button clears the 44px tap-target floor', () => {
+    const w = mount(TourRail, { props: railProps })
+    const first = w.findAll('[data-tour-chapter]')[0]!
+    expect(first.classes()).toContain('min-h-11')
   })
 
   it('announces position as a live region for screen readers', () => {

@@ -39,12 +39,16 @@ const emit = defineEmits<{
           :data-tour-chapter="c.id"
           :aria-current="c.id === props.activeChapter ? 'step' : undefined"
           :aria-label="`Chapter: ${c.label}`"
-          class="h-1.5 rounded-full transition-all"
-          :class="c.id === props.activeChapter
-            ? 'w-10 bg-brand'
-            : 'w-6 bg-surface/35 hover:bg-surface/60'"
+          class="group flex min-h-11 items-center px-1 -my-4"
           @click="emit('chapter', c.id)"
-        />
+        >
+          <span
+            class="h-1.5 rounded-full transition-all"
+            :class="c.id === props.activeChapter
+              ? 'w-10 bg-brand'
+              : 'w-6 bg-surface/55 group-hover:bg-surface/80'"
+          />
+        </button>
       </li>
     </ol>
 
