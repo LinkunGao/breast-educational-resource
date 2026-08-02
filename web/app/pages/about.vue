@@ -194,7 +194,7 @@ const fullWidthOrgs = computed(() =>
         >online form</a>
         to give us your valuable feedback about this app.
       </p>
-      <p class="mt-4 text-caption tabular-nums text-text-subtle" data-app-version>
+      <p class="mt-4 text-caption tabular-nums text-text-muted" data-app-version>
         Breast Educational Resource v{{ appVersion }}
       </p>
     </section>

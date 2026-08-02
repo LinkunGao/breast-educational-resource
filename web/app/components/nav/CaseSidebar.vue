@@ -261,7 +261,7 @@ function onKeydown(event: KeyboardEvent) {
          gone wrong, so it does not earn header space. -->
     <p
       data-app-version
-      class="px-2 pb-1 text-caption tabular-nums text-text-subtle"
+      class="px-2 pb-1 text-caption tabular-nums text-text-muted"
     >
       v{{ appVersion }}
     </p>
