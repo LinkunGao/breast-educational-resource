@@ -187,6 +187,25 @@ describe('TourCard cross-axis anchoring', () => {
   })
 })
 
+describe('TourCard clears the chapter rail', () => {
+  // Fix round 1: TourRail is `fixed bottom-6` (~60px tall). A card anchored
+  // from the bottom used to sit at GAP (16px) above the viewport edge,
+  // which the rail's z-50 footprint then covered -- eating the card's own
+  // Next button. Any bottom-anchored card must clear the rail instead.
+  it("a target near the viewport's bottom edge (placement 'right') anchors well clear of the rail, not at the bare 16px gap", () => {
+    // 5px from the bottom edge: with only GAP this would clamp to 16px,
+    // which is exactly what the rail's footprint covers.
+    const nearBottomRect = { top: 760, left: 50, width: 50, height: 35, right: 100, bottom: 795 } as DOMRect
+    const style = withViewport(1000, 800, () => {
+      const w = mount(TourCard, { props: { ...cardProps, rect: nearBottomRect, placement: 'right' } })
+      return w.get('[data-tour-card]').attributes('style')!
+    })
+    const match = style.match(/bottom: (\d+)px/)
+    expect(match).not.toBeNull()
+    expect(Number(match![1])).toBeGreaterThanOrEqual(96)
+  })
+})
+
 describe('TourRail', () => {
   const railProps = {
     chapters: TOUR_CHAPTERS, activeChapter: 'interacting' as const,

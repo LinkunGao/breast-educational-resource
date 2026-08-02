@@ -16,6 +16,10 @@ const emit = defineEmits<{ next: [], back: [], exit: [] }>()
 const titleId = `tour-card-title-${Math.random().toString(36).slice(2, 8)}`
 
 const GAP = 16
+/** The chapter rail is `fixed bottom-6` and about 60px tall, so anything
+ *  anchored to the bottom has to clear it or it eats the card's own
+ *  buttons. */
+const RAIL_CLEARANCE = 96
 
 /**
  * Where the card sits.
@@ -42,7 +46,7 @@ const style = computed(() => {
     ? { right: `${Math.max(GAP, vw - r.right)}px` }
     : { left: `${Math.max(GAP, r.left)}px` }
   const vSide = (r.top + r.bottom) / 2 > vh / 2
-    ? { bottom: `${Math.max(GAP, vh - r.bottom)}px` }
+    ? { bottom: `${Math.max(RAIL_CLEARANCE, vh - r.bottom)}px` }
     : { top: `${Math.max(GAP, r.top)}px` }
 
   if (props.placement === 'right') {
@@ -56,7 +60,7 @@ const style = computed(() => {
   }
   // 'top': anchor the card's bottom edge above the target instead of its
   // top edge, so the card grows upward and never covers the target.
-  return { bottom: `${Math.max(GAP, vh - r.top + GAP)}px`, ...hSide }
+  return { bottom: `${Math.max(RAIL_CLEARANCE, vh - r.top + GAP)}px`, ...hSide }
 })
 
 const btn = 'flex min-h-11 items-center rounded-full px-4 text-body-sm font-bold'
