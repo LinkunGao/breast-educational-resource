@@ -63,3 +63,27 @@ export async function waitForAllPanels(page: Page) {
     .toHaveCount(0, { timeout: 240_000 })
   await expect(page.getByRole('alert')).toHaveCount(0)
 }
+
+/**
+ * Waits for hydration before a test interacts with a server-rendered
+ * control (e.g. AppHeader's "Start the guided tour" button).
+ *
+ * `[data-tour-take]` lives in TourLauncher.client.vue, a `.client`
+ * component that cannot exist in the DOM until Nuxt has mounted it -- so
+ * its arrival is proof the surrounding tree has hydrated and event
+ * listeners are attached. Playwright's `.click()` fires the instant an
+ * element is visible and stable, which can land BEFORE hydration on a
+ * server-rendered node; the click then hits inert markup and is silently
+ * lost (found via `tour-demo.spec.ts` failing 3/4 on a fresh dev server:
+ * the header button was clicked, but no `[data-tour-card]` ever appeared).
+ * `waitForAllPanels` happens to dodge this already, because CopperStage is
+ * also `.client`-only and far slower to mount -- this helper is for tests
+ * that click the tour trigger without that incidental cover.
+ *
+ * Assumes a fresh browser context (no `teuma.tour.seen` in localStorage),
+ * which every test in this suite gets by default -- otherwise the launcher
+ * never renders and this would hang.
+ */
+export async function waitForHydration(page: Page) {
+  await page.locator('[data-tour-take]').waitFor({ state: 'visible', timeout: 15_000 })
+}

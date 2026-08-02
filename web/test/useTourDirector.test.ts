@@ -244,4 +244,68 @@ describe('tour director', () => {
     expect(store.active).toBe(false)
     expect(navigate).toHaveBeenLastCalledWith('/density-c/mri')
   })
+
+  it('captures the pose before orbiting and restores exactly it afterwards', async () => {
+    const pose = { position: [4, 5, 6], up: [0, 1, 0], target: [1, 1, 1] }
+    const api = stage({ snapshot: () => pose })
+    registerTourStage('anatomy', api)
+    const { director } = makeDirector()
+    await director.runStep(ORBIT_STEP)
+    expect(api.applyPose).toHaveBeenCalledWith(pose)
+  })
+
+  it('exiting mid-orbit still restores the captured pose', async () => {
+    const pose = { position: [7, 8, 9], up: [0, 1, 0], target: [0, 0, 0] }
+    const store = useTourStore()
+    // Bump the run token while the orbit is in flight, so runDemo's own
+    // post-orbit restore is skipped and the entry is left for exitTour.
+    const api = stage({
+      snapshot: () => pose,
+      orbit: vi.fn(async () => { store.next() }),
+    })
+    registerTourStage('anatomy', api)
+    const { director } = makeDirector()
+    store.start('wide', 14, '/the-breast/anatomy')
+    await director.runStep(ORBIT_STEP)
+    expect(api.applyPose).not.toHaveBeenCalled() // interrupted: no restore yet
+    await director.exitTour()
+    expect(api.applyPose).toHaveBeenCalledWith(pose)
+  })
+
+  it('a completed orbit is not re-applied on exit, so the reader keeps their own rotation', async () => {
+    const pose = { position: [1, 2, 3], up: [0, 1, 0], target: [0, 0, 0] }
+    const api = stage({ snapshot: () => pose })
+    registerTourStage('anatomy', api)
+    const { director } = makeDirector()
+    useTourStore().start('wide', 14, '/the-breast/anatomy')
+    await director.runStep(ORBIT_STEP)
+    expect(api.applyPose).toHaveBeenCalledWith(pose) // its own restore ran
+    ;(api.applyPose as ReturnType<typeof vi.fn>).mockClear()
+    await director.exitTour()
+    expect(api.applyPose).not.toHaveBeenCalled() // and exit must not redo it
+  })
+
+  it('the slice demo leaves the volume where it found it', async () => {
+    const api = stage({ sliceMax: () => 104 })
+    registerTourStage('mri', api)
+    const { director } = makeDirector()
+    await director.runStep({
+      id: 'slices', chapter: 'interacting', title: 'T', body: 'B', bodyFallback: 'F',
+      demo: { kind: 'scrubSlices', panel: 'mri', durationMs: 5 }, requiresStage: 'mri',
+    })
+    const calls = (api.scrubTo as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0])
+    expect(calls[0]).toBe(104)
+    expect(calls.at(-1)).toBe(52)
+  })
+
+  it('a volume with no slices skips the scrub instead of dividing by zero', async () => {
+    const api = stage({ sliceMax: () => 0 })
+    registerTourStage('mri', api)
+    const { director } = makeDirector()
+    await director.runStep({
+      id: 'slices', chapter: 'interacting', title: 'T', body: 'B', bodyFallback: 'F',
+      demo: { kind: 'scrubSlices', panel: 'mri', durationMs: 5 }, requiresStage: 'mri',
+    })
+    expect(api.scrubTo).not.toHaveBeenCalled()
+  })
 })
