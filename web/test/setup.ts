@@ -2,6 +2,7 @@ import { computed, inject, nextTick, onMounted, onScopeDispose, provide, reactiv
 import { vi } from 'vitest'
 import { useAssetUrl } from '../app/composables/useAssetUrl'
 import { useViewerStore } from '../app/stores/viewer'
+import { useTourStore } from '../app/stores/tour'
 
 /**
  * copper3d's real `installFastSliceRepaint` patches a `VolumeSlice` with a
@@ -33,6 +34,7 @@ vi.stubGlobal('onScopeDispose', onScopeDispose)
 vi.stubGlobal('provide', provide)
 vi.stubGlobal('inject', inject)
 vi.stubGlobal('useViewerStore', useViewerStore)
+vi.stubGlobal('useTourStore', useTourStore)
 // useModalityScene calls the real useAssetUrl, which itself calls
 // useRuntimeConfig -- a Nuxt global with no plain-Vitest equivalent.
 // Mirrors nuxt.config.ts's actual defaults (assetBase '/modelView/', root
