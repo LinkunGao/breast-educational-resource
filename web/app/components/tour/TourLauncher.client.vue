@@ -44,7 +44,7 @@ const visible = computed(() => !store.hasSeen && !dismissed.value && !store.acti
       <button
         type="button"
         data-tour-take
-        class="flex min-h-11 items-center gap-2 rounded-full bg-brand px-5 text-body-sm
+        class="flex min-h-11 items-center gap-2 rounded-full bg-brand-hover px-5 text-body-sm
                font-bold text-surface shadow-md
                motion-safe:animate-[tour-breathe_2.8s_ease-in-out_infinite]"
         @click="emit('start')"

@@ -111,6 +111,7 @@ const btn = 'flex min-h-11 items-center rounded-full px-4 text-body-sm font-bold
   <div
     ref="cardEl"
     role="dialog"
+    tabindex="-1"
     :aria-labelledby="titleId"
     data-tour-card
     class="fixed z-50 w-80 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-7rem)] overflow-y-auto

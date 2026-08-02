@@ -390,7 +390,12 @@ onScopeDispose(() => {
  */
 onMounted(() => {
   registerTourStage(props.panelId, {
-    isReady: () => isHealthy(),
+    // isHealthy() alone goes true the instant an EMPTY scene is created
+    // (activateScene, before the asset itself has loaded) -- the tour's
+    // stall/fallback logic needs "the volume actually finished", not just
+    // "a scene object exists", or a demo starts against data that is not
+    // there yet and silently no-ops instead of degrading.
+    isReady: () => isHealthy() && !loading.value,
     isFailed: () => Boolean(chunkLoadError.value || assetLoadError.value),
     snapshot: () => camera.currentPose(),
     applyPose: pose => camera.applyPose(pose),

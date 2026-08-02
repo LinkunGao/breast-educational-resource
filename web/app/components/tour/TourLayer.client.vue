@@ -49,19 +49,28 @@ function measure() {
   rect.value = targetEl.value?.getBoundingClientRect() ?? null
 }
 
-/** Marks the focused region so the CSS in tokens.css can dim the rest. */
+/**
+ * Marks the focused region so the CSS in tokens.css can dim the rest, and
+ * makes every dimmed region `inert` -- opacity alone still leaves its text
+ * in the accessibility tree at a contrast ratio that only ever passed at
+ * full opacity, and still leaves it in the tab order behind the tour's own
+ * dialog. `inert` removes both, which is exactly what "dimmed" is meant to
+ * communicate.
+ */
 function paintRegions() {
   for (const el of document.querySelectorAll<HTMLElement>('[data-tour-region]')) {
     const isFocus = Boolean(targetEl.value && (el === targetEl.value || el.contains(targetEl.value)))
     el.toggleAttribute('data-tour-focus', isFocus)
+    el.inert = !isFocus
   }
 }
 
 watch([() => store.active, () => store.stepIndex], async () => {
   if (!store.active) {
     document.body.removeAttribute('data-tour-active')
-    for (const el of document.querySelectorAll('[data-tour-region]')) {
+    for (const el of document.querySelectorAll<HTMLElement>('[data-tour-region]')) {
       el.removeAttribute('data-tour-focus')
+      el.inert = false
     }
     targetEl.value = null
     rect.value = null
@@ -104,6 +113,21 @@ watch([() => store.active, () => store.stepIndex], async () => {
   measure()
   targetEl.value?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
 }, { immediate: true })
+
+/** Focus returns to whatever opened the tour, like any modal. */
+let opener: HTMLElement | null = null
+
+watch(() => store.active, async (active) => {
+  if (active) {
+    opener = document.activeElement as HTMLElement | null
+    await nextTick()
+    document.querySelector<HTMLElement>('[data-tour-card]')?.focus()
+  }
+  else {
+    opener?.focus()
+    opener = null
+  }
+})
 
 let observer: ResizeObserver | undefined
 onMounted(() => {

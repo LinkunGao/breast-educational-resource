@@ -144,7 +144,11 @@ const STEPS: TourStep[] = [
     placement: 'top',
     title: 'Find the lesion',
     body: 'Locate lesion jumps to the slice the lesion sits on.',
-    bodyFallback: 'Press Locate lesion to jump to the slice the lesion sits on.',
+    // Locate lesion only renders once a volume has loaded (StageControls'
+    // hasLesion), which is exactly the condition that puts this step here --
+    // so the fallback must not send the reader after a control that is not
+    // on screen.
+    bodyFallback: 'Once this case\'s MRI has finished loading, Locate lesion jumps to the slice the lesion sits on.',
   },
   {
     id: 'prev-next',
