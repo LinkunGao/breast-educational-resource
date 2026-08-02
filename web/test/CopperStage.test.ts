@@ -255,7 +255,7 @@ function mountStage(overrides: Record<string, unknown> = {}) {
   const wrapper = mount(CopperStage, {
     props: {
       slug: 'density-a', group: 'density', lesionSliceIndex: 0, modality: DENSITY_A,
-      panelLabel: 'Anatomy', ...props,
+      panelLabel: 'Anatomy', panelId: 'anatomy', ...props,
     },
     // Nuxt auto-imports components; plain Vitest does not, so the
     // `<StageControls>` in this component's template would resolve to
@@ -667,6 +667,35 @@ describe('load gate: nothing downloads until CSS has given this panel a box', ()
     await resizeHost(wrapper, { width: 400, height: 300 })
     // Re-shown, not re-downloaded: the scene is cached and load() short-
     // circuits on it, but it must not be called again from the gate.
+    expect(loadSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not load while loadEnabled is false, and loads once it flips true', async () => {
+    const wrapper = mountStage({ loadEnabled: false })
+    await flushPromises()
+    expect(loadSpy).not.toHaveBeenCalled()
+
+    await wrapper.setProps({ loadEnabled: true })
+    await settle()
+    expect(loadSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('emits settled once the load resolves', async () => {
+    const wrapper = mountStage({ loadEnabled: true })
+    await settle()
+    expect(wrapper.emitted('settled')).toHaveLength(1)
+  })
+
+  it('emits settled even when the load rejects, so siblings are never blocked', async () => {
+    loadSpy.mockImplementation(() => Promise.reject(new Error('network')))
+    const wrapper = mountStage({ loadEnabled: true })
+    await settle()
+    expect(wrapper.emitted('settled')).toHaveLength(1)
+  })
+
+  it('defaults to enabled, so any caller that does not stage behaves as before', async () => {
+    mountStage({})
+    await settle()
     expect(loadSpy).toHaveBeenCalledTimes(1)
   })
 })

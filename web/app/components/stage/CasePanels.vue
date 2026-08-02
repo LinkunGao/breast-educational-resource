@@ -69,6 +69,31 @@ function onVariant(choice: { panel: PanelId, modality: ModalityId }) {
   // focused modality, and there is exactly one URL.
   navigateTo(`/${props.case.slug}/${choice.modality}`)
 }
+
+/**
+ * Staged loading.
+ *
+ * Three-up mounts three stages, and every one of them used to start
+ * downloading at once -- 50.4MB on `/the-breast`, which borrows density-1.
+ * The focused panel now has the connection to itself until it settles; the
+ * other two follow. Same bytes, far less time before anything is usable.
+ *
+ * One-way latch: once released, a panel is never gated again, or stepping
+ * between slots would re-stage on every step.
+ */
+const released = ref(false)
+function release() { released.value = true }
+
+// Safety net: a stage whose load never settles (a hung connection, a
+// renderer that never became ready) must not strand its siblings forever.
+onMounted(() => {
+  const timer = setTimeout(release, 15_000)
+  onScopeDispose(() => clearTimeout(timer))
+})
+
+function loadEnabledFor(id: PanelId) {
+  return released.value || id === focusedPanel.value
+}
 </script>
 
 <template>
@@ -105,6 +130,7 @@ function onVariant(choice: { panel: PanelId, modality: ModalityId }) {
       compared, which is what they are.
     -->
     <div
+      data-tour="panels"
       class="flex min-h-0 flex-1 flex-col
              @[1000px]:grid @[1000px]:grid-cols-3 @[1000px]:gap-3 @[1000px]:p-3"
     >
@@ -185,10 +211,13 @@ function onVariant(choice: { panel: PanelId, modality: ModalityId }) {
         <CopperStage
           :slug="props.case.slug"
           :group="props.case.group"
+          :panel-id="panel.id"
           :panel-label="panel.label"
           :lesion-slice-index="lesionSliceIndexFor(props.case, modalityFor(panel.id).id)"
           :modality="modalityFor(panel.id)"
           :compact="true"
+          :load-enabled="loadEnabledFor(panel.id)"
+          @settled="release"
         />
       </div>
     </div>

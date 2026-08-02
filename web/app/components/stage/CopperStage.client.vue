@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { CaseGroup, Modality } from '~~/content/types'
+import type { CaseGroup, Modality, PanelId } from '~~/content/types'
 import { chooseTransition } from '~/composables/cameraTransitions'
 import type { ViewKey } from '~/composables/cameraTransitions'
 import type { StageOptions } from '~/composables/useCopperStage'
@@ -12,7 +12,13 @@ import type { StageOptions } from '~/composables/useCopperStage'
  * would give the same value two names inside one component. Everything else
  * on `Case` is content, which this component has no business seeing.
  */
-const props = defineProps<{
+/**
+ * `withDefaults`, not a bare `defineProps<T>()`: Vue casts an absent
+ * `boolean`-typed prop to `false` when it has no declared default, which
+ * would silently invert "loadEnabled defaults to true" for every caller
+ * that does not pass it.
+ */
+const props = withDefaults(defineProps<{
   /** Namespaces the scene copper3d builds (`${slug}:${modality.id}`), so
    * two cases can never collide and switching back to an already-loaded
    * modality of the same case can find its scene again. */
@@ -29,6 +35,21 @@ const props = defineProps<{
   panelLabel: string
   /** Three-up: icon-only buttons, since three bars share the width one had. */
   compact?: boolean
+  /** Which of the three slots this stage is. Used to register its
+   *  capabilities with the tour (Task 5). */
+  panelId: PanelId
+  /**
+   * Staged loading gate. False keeps this stage idle so a sibling can have
+   * the connection to itself; flipping it true starts the load. Defaults
+   * true so any caller that does not stage still behaves as before.
+   */
+  loadEnabled?: boolean
+}>(), { loadEnabled: true })
+
+const emit = defineEmits<{
+  /** Fired once this stage's load has settled -- resolved OR rejected.
+   *  CasePanels uses it to release the next stage in the queue. */
+  settled: []
 }>()
 
 /** §7.1: the crossfade's own duration. This is a MATERIAL crossfade between
@@ -201,7 +222,10 @@ async function enterView() {
   const transition = previousView ? chooseTransition(previousView, next) : 'cut'
   previousView = next
 
-  if (transition === 'density-morph' && await runDensityMorph(token)) return
+  if (transition === 'density-morph' && await runDensityMorph(token)) {
+    if (token === navToken) emit('settled')
+    return
+  }
   if (token !== navToken) return
 
   // Every modality switch is a hard cut, and the first view of a case has no
@@ -215,18 +239,26 @@ async function enterView() {
   //
   // `chooseTransition` is still consulted above -- the density morph is a
   // material crossfade with a stationary camera, and is unaffected.
-  await modalityScene.load(props.slug, props.modality)
+  try {
+    await modalityScene.load(props.slug, props.modality)
+  }
+  finally {
+    // Settled means "no longer occupying the connection", which a failed
+    // load satisfies just as much as a successful one. A sibling waiting
+    // on this must never be stranded by a network error.
+    if (token === navToken) emit('settled')
+  }
 }
 
 watch(
-  [() => stage.ready.value, () => everSized.value, () => props.slug, () => props.modality.id],
-  ([ready, sized]) => {
+  [() => stage.ready.value, () => everSized.value, () => props.slug, () => props.modality.id, () => props.loadEnabled !== false],
+  ([ready, sized, , , enabled]) => {
     // Fire-and-forget by design, but never unhandled: a frame callback that
     // throws rejects the driver's promise (Task 9's M-9), and there is
     // nothing useful to do about a failed decorative transition beyond not
     // stacking a second error on top of whatever the load-failure overlay
     // is already showing.
-    if (ready && sized) void enterView().catch(() => {})
+    if (ready && sized && enabled) void enterView().catch(() => {})
   },
   { immediate: true },
 )
