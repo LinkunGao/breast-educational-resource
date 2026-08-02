@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import TourCard from '../app/components/tour/TourCard.vue'
 import TourRail from '../app/components/tour/TourRail.vue'
 import TourSpotlight from '../app/components/tour/TourSpotlight.vue'
@@ -9,6 +9,20 @@ import { TOUR_CHAPTERS } from '../content/tour'
 // them (right = left + width, bottom = top + height); a plain object
 // literal cast to DOMRect does not unless they're spelled out.
 const rect = { top: 100, left: 200, width: 300, height: 150, right: 500, bottom: 250 } as DOMRect
+
+/** Runs `fn` under a fixed viewport size, then restores whatever was there. */
+function withViewport<T>(width: number, height: number, fn: () => T): T {
+  const ow = globalThis.innerWidth
+  const oh = globalThis.innerHeight
+  vi.stubGlobal('innerWidth', width)
+  vi.stubGlobal('innerHeight', height)
+  try {
+    return fn()
+  } finally {
+    vi.stubGlobal('innerWidth', ow)
+    vi.stubGlobal('innerHeight', oh)
+  }
+}
 
 describe('TourSpotlight', () => {
   it('positions itself over the target rect', () => {
@@ -73,10 +87,15 @@ describe('TourCard', () => {
 
 describe('TourCard placement', () => {
   it('right: anchors left of/past the target, never guessing a height', () => {
-    const w = mount(TourCard, { props: { ...cardProps, placement: 'right' } })
-    const style = w.get('[data-tour-card]').attributes('style')!
-    expect(style).toContain('top:')
-    expect(style).toContain('left:')
+    const style = withViewport(1024, 768, () => {
+      const w = mount(TourCard, { props: { ...cardProps, placement: 'right' } })
+      return w.get('[data-tour-card]').attributes('style')!
+    })
+    // main axis: left = target's right edge + GAP (500 + 16)
+    expect(style).toContain('left: 516px')
+    // cross axis: target's vertical centre (175) is in the top half of a
+    // 768-tall viewport, so the card anchors from `top` (= target's top)
+    expect(style).toContain('top: 100px')
     expect(style).not.toContain('bottom:')
     expect(style).not.toContain('right:')
   })
@@ -90,10 +109,15 @@ describe('TourCard placement', () => {
   })
 
   it('bottom: anchors from the top edge, below the target', () => {
-    const w = mount(TourCard, { props: { ...cardProps, placement: 'bottom' } })
-    const style = w.get('[data-tour-card]').attributes('style')!
-    expect(style).toContain('top:')
-    expect(style).toContain('left:')
+    const style = withViewport(1024, 768, () => {
+      const w = mount(TourCard, { props: { ...cardProps, placement: 'bottom' } })
+      return w.get('[data-tour-card]').attributes('style')!
+    })
+    // main axis: top = target's bottom edge + GAP (250 + 16)
+    expect(style).toContain('top: 266px')
+    // cross axis: target's horizontal centre (350) is in the left half of a
+    // 1024-wide viewport, so the card anchors from `left` (= target's left)
+    expect(style).toContain('left: 200px')
     expect(style).not.toContain('bottom:')
   })
 
@@ -115,6 +139,51 @@ describe('TourCard placement', () => {
     const w = mount(TourCard, { props: { ...cardProps, rect: null, placement: 'right' } })
     const style = w.get('[data-tour-card]').attributes('style')!
     expect(style).toContain('transform:')
+  })
+})
+
+describe('TourCard cross-axis anchoring', () => {
+  // 1000x800 viewport throughout, so "near the right/bottom edge" and
+  // "near the left/top edge" are unambiguous relative to the midpoint.
+  const rightEdgeRect = { top: 50, left: 900, width: 80, height: 50, right: 980, bottom: 100 } as DOMRect
+  const leftEdgeRect = { top: 50, left: 20, width: 80, height: 50, right: 100, bottom: 100 } as DOMRect
+  const bottomEdgeRect = { top: 700, left: 50, width: 50, height: 60, right: 100, bottom: 760 } as DOMRect
+  const topEdgeRect = { top: 20, left: 50, width: 50, height: 60, right: 100, bottom: 80 } as DOMRect
+
+  it("bottom: a target near the viewport's right edge anchors the card from `right`, not `left`", () => {
+    const style = withViewport(1000, 800, () => {
+      const w = mount(TourCard, { props: { ...cardProps, rect: rightEdgeRect, placement: 'bottom' } })
+      return w.get('[data-tour-card]').attributes('style')!
+    })
+    expect(style).toContain('right:')
+    expect(style).not.toContain('left:')
+  })
+
+  it("bottom: a target near the viewport's left edge anchors the card from `left`, not `right`", () => {
+    const style = withViewport(1000, 800, () => {
+      const w = mount(TourCard, { props: { ...cardProps, rect: leftEdgeRect, placement: 'bottom' } })
+      return w.get('[data-tour-card]').attributes('style')!
+    })
+    expect(style).toContain('left:')
+    expect(style).not.toContain('right:')
+  })
+
+  it("right: a target near the viewport's bottom edge anchors the card from `bottom`, not `top`", () => {
+    const style = withViewport(1000, 800, () => {
+      const w = mount(TourCard, { props: { ...cardProps, rect: bottomEdgeRect, placement: 'right' } })
+      return w.get('[data-tour-card]').attributes('style')!
+    })
+    expect(style).toContain('bottom:')
+    expect(style).not.toContain('top:')
+  })
+
+  it("right: a target near the viewport's top edge anchors the card from `top`, not `bottom`", () => {
+    const style = withViewport(1000, 800, () => {
+      const w = mount(TourCard, { props: { ...cardProps, rect: topEdgeRect, placement: 'right' } })
+      return w.get('[data-tour-card]').attributes('style')!
+    })
+    expect(style).toContain('top:')
+    expect(style).not.toContain('bottom:')
   })
 })
 

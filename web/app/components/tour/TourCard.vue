@@ -34,18 +34,29 @@ const style = computed(() => {
   const vw = globalThis.innerWidth || 1024
   const vh = globalThis.innerHeight || 768
 
+  // Cross-axis anchor: pick the side that puts the card's near edge flush
+  // with the target's near edge, chosen by which half of the viewport the
+  // target sits in. Same edge-anchoring trick as the main axis, so a wide
+  // or tall card is still sized by the browser, not by a guessed constant.
+  const hSide = (r.left + r.right) / 2 > vw / 2
+    ? { right: `${Math.max(GAP, vw - r.right)}px` }
+    : { left: `${Math.max(GAP, r.left)}px` }
+  const vSide = (r.top + r.bottom) / 2 > vh / 2
+    ? { bottom: `${Math.max(GAP, vh - r.bottom)}px` }
+    : { top: `${Math.max(GAP, r.top)}px` }
+
   if (props.placement === 'right') {
-    return { top: `${Math.max(GAP, r.top)}px`, left: `${Math.max(GAP, r.right + GAP)}px` }
+    return { ...vSide, left: `${Math.max(GAP, r.right + GAP)}px` }
   }
   if (props.placement === 'left') {
-    return { top: `${Math.max(GAP, r.top)}px`, right: `${Math.max(GAP, vw - r.left + GAP)}px` }
+    return { ...vSide, right: `${Math.max(GAP, vw - r.left + GAP)}px` }
   }
   if (props.placement === 'bottom') {
-    return { top: `${Math.max(GAP, r.bottom + GAP)}px`, left: `${Math.max(GAP, r.left)}px` }
+    return { top: `${Math.max(GAP, r.bottom + GAP)}px`, ...hSide }
   }
   // 'top': anchor the card's bottom edge above the target instead of its
   // top edge, so the card grows upward and never covers the target.
-  return { bottom: `${Math.max(GAP, vh - r.top + GAP)}px`, left: `${Math.max(GAP, r.left)}px` }
+  return { bottom: `${Math.max(GAP, vh - r.top + GAP)}px`, ...hSide }
 })
 
 const btn = 'flex min-h-11 items-center rounded-full px-4 text-body-sm font-bold'
