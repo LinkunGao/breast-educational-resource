@@ -6,9 +6,13 @@ import { readFileSync } from 'node:fs'
  * One source of truth: nuxt.config.ts injects the return value into
  * runtimeConfig.public.appVersion, so bumping package.json is the only
  * edit a release needs.
+ *
+ * Takes a filesystem path rather than deriving one from `import.meta.url`:
+ * Vitest does not give that a `file:` scheme, which would make this
+ * untestable. The caller resolves the path.
  */
-export function readAppVersion(pkgUrl = new URL('./package.json', import.meta.url)): string {
-  const pkg = JSON.parse(readFileSync(pkgUrl, 'utf8')) as { version?: string }
-  if (!pkg.version) throw new Error(`No "version" field in ${pkgUrl}`)
+export function readAppVersion(pkgPath: string): string {
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { version?: string }
+  if (!pkg.version) throw new Error(`No "version" field in ${pkgPath}`)
   return pkg.version
 }
