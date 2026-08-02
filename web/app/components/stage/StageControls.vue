@@ -110,6 +110,7 @@ const tipClass = 'pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 -t
 <template>
   <div
     ref="root"
+    data-tour="stage-controls"
     class="flex shrink-0 flex-wrap items-center gap-2 border-t border-border
            bg-surface px-4 py-2 text-text"
   >
@@ -165,6 +166,7 @@ const tipClass = 'pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 -t
     <button
       v-if="hasLesion"
       type="button"
+      data-tour="locate-lesion"
       :class="`${buttonClass} font-bold text-brand-hover hover:bg-brand/10`"
       :disabled="!props.ready"
       aria-label="Locate lesion"

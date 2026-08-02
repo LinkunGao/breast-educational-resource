@@ -1,5 +1,7 @@
 <script setup lang="ts">
 const store = useViewerStore()
+const tour = useTourStore()
+const emit = defineEmits<{ startTour: [] }>()
 </script>
 
 <template>
@@ -94,6 +96,28 @@ const store = useViewerStore()
           <rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2" />
           <line x1="15" y1="5" x2="15" y2="19" stroke="currentColor" stroke-width="2" />
         </svg>
+      </button>
+
+      <!--
+        Secondary to About by design. The loud, unmissable invitation is the
+        first-visit launcher, which expires; this one only has to be
+        findable again afterwards, so it is an outline, not a fill.
+      -->
+      <button
+        type="button"
+        data-tour-open
+        class="flex min-h-11 items-center gap-1.5 rounded-full border border-border-strong
+               px-3 text-body-sm font-semibold text-text hover:bg-surface-sunken md:px-4"
+        :aria-label="tour.active ? 'Guided tour is running' : 'Start the guided tour'"
+        @click="emit('startTour')"
+      >
+        <svg viewBox="0 0 24 24" class="size-4 shrink-0" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M12 2.5 13.6 8l5.4 1.6-5.4 1.6L12 16.6 10.4 11.2 5 9.6 10.4 8z"
+          />
+        </svg>
+        <span data-tour-label class="max-md:sr-only">Guided tour</span>
       </button>
 
       <!--

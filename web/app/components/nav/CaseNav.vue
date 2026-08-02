@@ -81,6 +81,7 @@ const neighbours = computed<{ previous?: Stop, next?: Stop }>(() => {
        broke long headings across three lines. -->
   <nav
     v-if="neighbours.previous || neighbours.next"
+    data-tour="prev-next"
     aria-label="Previous and next view"
     class="@container border-t border-border px-6 py-6"
   >

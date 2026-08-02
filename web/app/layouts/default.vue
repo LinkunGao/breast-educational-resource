@@ -7,6 +7,11 @@ const store = useViewerStore()
 // design -- a stale "expanded" carried across an unrelated navigation is a
 // much smaller papercut than xl+'s content column defaulting collapsed.
 const sheetExpanded = ref(false)
+
+// The launcher and the header both start the tour; TourLayer owns the
+// director, so both routes go through it. The layout itself owns neither.
+const tourLayerRef = ref<{ startTour: () => void } | null>(null)
+function startTour() { tourLayerRef.value?.startTour() }
 </script>
 
 <template>
@@ -23,7 +28,7 @@ const sheetExpanded = ref(false)
       Skip to main content
     </a>
 
-    <AppHeader />
+    <AppHeader data-tour-region @start-tour="startTour" />
 
     <div class="flex min-h-0 flex-1">
       <!-- Case navigation: resident + collapsible at xl+ (§10.1); a drawer
@@ -49,6 +54,7 @@ const sheetExpanded = ref(false)
            transition finish before the panel actually goes
            non-interactive; opening/expanding reacts instantly. -->
       <CaseSidebar
+        data-tour-region
         class="max-md:fixed max-md:inset-x-0 max-md:top-14 max-md:bottom-0 max-md:z-30 max-md:w-full
                max-md:shadow-lg max-md:transition-[transform,visibility] max-md:duration-200
                md:max-xl:fixed md:max-xl:top-14 md:max-xl:bottom-0 md:max-xl:left-0 md:max-xl:z-30 md:max-xl:shadow-lg
@@ -166,6 +172,7 @@ const sheetExpanded = ref(false)
              clickable while the case-nav drawer was supposedly modal. -->
         <div
           id="case-content-panel"
+          data-tour-region
           class="shrink-0 border-border bg-surface
                  max-md:border-t
                  md:max-xl:fixed md:max-xl:inset-x-0 md:max-xl:bottom-0 md:max-xl:z-10 md:max-xl:overflow-y-auto
@@ -203,5 +210,8 @@ const sheetExpanded = ref(false)
         </div>
       </main>
     </div>
+
+    <TourLauncher @start="startTour" />
+    <TourLayer ref="tourLayerRef" />
   </div>
 </template>

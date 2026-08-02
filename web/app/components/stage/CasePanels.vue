@@ -139,6 +139,7 @@ function loadEnabledFor(id: PanelId) {
         :key="panel.id"
         :data-panel="panel.id"
         :data-focused="panel.id === focusedPanel"
+        data-tour-region
         :class="[
           // `flex-1` is load-bearing, not decoration. Without it this cell
           // has no height in the one-up (flex-column) arrangement, the

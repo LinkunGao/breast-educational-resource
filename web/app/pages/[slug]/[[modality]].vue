@@ -97,7 +97,7 @@ useHead(() => ({
     <!-- design doc §10.1's ASCII places the case heading atop the stage
          column (above the modality stepper), not in the content column. -->
     <template #heading>
-      <div class="p-6 pb-0">
+      <div class="p-6 pb-0" data-tour="case-heading">
         <CaseHeader :case="current!" />
       </div>
     </template>

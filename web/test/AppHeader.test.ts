@@ -229,5 +229,35 @@ describe('AppHeader', () => {
       const about = wrapper.get('[data-header-actions] a[href="/about"]')
       expect(about.classes()).toContain('min-h-11')
     })
+
+    it('the Guided tour button sits before About, so About keeps the end position', () => {
+      const wrapper = mountHeader()
+      const group = wrapper.get('[data-header-actions]')
+      const children = Array.from(group.element.children) as HTMLElement[]
+      const tourIndex = children.findIndex(c => c.hasAttribute('data-tour-open'))
+      const aboutIndex = children.findIndex(c => c.getAttribute('href') === '/about')
+      expect(tourIndex).toBeGreaterThanOrEqual(0)
+      expect(tourIndex).toBeLessThan(aboutIndex)
+    })
+
+    it('the Guided tour button is an outline, never a rose fill', () => {
+      // Rose is the focus semantic; spending it on a permanent button blurs
+      // what "current" means in the sidebar and on the focused panel.
+      const wrapper = mountHeader()
+      const btn = wrapper.get('[data-tour-open]')
+      expect(btn.classes()).toContain('border')
+      expect(btn.classes().some(c => c.startsWith('bg-brand'))).toBe(false)
+    })
+
+    it('the Guided tour label collapses to screen-reader-only below md', () => {
+      const wrapper = mountHeader()
+      expect(wrapper.get('[data-tour-label]').classes()).toContain('max-md:sr-only')
+    })
+
+    it('emits startTour when pressed', async () => {
+      const wrapper = mountHeader()
+      await wrapper.get('[data-tour-open]').trigger('click')
+      expect(wrapper.emitted('startTour')).toHaveLength(1)
+    })
   })
 })
