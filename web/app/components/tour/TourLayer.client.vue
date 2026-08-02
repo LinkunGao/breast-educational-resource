@@ -4,6 +4,9 @@ import type { ChapterId } from '~~/content/tourTypes'
 // PanelId lives in content/types, not tourTypes -- tourTypes imports it but
 // does not re-export it.
 import type { PanelId } from '~~/content/types'
+// Imported, not auto-imported: exported so the decision rule can be unit-
+// tested without mounting this `.client` component.
+import { decideTourKeydown } from '~/utils/tourKeydown'
 
 /**
  * The tour's one stateful component.
@@ -66,7 +69,13 @@ watch([() => store.active, () => store.stepIndex], async () => {
   const s = step.value
   if (!s) return
 
+  // Guards against a second Next/Back arriving while this step's demo is
+  // still running (the rotate step's orbit alone is 2500ms): without this,
+  // the older step's tail could overwrite the newer step's target after the
+  // reader has already moved on, or after the tour has already exited.
+  const token = store.runToken
   await director.runStep(s)
+  if (token !== store.runToken || !store.active) return
   await nextTick()
   targetEl.value = director.resolveTarget(s)
   paintRegions()
@@ -89,9 +98,10 @@ onScopeDispose(() => {
 
 function onKeydown(event: KeyboardEvent) {
   if (!store.active) return
-  if (event.key === 'Escape') { void director.exitTour(); return }
-  if (event.key === 'ArrowRight') advance()
-  if (event.key === 'ArrowLeft') store.back()
+  const action = decideTourKeydown(event)
+  if (action === 'exit') void director.exitTour()
+  else if (action === 'next') advance()
+  else if (action === 'back') store.back()
 }
 
 function advance() {
