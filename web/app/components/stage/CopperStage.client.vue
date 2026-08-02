@@ -3,6 +3,7 @@ import type { CaseGroup, Modality, PanelId } from '~~/content/types'
 import { chooseTransition } from '~/composables/cameraTransitions'
 import type { ViewKey } from '~/composables/cameraTransitions'
 import type { StageOptions } from '~/composables/useCopperStage'
+import { registerTourStage, unregisterTourStage } from '~/composables/useTourStageBridge'
 
 /**
  * Controller correction C7: this component takes `slug` plus the two case
@@ -379,6 +380,30 @@ onScopeDispose(() => {
   host.value?.removeEventListener('pointerdown', onUserInput)
   host.value?.removeEventListener('wheel', onUserInput)
 })
+
+/**
+ * Publish this stage's capabilities to the tour.
+ *
+ * The tour never imports three.js or copper3d; it looks this row up by
+ * panel id. Registered after mount (when `camera`/`slice` are live) and
+ * dropped on dispose, so a stale row can never outlive its renderer.
+ */
+onMounted(() => {
+  registerTourStage(props.panelId, {
+    isReady: () => isHealthy(),
+    isFailed: () => Boolean(chunkLoadError.value || assetLoadError.value),
+    snapshot: () => camera.currentPose(),
+    applyPose: pose => camera.applyPose(pose),
+    orbit: (yawRad, durationMs) => camera.orbitBy(yawRad, durationMs),
+    scrubTo: index => slice.jumpTo(index),
+    sliceMax: () => slice.max.value,
+    lesionSliceIndex: () => props.lesionSliceIndex,
+    locate: onLocate,
+    reset: onReset,
+    prefersReducedMotion: () => camera.prefersReducedMotion.value,
+  })
+})
+onScopeDispose(() => unregisterTourStage(props.panelId))
 
 defineExpose({ stage, modalityScene, host, camera, slice })
 </script>

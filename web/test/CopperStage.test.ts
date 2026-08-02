@@ -6,6 +6,7 @@ import { useCameraChoreography } from '../app/composables/useCameraChoreography'
 import { useCopperStage } from '../app/composables/useCopperStage'
 import { useModalityScene } from '../app/composables/useModalityScene'
 import { useSliceControl } from '../app/composables/useSliceControl'
+import { getTourStage } from '../app/composables/useTourStageBridge'
 import CopperStage from '../app/components/stage/CopperStage.client.vue'
 import StageControls from '../app/components/stage/StageControls.vue'
 
@@ -731,5 +732,22 @@ describe('the control bar is the stage\'s own', () => {
     await flushPromises()
     expect(without.findComponent(StageControls).props('lesionSliceIndex')).toBe(0)
     expect(without.text()).not.toContain('Locate lesion')
+  })
+})
+
+describe('tour bridge registration', () => {
+  it('registers its capabilities under its own panel id, and drops them on unmount', async () => {
+    const wrapper = mountStage({ panelId: 'mri' })
+    await settle()
+    expect(getTourStage('mri')).toBeDefined()
+    wrapper.unmount()
+    expect(getTourStage('mri')).toBeUndefined()
+  })
+
+  it('reports the lesion slice its props carry, so the director need not know the content model', async () => {
+    const wrapper = mountStage({ panelId: 'mri', modality: MRI, lesionSliceIndex: 62 })
+    await settle()
+    expect(getTourStage('mri')!.lesionSliceIndex()).toBe(62)
+    wrapper.unmount()
   })
 })
