@@ -182,6 +182,30 @@
     outline-offset: 2px;
   }
 
+  /* ── Guided tour: theatre mode ──────────────────────────────────────────
+     Everything that is not the current target drops back. `opacity` +
+     `saturate` only -- deliberately NOT `blur()`, which forces a whole
+     compositing layer (WebGL canvas included) to repaint every frame, and
+     the rotate step animates the camera at exactly this moment. Measured
+     cost of saturate on the GPU is effectively nil. */
+  body[data-tour-active] [data-tour-region]:not([data-tour-focus]) {
+    opacity: .3;
+    filter: saturate(.25);
+    transition: opacity .4s ease, filter .4s ease;
+  }
+
+  body[data-tour-active] [data-tour-region][data-tour-focus] {
+    transition: opacity .4s ease, filter .4s ease;
+  }
+
+  /* The halo around the current target. Two rings: a solid brand edge and a
+     soft outer glow that breathes. Both are box-shadows on an overlay
+     element, so nothing about the target itself is touched. */
+  @keyframes tour-breathe {
+    0%, 100% { box-shadow: 0 0 0 2px var(--color-brand), 0 0 0 6px rgb(217 79 112 / .18); }
+    50%      { box-shadow: 0 0 0 2px var(--color-brand), 0 0 0 14px rgb(217 79 112 / 0); }
+  }
+
   /* Global constraint: prefers-reduced-motion disables motion, it does not
    * merely shorten it. Zero duration/delay (not a "fast" 1ms) so transitions
    * and animations resolve to their end state with no intermediate frames,
