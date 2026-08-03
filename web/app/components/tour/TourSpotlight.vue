@@ -7,19 +7,21 @@
  * never touches the target element, so nothing about the app's own layout,
  * stacking or canvas sizing changes while the tour runs. Positioning is
  * viewport-fixed because the rect handed in comes from getBoundingClientRect.
+ *
+ * No target-name label here -- TourCard's own heading already names the
+ * step; a second label floating over the target duplicated it and read
+ * ~2:1 on light content. The brackets now only point; the card names.
  */
 const props = defineProps<{
   rect: DOMRect | null
-  /** Uppercase label above the top-left bracket. Optional: a centred step
-   *  with no target has nothing to name. */
-  label?: string
   /** Keys the scan-line sweep so it replays once per STEP, not on every
    *  scroll/resize remeasurement of the same target's rect. */
   stepId?: string
 }>()
 
 const OFFSET = 6 // brackets float just outside the target rect
-const STROKE = '1.5px'
+const OUTER_STROKE = 3.5 // dark stroke, drawn first -- shows as an edge on both sides of the accent stroke
+const INNER_STROKE = 1.5 // accent stroke, drawn on top, inset inside the dark one
 
 /** Arm length scales with the target so it reads at small sizes without
  *  swallowing large ones: 18% of the shorter side, clamped to [14, 28]px. */
@@ -29,20 +31,26 @@ const armLen = computed(() => {
   return Math.round(Math.min(28, Math.max(14, short * 0.18)))
 })
 
-/** A dark contact shadow plus the accent's own soft glow -- the pair is what
- *  keeps the bracket visible on both a dark MRI slice and a white sidebar,
- *  not the accent colour alone (that measures under 3:1 on white). */
-const glow = 'drop-shadow(0 0 1px var(--hud-base)) drop-shadow(0 0 1px var(--hud-base)) drop-shadow(0 0 6px rgb(224 166 232 / .55))'
+/** Each corner's L-shaped path, vertex nearest the actual target corner --
+ *  same two-side pairing the old border-width shorthand used (top+left for
+ *  tl, and so on), just expressed as an SVG path instead of a box border. */
+function bracketPath(name: 'tl' | 'tr' | 'bl' | 'br', len: number): string {
+  switch (name) {
+    case 'tl': return `M ${len} 0 L 0 0 L 0 ${len}`
+    case 'tr': return `M 0 0 L ${len} 0 L ${len} ${len}`
+    case 'bl': return `M ${len} ${len} L 0 ${len} L 0 0`
+    case 'br': return `M 0 ${len} L ${len} ${len} L ${len} 0`
+  }
+}
 
 const corners = computed(() => {
-  const len = `${armLen.value}px`
-  const base = { width: len, height: len, borderColor: 'var(--hud-accent)', borderStyle: 'solid' as const, filter: glow }
+  const len = armLen.value
   return [
-    { name: 'tl', style: { ...base, top: `-${OFFSET}px`, left: `-${OFFSET}px`, borderWidth: `${STROKE} 0 0 ${STROKE}` } },
-    { name: 'tr', style: { ...base, top: `-${OFFSET}px`, right: `-${OFFSET}px`, borderWidth: `${STROKE} ${STROKE} 0 0` } },
-    { name: 'bl', style: { ...base, bottom: `-${OFFSET}px`, left: `-${OFFSET}px`, borderWidth: `0 0 ${STROKE} ${STROKE}` } },
-    { name: 'br', style: { ...base, bottom: `-${OFFSET}px`, right: `-${OFFSET}px`, borderWidth: `0 ${STROKE} ${STROKE} 0` } },
-  ]
+    { name: 'tl' as const, style: { top: `-${OFFSET}px`, left: `-${OFFSET}px` } },
+    { name: 'tr' as const, style: { top: `-${OFFSET}px`, right: `-${OFFSET}px` } },
+    { name: 'bl' as const, style: { bottom: `-${OFFSET}px`, left: `-${OFFSET}px` } },
+    { name: 'br' as const, style: { bottom: `-${OFFSET}px`, right: `-${OFFSET}px` } },
+  ].map(c => ({ ...c, d: bracketPath(c.name, len) }))
 })
 </script>
 
@@ -59,22 +67,23 @@ const corners = computed(() => {
       height: `${props.rect.height}px`,
     }"
   >
-    <!-- Target name. Dark text-shadow doubles as the same on-any-background
-         trick as the brackets' drop-shadow pair. -->
-    <p
-      v-if="props.label"
-      class="absolute left-0 -top-6 whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em]"
-      :style="{ color: 'var(--hud-ink)', textShadow: '0 0 1px var(--hud-base), 0 1px 3px var(--hud-base)' }"
-    >
-      {{ props.label }}
-    </p>
-
-    <span
+    <!-- Two-tone stroke: a dark outer pass under a thinner accent pass on
+         the same path, so the bracket keeps an edge against BOTH a near-
+         black MRI slice and a white content panel -- a single accent-only
+         stroke measures well under 3:1 on white; drop-shadow alone did not
+         fix that either. -->
+    <svg
       v-for="corner in corners"
       :key="corner.name"
       class="absolute"
+      :width="armLen"
+      :height="armLen"
+      :viewBox="`0 0 ${armLen} ${armLen}`"
       :style="corner.style"
-    />
+    >
+      <path :d="corner.d" fill="none" stroke="rgb(13 15 26 / .55)" :stroke-width="OUTER_STROKE" />
+      <path :d="corner.d" fill="none" stroke="var(--hud-accent)" :stroke-width="INNER_STROKE" />
+    </svg>
 
     <!-- One top-to-bottom pass on open, not a loop -- motion-safe gated, and
          keyed to the step so scroll/resize remeasurement never replays it. -->

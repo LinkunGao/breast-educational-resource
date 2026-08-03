@@ -271,7 +271,7 @@ defineExpose({ startTour: director.startTour })
 
 <template>
   <template v-if="store.active && step">
-    <TourSpotlight :rect="rect" :label="step.title" :step-id="step.id" />
+    <TourSpotlight :rect="rect" :step-id="step.id" />
     <TourCard
       :title="step.title"
       :body="bodyText"

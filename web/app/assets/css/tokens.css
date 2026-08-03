@@ -258,6 +258,17 @@
   }
 }
 
+/* Suppress CasePanels' rose focus ring while the tour is active (T2 fix 3):
+   the brackets are the tour's focus indicator, so the two must not compete
+   for the same job. Unlayered so it beats border-brand/ring-brand, which
+   Tailwind emits into the utilities layer -- utilities always outrank
+   @layer base regardless of selector specificity. Non-tour appearance is
+   untouched: this selector only matches with data-tour-active present. */
+body[data-tour-active] [data-focused="true"] {
+  border-color: var(--color-border);
+  box-shadow: none;
+}
+
 @utility prose-medical {
   max-width: 65ch;
   font-size: var(--text-body);
