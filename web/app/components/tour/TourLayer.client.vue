@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { getCase } from '~~/content/cases'
 import { TOUR_CHAPTERS } from '~~/content/tour'
-import type { ChapterId } from '~~/content/tourTypes'
+import type { ChapterId, TourStep } from '~~/content/tourTypes'
 // PanelId lives in content/types, not tourTypes -- tourTypes imports it but
 // does not re-export it.
 import type { PanelId } from '~~/content/types'
@@ -9,6 +9,7 @@ import type { PanelId } from '~~/content/types'
 // tested without mounting this `.client` component.
 import { decideTourKeydown } from '~/utils/tourKeydown'
 import { tourStepBody } from '~/utils/tourBodyText'
+import { tourDwellMs } from '~/utils/tourDwell'
 
 /**
  * The tour's one stateful component.
@@ -88,7 +89,40 @@ function paintRegions() {
   }
 }
 
+/**
+ * Auto-advance dwell timer. Armed only once `runStep` has resolved for the
+ * CURRENT step (`dwellReady`) -- a demo still running must not be cut off --
+ * and only while `store.playing`. `dwellToken`/`dwellStep` are snapshotted
+ * alongside `dwellReady` so a resume (the `store.playing` watcher below)
+ * schedules against the step that actually finished, not whatever `step`
+ * has drifted to since.
+ */
+let dwellTimer: ReturnType<typeof setTimeout> | null = null
+let dwellReady = false
+let dwellToken = -1
+let dwellStep: TourStep | undefined
+
+function clearDwellTimer() {
+  if (dwellTimer === null) return
+  clearTimeout(dwellTimer)
+  dwellTimer = null
+}
+
+function scheduleDwell() {
+  clearDwellTimer()
+  if (!store.playing || !dwellReady || !dwellStep || store.atEnd) return
+  const token = dwellToken
+  const body = tourStepBody(store.phase, dwellStep)
+  dwellTimer = setTimeout(() => {
+    dwellTimer = null
+    if (token !== store.runToken || !store.active || !store.playing) return
+    store.next()
+  }, tourDwellMs(body))
+}
+
 watch([() => store.active, () => store.stepIndex], async () => {
+  clearDwellTimer()
+  dwellReady = false
   if (!store.active) {
     document.body.removeAttribute('data-tour-active')
     for (const el of document.querySelectorAll<HTMLElement>('[data-tour-region]')) {
@@ -135,7 +169,21 @@ watch([() => store.active, () => store.stepIndex], async () => {
   paintRegions()
   measure()
   targetEl.value?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+
+  // Only now -- the demo (if any) has actually finished -- does the dwell
+  // clock for auto-advance start.
+  dwellReady = true
+  dwellToken = token
+  dwellStep = s
+  scheduleDwell()
 }, { immediate: true })
+
+/** Toggling play/pause mid-step arms or disarms the dwell timer without
+ *  waiting for the next step change. */
+watch(() => store.playing, (playing) => {
+  if (playing) scheduleDwell()
+  else clearDwellTimer()
+})
 
 /** Focus returns to whatever opened the tour, like any modal. */
 let opener: HTMLElement | null = null
@@ -152,17 +200,28 @@ watch(() => store.active, async (active) => {
   }
 })
 
+/** The `rotate` step invites the reader to grab the model -- advancing out
+ *  from under a mid-drag reader would be rude, so touching any stage panel
+ *  pauses auto-advance the same as a manual Next/Back. */
+function onStagePointerDown(event: PointerEvent) {
+  if (!store.active) return
+  if ((event.target as HTMLElement | null)?.closest('[data-stage-panel]')) store.pause()
+}
+
 let observer: ResizeObserver | undefined
 onMounted(() => {
   observer = new ResizeObserver(measure)
   observer.observe(document.documentElement)
   addEventListener('scroll', measure, true)
   addEventListener('keydown', onKeydown)
+  addEventListener('pointerdown', onStagePointerDown)
 })
 onScopeDispose(() => {
   observer?.disconnect()
   removeEventListener('scroll', measure, true)
   removeEventListener('keydown', onKeydown)
+  removeEventListener('pointerdown', onStagePointerDown)
+  clearDwellTimer()
 })
 
 function onKeydown(event: KeyboardEvent) {
@@ -170,7 +229,7 @@ function onKeydown(event: KeyboardEvent) {
   const action = decideTourKeydown(event)
   if (action === 'exit') void director.exitTour()
   else if (action === 'next') advance()
-  else if (action === 'back') store.back()
+  else if (action === 'back') goBack()
 }
 
 /**
@@ -178,10 +237,19 @@ function onKeydown(event: KeyboardEvent) {
  * you started; FINISHING does not. The last step has just said "pressing
  * Next is enough to walk the whole resource", so bouncing the reader back
  * would contradict it.
+ *
+ * Manual Next is "manual intent" (WCAG 2.2.2's pause trigger): it stops
+ * auto-advance the same as pressing the play/pause control would.
  */
 function advance() {
+  store.pause()
   if (store.atEnd) director.finishTour()
   else store.next()
+}
+
+function goBack() {
+  store.pause()
+  store.back()
 }
 
 function onChapter(id: ChapterId) {
@@ -214,7 +282,7 @@ defineExpose({ startTour: director.startTour })
       :rect="rect"
       :placement="step.placement ?? 'bottom'"
       @next="advance"
-      @back="store.back()"
+      @back="goBack"
       @exit="director.exitTour()"
     />
     <TourRail
@@ -223,10 +291,12 @@ defineExpose({ startTour: director.startTour })
       :step-index="store.stepIndex"
       :step-count="store.stepCount"
       :at-end="store.atEnd"
+      :playing="store.playing"
       @next="advance"
-      @back="store.back()"
+      @back="goBack"
       @exit="director.exitTour()"
       @chapter="onChapter"
+      @toggle-playing="store.togglePlaying()"
     />
   </template>
 </template>

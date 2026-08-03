@@ -234,7 +234,7 @@ describe('TourCard stays inside the viewport', () => {
 describe('TourRail', () => {
   const railProps = {
     chapters: TOUR_CHAPTERS, activeChapter: 'interacting' as const,
-    stepIndex: 7, stepCount: 14, atEnd: false,
+    stepIndex: 7, stepCount: 14, atEnd: false, playing: true,
   }
 
   it('renders one segment per chapter and marks the active one', () => {
@@ -263,5 +263,23 @@ describe('TourRail', () => {
     expect(status.attributes('aria-live')).toBe('polite')
     expect(status.text()).toContain('8')
     expect(status.text()).toContain('14')
+  })
+
+  it('the play/pause control emits toggle-playing and labels itself from the playing prop', async () => {
+    const w = mount(TourRail, { props: { ...railProps, playing: true } })
+    const playButton = w.get('[data-tour-play]')
+    expect(playButton.attributes('aria-label')).toBe('Pause the guided tour')
+    await playButton.trigger('click')
+    expect(w.emitted('toggle-playing')).toHaveLength(1)
+  })
+
+  it('the play/pause control relabels itself when paused', () => {
+    const w = mount(TourRail, { props: { ...railProps, playing: false } })
+    expect(w.get('[data-tour-play]').attributes('aria-label')).toBe('Play the guided tour')
+  })
+
+  it('the play/pause control clears the 44px tap-target floor', () => {
+    const w = mount(TourRail, { props: railProps })
+    expect(w.get('[data-tour-play]').classes()).toContain('size-11')
   })
 })

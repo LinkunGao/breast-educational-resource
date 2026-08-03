@@ -96,6 +96,27 @@
 /* Spacing keeps Tailwind's default 4px base (1 = 4px), so design system §6's
    4·8·12·16·24·32·40·48·64 maps to 1·2·3·4·6·8·10·12·16. */
 
+/* ── Tour HUD tokens (plan/2026-08-03-tour-hud-redesign.md §2) ────────────
+   Scoped to the guided-tour overlay ONLY -- not in @theme, so they generate
+   no bg-, text- or border- utilities and never touch the app's light-theme
+   palette above. T2 is the first consumer; this task only defines the
+   contract.
+
+   Two accents, each with exactly one job -- not decoration, a system:
+     --hud-accent (orchid)   "you are here" -- focus/current state only.
+     --hud-num    (periwinkle) measurements only -- slice #, step #, readouts.
+   Tabular/monospace figures are reserved for --hud-num usage; nothing else
+   in the overlay should use a numeric font. */
+:root {
+  --hud-base:  #0D0F1A;
+  --hud-glass: rgb(13 15 26 / .74);
+  --hud-line:  rgb(190 205 255 / .14);
+  --hud-ink:   #ECEEFA;
+  --hud-dim:   #98A2B8;
+  --hud-accent: #E0A6E8;
+  --hud-num:    #8FA0FF;
+}
+
 @layer base {
   :root {
     color-scheme: light;

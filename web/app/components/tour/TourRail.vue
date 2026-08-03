@@ -7,10 +7,12 @@ const props = defineProps<{
   stepIndex: number
   stepCount: number
   atEnd: boolean
+  /** Auto-advance on/off; the WCAG 2.2.2 pause control lives here. */
+  playing: boolean
 }>()
 
 const emit = defineEmits<{
-  next: [], back: [], exit: [], chapter: [ChapterId]
+  next: [], back: [], exit: [], chapter: [ChapterId], 'toggle-playing': []
 }>()
 </script>
 
@@ -23,6 +25,18 @@ const emit = defineEmits<{
     class="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3
            rounded-full bg-text/92 px-4 py-2 text-surface shadow-lg backdrop-blur-sm"
   >
+    <!-- T1 placeholder: WCAG 2.2.2's pause control for auto-advance. Visual
+         treatment is T2's job -- this just wires the state. -->
+    <button
+      type="button"
+      data-tour-play
+      :aria-label="props.playing ? 'Pause the guided tour' : 'Play the guided tour'"
+      class="flex size-11 items-center justify-center rounded-full hover:bg-surface/15"
+      @click="emit('toggle-playing')"
+    >
+      {{ props.playing ? '⏸' : '▶' }}
+    </button>
+
     <button
       type="button"
       aria-label="Previous step"

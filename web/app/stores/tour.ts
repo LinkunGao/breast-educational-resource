@@ -11,6 +11,13 @@ export const TOUR_SEEN_KEY = 'teuma.tour.seen'
  */
 export type TourPhase = 'playing' | 'waiting' | 'fallback'
 
+/** Read once, at store init: happy-dom (this store's own test suite) may not
+ *  implement matchMedia at all, and this must never throw in SSR either. */
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || !window.matchMedia) return false
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
 export const useTourStore = defineStore('tour', () => {
   const active = ref(false)
   const layout = ref<TourLayoutScope>('wide')
@@ -18,6 +25,11 @@ export const useTourStore = defineStore('tour', () => {
   const stepCount = ref(0)
   const phase = ref<TourPhase>('playing')
   const hasSeen = ref(false)
+
+  /** Auto-advance. Defaults on, except under reduced motion -- timed content
+   *  is hostile to vestibular-sensitive readers (WCAG 2.2.2 permits
+   *  auto-advance only alongside a pause control, which TourRail provides). */
+  const playing = ref(!prefersReducedMotion())
 
   /** Where the reader was when they pressed the button. Exit returns here. */
   const entryRoute = ref('/')
@@ -81,8 +93,20 @@ export const useTourStore = defineStore('tour', () => {
     bump()
   }
 
+  function togglePlaying() {
+    playing.value = !playing.value
+  }
+
+  /** Manual intent (Next/Back, grabbing the stage) stops auto-advance.
+   *  Deliberately does NOT bump(): runToken also guards an in-flight demo
+   *  (e.g. the rotate step's orbit) whose own pose-restore depends on the
+   *  token staying stable while the reader merely pauses playback. */
+  function pause() {
+    playing.value = false
+  }
+
   return {
-    active, layout, stepIndex, stepCount, phase, hasSeen, entryRoute, runToken,
-    atEnd, start, next, back, goToStep, exit, markSeen, restoreSeen,
+    active, layout, stepIndex, stepCount, phase, hasSeen, entryRoute, runToken, playing,
+    atEnd, start, next, back, goToStep, exit, markSeen, restoreSeen, togglePlaying, pause,
   }
 })

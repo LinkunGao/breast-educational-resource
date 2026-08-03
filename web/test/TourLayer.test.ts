@@ -1,7 +1,7 @@
 import { computed } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import TourLayer from '../app/components/tour/TourLayer.client.vue'
 import { useTourStore } from '../app/stores/tour'
 import type { TourStep } from '../content/tourTypes'
@@ -232,5 +232,253 @@ describe('TourLayer: a container target focuses the regions it contains', () => 
     expect(document.querySelector('[data-region="one"]')!.hasAttribute('data-tour-focus')).toBe(true)
     expect(document.querySelector('[data-region="two"]')!.hasAttribute('data-tour-focus')).toBe(true)
     expect(document.querySelector('[data-region="unrelated"]')!.hasAttribute('data-tour-focus')).toBe(false)
+  })
+})
+
+/**
+ * T1: auto-advance with a pause control (design doc §1). Fake timers only
+ * fake setTimeout/clearTimeout -- NOT setImmediate, which `flushPromises`
+ * (via @vue/test-utils) relies on -- so the two coexist without either
+ * hanging the other.
+ */
+describe('TourLayer: auto-advance', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    document.body.innerHTML = `<div data-stage-panel><div data-target="stage">Stage</div></div>`
+
+    vi.stubGlobal('useRoute', () => ({ path: '/test' }))
+    vi.stubGlobal('navigateTo', vi.fn(async () => {}))
+
+    // 'short copy' is 2 words -> 2200 + 520 = 2720, below the 4000ms floor,
+    // so every step here dwells for exactly the floor.
+    const steps: TourStep[] = [
+      { id: 'a', chapter: 'layout', title: 'A', body: 'short copy' },
+      { id: 'b', chapter: 'layout', title: 'B', body: 'short copy' },
+    ]
+    vi.stubGlobal('useTourDirector', () => {
+      const store = useTourStore()
+      return {
+        steps: computed(() => steps),
+        currentStep: computed(() => steps[store.stepIndex]),
+        resolveTarget: () => null,
+        isWideLayout: () => true,
+        layoutScope: () => 'wide' as const,
+        runStep: vi.fn(async () => {}),
+        startTour: vi.fn(),
+        exitTour: vi.fn(async () => { store.exit() }),
+        finishTour: vi.fn(() => { store.exit() }),
+      }
+    })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('advances on its own once the dwell time elapses after runStep resolves', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const store = useTourStore()
+    mount(TourLayer)
+    store.start('wide', 2, '/test')
+    await flushPromises()
+    expect(store.stepIndex).toBe(0)
+
+    await vi.advanceTimersByTimeAsync(3900)
+    expect(store.stepIndex).toBe(0)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(store.stepIndex).toBe(1)
+  })
+
+  it('never fires before runStep resolves, even if the dwell time has technically elapsed', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let resolveStep!: () => void
+    vi.stubGlobal('useTourDirector', () => {
+      const store = useTourStore()
+      const steps: TourStep[] = [
+        { id: 'a', chapter: 'layout', title: 'A', body: 'short copy' },
+        { id: 'b', chapter: 'layout', title: 'B', body: 'short copy' },
+      ]
+      return {
+        steps: computed(() => steps),
+        currentStep: computed(() => steps[store.stepIndex]),
+        resolveTarget: () => null,
+        isWideLayout: () => true,
+        layoutScope: () => 'wide' as const,
+        runStep: () => new Promise<void>((resolve) => { resolveStep = resolve }),
+        startTour: vi.fn(),
+        exitTour: vi.fn(async () => { store.exit() }),
+        finishTour: vi.fn(() => { store.exit() }),
+      }
+    })
+    const store = useTourStore()
+    mount(TourLayer)
+    store.start('wide', 2, '/test')
+    await flushPromises()
+
+    // The demo "runs" for 10s -- longer than the 4s dwell floor -- before
+    // resolving. No timer can be armed yet, so stepIndex must not move.
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(store.stepIndex).toBe(0)
+
+    resolveStep()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(3900)
+    expect(store.stepIndex).toBe(0)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(store.stepIndex).toBe(1)
+  })
+
+  it('does not schedule an auto-advance from the last step (never auto-finishes)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const store = useTourStore()
+    mount(TourLayer)
+    store.start('wide', 2, '/test')
+    await flushPromises()
+    store.next() // reaches the last step; store.next() alone does not pause
+    await flushPromises()
+    expect(store.atEnd).toBe(true)
+    expect(store.playing).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(12_000)
+    expect(store.stepIndex).toBe(1)
+    expect(store.active).toBe(true) // never auto-exits either
+  })
+
+  it('a paused reader (prefers-reduced-motion default, or an explicit pause) never auto-advances', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const store = useTourStore()
+    store.pause()
+    mount(TourLayer)
+    store.start('wide', 2, '/test')
+    await flushPromises()
+
+    await vi.advanceTimersByTimeAsync(12_000)
+    expect(store.stepIndex).toBe(0)
+  })
+
+  it('toggling playing back on mid-step arms the timer without waiting for a step change', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const store = useTourStore()
+    store.pause()
+    mount(TourLayer)
+    store.start('wide', 2, '/test')
+    await flushPromises()
+
+    await vi.advanceTimersByTimeAsync(12_000)
+    expect(store.stepIndex).toBe(0) // still paused, no movement
+
+    store.togglePlaying()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(store.stepIndex).toBe(1)
+  })
+
+  it('pointerdown on a stage panel pauses auto-advance (the rotate step invites dragging)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const store = useTourStore()
+    mount(TourLayer)
+    store.start('wide', 2, '/test')
+    await flushPromises()
+
+    document.querySelector('[data-stage-panel]')!
+      .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    expect(store.playing).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(12_000)
+    expect(store.stepIndex).toBe(0)
+  })
+
+  it('a step change clears any pending timer so a superseded step cannot fire a stale advance', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    // 3 steps, not 2: with only 2, store.next() from the middle step is
+    // already a no-op at the boundary, which would pass this test whether
+    // or not the stale timer actually fired. The middle step here is NOT
+    // atEnd, so a surviving stale timer is observable as a second advance.
+    vi.stubGlobal('useTourDirector', () => {
+      const store = useTourStore()
+      const steps: TourStep[] = [
+        { id: 'a', chapter: 'layout', title: 'A', body: 'short copy' },
+        { id: 'b', chapter: 'layout', title: 'B', body: 'short copy' },
+        { id: 'c', chapter: 'layout', title: 'C', body: 'short copy' },
+      ]
+      return {
+        steps: computed(() => steps),
+        currentStep: computed(() => steps[store.stepIndex]),
+        resolveTarget: () => null,
+        isWideLayout: () => true,
+        layoutScope: () => 'wide' as const,
+        runStep: vi.fn(async () => {}),
+        startTour: vi.fn(),
+        exitTour: vi.fn(async () => { store.exit() }),
+        finishTour: vi.fn(() => { store.exit() }),
+      }
+    })
+    const store = useTourStore()
+    mount(TourLayer)
+    store.start('wide', 3, '/test')
+    await flushPromises()
+
+    await vi.advanceTimersByTimeAsync(3000) // most of the way through step 0's dwell (fires at 4000)
+    store.next() // manual jump to step 1 (bypassing TourLayer's own pause-on-Next), armed for ~7000
+    await flushPromises()
+    expect(store.stepIndex).toBe(1)
+
+    // If step 0's timer had survived, it would fire at 4000 and push
+    // stepIndex to 2 well before step 1's own (~7000) timer is due.
+    await vi.advanceTimersByTimeAsync(1200) // now at ~4200
+    expect(store.stepIndex).toBe(1)
+  })
+
+  /**
+   * Surgical version of the test above: `scheduleDwell()` itself also calls
+   * `clearDwellTimer()`, so a step change that reaches a NEW `scheduleDwell()`
+   * call clears the old timer as a side effect either way, which the test
+   * above cannot tell apart from the watcher's own top-of-callback clear.
+   * Holding the new step's `runStep` pending means `scheduleDwell()` is never
+   * reached for it, isolating exactly the guarantee that the old timer is
+   * gone the moment the step changes -- not merely by the time the new one
+   * is armed. `vi.getTimerCount()` inspects the real pending-timer count
+   * rather than inferring it from `store.next()`'s own no-op-past-the-end
+   * safety net.
+   */
+  it('clears the outgoing timer immediately on step change, even before the new step arms its own', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let resolveB!: () => void
+    // 3 steps so 'b' (the middle one) is NOT atEnd -- otherwise scheduleDwell
+    // would correctly refuse to arm it regardless of this test.
+    vi.stubGlobal('useTourDirector', () => {
+      const store = useTourStore()
+      const steps: TourStep[] = [
+        { id: 'a', chapter: 'layout', title: 'A', body: 'short copy' },
+        { id: 'b', chapter: 'layout', title: 'B', body: 'short copy' },
+        { id: 'c', chapter: 'layout', title: 'C', body: 'short copy' },
+      ]
+      return {
+        steps: computed(() => steps),
+        currentStep: computed(() => steps[store.stepIndex]),
+        resolveTarget: () => null,
+        isWideLayout: () => true,
+        layoutScope: () => 'wide' as const,
+        runStep: (step: TourStep) => step.id === 'a'
+          ? Promise.resolve()
+          : new Promise<void>((resolve) => { resolveB = resolve }),
+        startTour: vi.fn(),
+        exitTour: vi.fn(async () => { store.exit() }),
+        finishTour: vi.fn(() => { store.exit() }),
+      }
+    })
+    const store = useTourStore()
+    mount(TourLayer)
+    store.start('wide', 3, '/test')
+    await flushPromises()
+    expect(vi.getTimerCount()).toBe(1) // step a's own dwell timer armed
+
+    store.next() // step b begins; its runStep is held pending indefinitely
+    await flushPromises()
+    expect(vi.getTimerCount()).toBe(0) // a's timer is gone despite b's own not being armed yet
+
+    resolveB()
+    await flushPromises()
+    expect(vi.getTimerCount()).toBe(1) // b's own timer now armed
   })
 })

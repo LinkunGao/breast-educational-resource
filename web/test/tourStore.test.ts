@@ -84,4 +84,42 @@ describe('tour store', () => {
     expect(s.hasSeen).toBe(true)
     spy.mockRestore()
   })
+
+  describe('auto-advance playback state', () => {
+    it('defaults to playing when prefers-reduced-motion does not match', () => {
+      const s = useTourStore()
+      expect(s.playing).toBe(true)
+    })
+
+    it('defaults to paused under prefers-reduced-motion: reduce', () => {
+      const spy = vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList)
+      const s = useTourStore()
+      expect(s.playing).toBe(false)
+      spy.mockRestore()
+    })
+
+    it('togglePlaying flips playing both ways', () => {
+      const s = useTourStore()
+      s.togglePlaying()
+      expect(s.playing).toBe(false)
+      s.togglePlaying()
+      expect(s.playing).toBe(true)
+    })
+
+    it('pause() only ever turns playing off, never on', () => {
+      const s = useTourStore()
+      s.pause()
+      expect(s.playing).toBe(false)
+      s.pause()
+      expect(s.playing).toBe(false)
+    })
+
+    it('pause() does not bump runToken -- an in-flight demo must not be invalidated by a mere pause', () => {
+      const s = useTourStore()
+      s.start('wide', 3, '/')
+      const t0 = s.runToken
+      s.pause()
+      expect(s.runToken).toBe(t0)
+    })
+  })
 })
