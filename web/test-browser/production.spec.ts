@@ -176,6 +176,67 @@ test.describe('§12 acceptance, against the generated site', () => {
   })
 
   /**
+   * The guided tour, against the artefact GitHub Pages actually publishes.
+   *
+   * Every other tour spec runs against `yarn dev`, where the app is served
+   * unbundled from source and every page is client-rendered. Pages serves
+   * PREBUILT, MINIFIED, CODE-SPLIT chunks into PRERENDERED HTML that then
+   * hydrates -- four differences, none of which any existing spec exercises.
+   * The tour is the app's most hydration-sensitive feature: two of its three
+   * entry points are `.client` components, and it writes `data-tour-active`
+   * onto `<body>` before its own overlay renders. If that overlay fails to
+   * mount for any reason, the reader is left staring at an app dimmed to 30%
+   * opacity with no card, no rail, and no way out -- which is exactly what
+   * was reported from the deployed site.
+   *
+   * So this asserts the two things that failure looks like: the overlay is
+   * there while the tour runs, and the dimming is gone once it ends.
+   */
+  test('the guided tour runs on the generated site and never leaves the app dimmed', async ({ page }) => {
+    const failures: string[] = []
+    page.on('pageerror', e => failures.push(`pageerror: ${e.message}`))
+    page.on('console', (m) => {
+      if (m.type() === 'error' && !/favicon|Failed to load resource/i.test(m.text())) {
+        failures.push(`console: ${m.text()}`)
+      }
+    })
+
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await page.goto(`${base}/the-breast/anatomy`)
+
+    // The launcher is `.client`-only, so its arrival is proof this
+    // prerendered page has hydrated -- see helpers.ts's waitForHydration.
+    const take = page.locator('[data-tour-take]')
+    await expect(take).toBeVisible({ timeout: 30_000 })
+    await take.click()
+
+    const card = page.locator('[data-tour-card]')
+    await expect(card, 'the tour card never rendered on the built site').toBeVisible()
+    await expect(page.locator('[data-tour-rail]')).toBeVisible()
+
+    // Walk a few steps, including the ones that navigate. Each iteration
+    // re-checks the invariant that matters: while the body is dimmed, the
+    // overlay that explains why must be on screen.
+    for (let i = 0; i < 5; i++) {
+      await expect(page.locator('body[data-tour-active]')).toHaveCount(1)
+      await expect(card).toBeVisible()
+      await expect(
+        page.locator('[data-tour-region][data-tour-focus]'),
+        `step ${i}: every region dimmed, so nothing was highlighted`,
+      ).not.toHaveCount(0)
+      await page.locator('[data-tour-next]').click()
+      await page.waitForTimeout(600)
+    }
+
+    await page.keyboard.press('Escape')
+    await expect(page.locator('body[data-tour-active]')).toHaveCount(0)
+    await expect(card).toHaveCount(0)
+
+    expect(failures, `the built site threw while running the tour:\n${failures.join('\n')}`)
+      .toEqual([])
+  })
+
+  /**
    * Client feedback item 1, against the real build. `test/pwa.test.ts`
    * asserts the `nuxt.config.ts` `pwa` object; these assert what actually
    * shipped -- see this file's header for why that has to be here rather

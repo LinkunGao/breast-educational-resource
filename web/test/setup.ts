@@ -1,4 +1,4 @@
-import { computed, inject, nextTick, onMounted, onScopeDispose, provide, reactive, ref, shallowRef, watch, watchEffect } from 'vue'
+import { computed, inject, nextTick, onErrorCaptured, onMounted, onScopeDispose, provide, reactive, ref, shallowRef, watch, watchEffect } from 'vue'
 import { vi } from 'vitest'
 import { useAssetUrl } from '../app/composables/useAssetUrl'
 import { useViewerStore } from '../app/stores/viewer'
@@ -31,6 +31,8 @@ vi.stubGlobal('watchEffect', watchEffect)
 vi.stubGlobal('nextTick', nextTick)
 vi.stubGlobal('onMounted', onMounted)
 vi.stubGlobal('onScopeDispose', onScopeDispose)
+// TourLayer's guard against a child render error leaving the app dimmed.
+vi.stubGlobal('onErrorCaptured', onErrorCaptured)
 vi.stubGlobal('provide', provide)
 vi.stubGlobal('inject', inject)
 vi.stubGlobal('useViewerStore', useViewerStore)

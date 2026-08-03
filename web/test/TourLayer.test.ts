@@ -236,6 +236,83 @@ describe('TourLayer: a container target focuses the regions it contains', () => 
 })
 
 /**
+ * The whole-app blackout, and the guard against it.
+ *
+ * Two steps shipped targeting elements that sat outside every
+ * `[data-tour-region]` -- the case heading and the one-up tab strip. No
+ * region matched, so `paintRegions` dimmed all of them AND made all of them
+ * `inert`: the reader got the entire app at 30% opacity, unusable, with the
+ * card describing something they could no longer see. The two markup fixes
+ * are in the components; this is the behaviour that stops the next one.
+ *
+ * `data-tour-nodim` sits on <body>, NOT on the regions, and that distinction
+ * is the whole design: `data-tour-focus` has to keep meaning "this region is
+ * the target", or the no-target window a navigating step passes through
+ * would claim every region as the target of a step that has not arrived yet.
+ */
+describe('TourLayer: a step that matches no region dims nothing', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    // The target is real and resolvable -- it is simply not inside, around,
+    // or equal to any region. Exactly the case-heading shape.
+    document.body.innerHTML = `
+      <div data-outside><div data-target="orphan">Heading</div></div>
+      <div data-tour-region data-region="one"></div>
+      <div data-tour-region data-region="two"></div>
+    `
+    vi.stubGlobal('useRoute', () => ({ path: '/test' }))
+    vi.stubGlobal('navigateTo', vi.fn(async () => {}))
+
+    const steps: TourStep[] = [
+      { id: 'orphan', chapter: 'layout', title: 'O', body: 'o', target: ['[data-target="orphan"]'] },
+    ]
+    vi.stubGlobal('useTourDirector', () => {
+      const store = useTourStore()
+      return {
+        steps: computed(() => steps),
+        currentStep: computed(() => steps[store.stepIndex]),
+        resolveTarget: (step: TourStep) => document.querySelector<HTMLElement>(step.target![0]!),
+        isWideLayout: () => true,
+        layoutScope: () => 'wide' as const,
+        runStep: vi.fn(async () => {}),
+        startTour: vi.fn(),
+        exitTour: vi.fn(async () => { store.exit() }),
+        finishTour: vi.fn(() => { store.exit() }),
+      }
+    })
+  })
+
+  it('flags the body instead of dimming every region, and leaves nothing inert', async () => {
+    const store = useTourStore()
+    mount(TourLayer)
+    store.start('wide', 1, '/test')
+    await flushPromises()
+
+    expect(document.body.hasAttribute('data-tour-nodim')).toBe(true)
+    for (const name of ['one', 'two']) {
+      const region = document.querySelector<HTMLElement>(`[data-region="${name}"]`)!
+      // Not claimed as the target -- it isn't one.
+      expect(region.hasAttribute('data-tour-focus')).toBe(false)
+      // But reachable: dimmed regions are inert, and an app where every
+      // region is inert cannot be used or tabbed through at all.
+      expect(region.inert).toBe(false)
+    }
+  })
+
+  it('clears the flag when the tour ends', async () => {
+    const store = useTourStore()
+    mount(TourLayer)
+    store.start('wide', 1, '/test')
+    await flushPromises()
+    expect(document.body.hasAttribute('data-tour-nodim')).toBe(true)
+
+    store.exit()
+    await flushPromises()
+    expect(document.body.hasAttribute('data-tour-nodim')).toBe(false)
+  })
+})
+
+/**
  * T1: auto-advance with a pause control (design doc §1). Fake timers only
  * fake setTimeout/clearTimeout -- NOT setImmediate, which `flushPromises`
  * (via @vue/test-utils) relies on -- so the two coexist without either
