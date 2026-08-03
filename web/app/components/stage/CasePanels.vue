@@ -69,17 +69,60 @@ function onVariant(choice: { panel: PanelId, modality: ModalityId }) {
   // focused modality, and there is exactly one URL.
   navigateTo(`/${props.case.slug}/${choice.modality}`)
 }
+
+/**
+ * Staged loading.
+ *
+ * Three-up mounts three stages, and every one of them used to start
+ * downloading at once -- 50.4MB on `/the-breast`, which borrows density-1.
+ * The focused panel now has the connection to itself until it settles; the
+ * other two follow. Same bytes, far less time before anything is usable.
+ *
+ * One-way latch WITHIN a case: once released, a panel is never gated again
+ * for that case, or stepping between slots would re-stage on every step.
+ * But `pageKey.ts` pins every case page to one constant key, so this
+ * component never remounts across cases -- without re-arming the latch on
+ * `props.case.slug` changing, only the very first case of a session ever
+ * got staged loading, and every case after it (the common prev/next path)
+ * started all three multi-megabyte downloads at once again.
+ */
+const released = ref(false)
+function release() { released.value = true }
+
+// Safety net: a stage whose load never settles (a hung connection, a
+// renderer that never became ready) must not strand its siblings forever.
+let safetyTimer: ReturnType<typeof setTimeout> | undefined
+function armSafetyTimer() {
+  clearTimeout(safetyTimer)
+  safetyTimer = setTimeout(release, 15_000)
+}
+
+onMounted(armSafetyTimer)
+onScopeDispose(() => clearTimeout(safetyTimer))
+
+watch(() => props.case.slug, () => {
+  released.value = false
+  armSafetyTimer()
+})
+
+function loadEnabledFor(id: PanelId) {
+  return released.value || id === focusedPanel.value
+}
 </script>
 
 <template>
   <div class="@container flex min-h-0 min-w-0 flex-1 flex-col">
     <!-- One-up only. Three-up labels each panel in place, so a strip there
          would name the same three things twice. -->
+    <!-- Transparent, and no bottom rule: the strip sits on the ground above
+         a stage that is now its own floating card, so a full-bleed white bar
+         with a hairline under it would read as a second surface butting into
+         the first. -->
     <PanelTabs
       :case="props.case"
       :active-panel="focusedPanel"
       :variants="variants"
-      class="shrink-0 border-b border-border bg-surface @[1000px]:hidden"
+      class="shrink-0 @[1000px]:hidden"
       @variant="onVariant"
     />
 
@@ -104,8 +147,15 @@ function onVariant(choice: { panel: PanelId, modality: ModalityId }) {
       cut up; gap plus a card edge each makes them read as three things being
       compared, which is what they are.
     -->
+    <!-- Padded at every width now, not only at three-up. One-up used to run
+         the stage edge to edge, so the biggest surface on screen butted into
+         the sidebar and the content column with nothing but a hairline
+         between them -- three flat regions, no depth. Inset, the stage reads
+         as a slab floating on the ground, which is the whole point of
+         putting the chrome in glass. -->
     <div
-      class="flex min-h-0 flex-1 flex-col
+      data-tour="panels"
+      class="flex min-h-0 flex-1 flex-col px-3 pb-3
              @[1000px]:grid @[1000px]:grid-cols-3 @[1000px]:gap-3 @[1000px]:p-3"
     >
       <div
@@ -113,6 +163,7 @@ function onVariant(choice: { panel: PanelId, modality: ModalityId }) {
         :key="panel.id"
         :data-panel="panel.id"
         :data-focused="panel.id === focusedPanel"
+        data-tour-region
         :class="[
           // `flex-1` is load-bearing, not decoration. Without it this cell
           // has no height in the one-up (flex-column) arrangement, the
@@ -120,16 +171,25 @@ function onVariant(choice: { panel: PanelId, modality: ModalityId }) {
           // sized to whatever it last measured -- spills out of the cell
           // and over its neighbours. `overflow-hidden` is the second half:
           // a canvas is not clipped by its parent unless something says so.
-          'relative min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-bg',
-          // A card at three-up; edge to edge at one-up, where there is only
-          // one panel and a card border would just be a box round the page.
-          '@[1000px]:rounded-card @[1000px]:border transition-shadow',
+          'relative min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface',
+          // A card at every width. One-up used to be edge to edge on the
+          // grounds that a border there is just a box round the page; that
+          // was true when the page had no ground worth seeing.
+          'rounded-card border shadow-sm transition-shadow duration-200',
           panel.id === focusedPanel
             // The WHOLE card is the highlight, not a tinted title strip: a
             // brand border all the way round plus a lift off the page, so
             // which canvas the paragraph on the right belongs to is
             // readable from across a lecture theatre.
-            ? 'flex @[1000px]:border-brand @[1000px]:ring-1 @[1000px]:ring-brand @[1000px]:shadow-md'
+            //
+            // Four corner brackets were tried here instead, on the argument
+            // that four corners are how a radiologist marks a region and
+            // that it would echo the tour's own spotlight. It was wrong at
+            // this scale: the mark works on a small target, but stretched to
+            // the corners of a full panel card it reads as a frame that
+            // failed to draw rather than as a reticle. A focus indicator has
+            // to look finished before it looks clever.
+            ? 'flex @[1000px]:border-brand @[1000px]:ring-1 @[1000px]:ring-brand @[1000px]:shadow-lg'
             : 'hidden @[1000px]:flex @[1000px]:border-border',
         ]"
         @focusin="focus(panel.id)"
@@ -144,15 +204,27 @@ function onVariant(choice: { panel: PanelId, modality: ModalityId }) {
             : 'border-border bg-surface'"
         >
           <span
-            class="text-caption font-bold uppercase tracking-wide"
+            class="text-caption font-bold uppercase tracking-[0.12em]"
             :class="panel.id === focusedPanel ? 'text-brand-hover' : 'text-text-muted'"
           >
             {{ panel.label }}
           </span>
+          <!--
+            `.stop` on both, and it is load-bearing. The cell focuses itself
+            on pointerdown/focusin, which navigates to whatever modality
+            that slot is currently on -- so on an UNFOCUSED panel a click
+            here fired two navigations, the focus one to the slot's current
+            modality and the button's to the chosen one, and the first won.
+            Clicking "2D" on the mammogram panel landed on 3D mammogram.
+            `onVariant` navigates to the chosen modality, which focuses the
+            slot anyway, so nothing is lost by suppressing it here.
+          -->
           <span
             v-if="panel.modalities.length > 1"
             data-variant
             class="ml-auto flex gap-1"
+            @pointerdown.stop
+            @focusin.stop
           >
             <button
               v-for="m in panel.modalities"
@@ -173,10 +245,13 @@ function onVariant(choice: { panel: PanelId, modality: ModalityId }) {
         <CopperStage
           :slug="props.case.slug"
           :group="props.case.group"
+          :panel-id="panel.id"
           :panel-label="panel.label"
           :lesion-slice-index="lesionSliceIndexFor(props.case, modalityFor(panel.id).id)"
           :modality="modalityFor(panel.id)"
           :compact="true"
+          :load-enabled="loadEnabledFor(panel.id)"
+          @settled="release"
         />
       </div>
     </div>

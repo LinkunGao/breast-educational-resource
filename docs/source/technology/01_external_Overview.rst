@@ -13,8 +13,6 @@ Overview
    Tailwind 4. Until this site is rewritten, the authoritative documents are:
 
    - ``README.md`` at the repository root, for how to run, build and deploy it
-   - ``docs/superpowers/specs/2026-07-28-foundation-rebuild-design.md``, for
-     the architecture, the asset strategy and the acceptance criteria
    - ``docs/browser-pass-checklist.md``, for what still needs a human at a
      browser
 

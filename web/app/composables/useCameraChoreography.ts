@@ -1,6 +1,6 @@
 import type { Ref } from 'vue'
-import { easeInOutCubic, interpolateFlightPose, orbitStepPose, orbitSwingAngle, poseDistance, rotateAroundAxis, zoomPose } from './cameraTransitions'
-import type { Pose } from './cameraTransitions'
+import { easeInOutCubic, orbitStepPose, zoomPose } from './copperExtras'
+import type { Pose } from './copperExtras'
 import type { CopperScene, NrrdSlice, StageApi, Vec3 } from './copper-types'
 
 /**
@@ -216,8 +216,9 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
   /*
    * §7.3's `flyTo` (inter-modality camera flight) and §7.4's `orbitIntro`
    * (entrance orbit) were built here and then DELETED at the human's
-   * explicit instruction: "去掉所有的模型和image上的旋转动画", and, asked
-   * separately about the flight, "一起去掉，瞬间切换". Both moved the camera
+   * explicit instruction: remove every rotation animation on the models
+   * and on the images -- and, asked separately about the flight, remove
+   * that as well and switch instantly. Both moved the camera
    * away from wherever the reader had put it, which is precisely what they
    * did not want. §7.2's camera push-in went with them (see
    * CopperStage's `onLocate`).
@@ -254,6 +255,35 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
     stage.renderer.value?.render()
   }
 
+  /**
+   * Tour-only: an eased yaw sweep around the current pivot.
+   *
+   * NOT `nudgeOrbit` in a loop -- that calls `interrupt()` on every call, so
+   * inside `animate`'s frame callback it would cancel the very animation
+   * driving it on the first frame. This computes each frame absolutely from
+   * the pose it started at, so it neither drifts nor fights the driver.
+   *
+   * This is the single exception to "no automatic camera animation" (design
+   * doc D7): it runs only while the tour is active, and the caller restores
+   * the entry pose with `applyPose` when the step ends, the user takes over,
+   * or the tour exits.
+   */
+  function orbitBy(yawRad: number, durationMs: number): Promise<void> {
+    const from = currentPose()
+    if (!from) return Promise.resolve()
+    return animate(durationMs, (t) => {
+      writePose(orbitStepPose(from, yawRad * t, 0))
+    })
+  }
+
+  /** Writes a pose back verbatim, taking ownership of anything in flight.
+   *  Used to restore the reader's own framing after a tour demo. */
+  function applyPose(pose: Pose) {
+    interrupt()
+    writePose(pose)
+    stage.renderer.value?.render()
+  }
+
   return {
     prefersReducedMotion,
     /**
@@ -271,6 +301,8 @@ export function useCameraChoreography(stage: StageApi, scene: Ref<CopperScene | 
     animate,
     nudgeOrbit,
     zoomBy,
+    orbitBy,
+    applyPose,
     interrupt,
     currentPose,
   }

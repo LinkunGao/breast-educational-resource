@@ -1,7 +1,10 @@
+import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import { publicUrl } from './app/composables/assetUrl'
 import { enabledCases } from './content/cases'
 import { LEGACY_ROUTES } from './content/legacyRoutes'
+import { readAppVersion } from './version'
 
 // Mirrors @nuxt/schema's own default resolution for `app.baseURL` (it reads
 // this same env var with this same fallback). Needed at config-eval time
@@ -10,6 +13,17 @@ import { LEGACY_ROUTES } from './content/legacyRoutes'
 // so the apple-touch-icon link below has to be made subpath-aware by hand,
 // same trap `assetBase` documents above.
 const appBaseURL = process.env.NUXT_APP_BASE_URL || '/'
+
+// Resolve package.json path; import.meta.url may not have file: scheme in vitest
+function getPkgPath(): string {
+  try {
+    return fileURLToPath(new URL('./package.json', import.meta.url))
+  }
+  catch {
+    // Fallback for vitest environment where import.meta.url lacks file: scheme
+    return resolve(process.cwd(), 'package.json')
+  }
+}
 
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-28',
@@ -43,6 +57,11 @@ export default defineNuxtConfig({
       // live somewhere else entirely, in which case give an absolute URL
       // (e.g. `https://cdn.example/modelView/`), which is used verbatim.
       assetBase: '/modelView/',
+      // Displayed in the sidebar footer and on the About page. Read from
+      // package.json at build time so there is one source of truth.
+      // Resolved here, where import.meta.url really is a file: URL --
+      // under Vitest it is not, which is why version.ts takes a path.
+      appVersion: readAppVersion(getPkgPath()),
     },
   },
 
@@ -149,29 +168,13 @@ export default defineNuxtConfig({
 
   app: {
     /**
-     * Keeps every page's component instance alive across navigation.
+     * The case page owns the single WebGLRenderer and every scene decoded
+     * into it, so leaving for /about used to dispose the GPU context and
+     * re-download everything on the way back.
      *
-     * This is here for one reason: the case page owns the single
-     * `WebGLRenderer` and every scene decoded into it (see
-     * `useCopperStage`'s `onScopeDispose`, which calls `renderer.dispose()`).
-     * `app/utils/pageKey.ts` already pins one instance across all nine cases,
-     * so case-to-case navigation keeps its cache -- but `/about` is a
-     * different route, so leaving the case page unmounted the stage, tore the
-     * GPU context down, and every model and volume was downloaded and decoded
-     * again on the way back. The human reported exactly that: "为何从 about
-     * 页面跳转回来之后，还有重新加载已经加载过了的模型？"
-     *
-     * Set HERE rather than as `definePageMeta({ keepalive: true })` on the
-     * case page, and the difference is not stylistic: `NuxtPage` reads the
-     * keepalive config off the CURRENT route's meta, so a per-page flag means
-     * the `<KeepAlive>` wrapper itself disappears the moment `/about` is the
-     * current route -- taking the cache, and the renderer, with it. A default
-     * on `app` keeps the wrapper mounted for every route, which is the only
-     * arrangement that survives the round trip.
-     *
-     * The cost is three WebGL contexts held while the reader is on `/about`.
-     * Browsers cap live contexts around 16, and this app has exactly one page
-     * that builds any.
+     * On `app`, not `definePageMeta`: NuxtPage reads keepalive off the
+     * CURRENT route's meta, so a per-page flag removes the <KeepAlive>
+     * wrapper -- and the cache with it -- the moment /about is current.
      */
     keepalive: true,
 
@@ -185,8 +188,8 @@ export default defineNuxtConfig({
        * browser tab, a bookmark, a search result and a shared link are all
        * places where a reader who does not speak te reo gets the title and
        * nothing else, and there it says nothing about what the site is. The
-       * human's question was exactly that: "你认为把 Te Uma 当做网站的
-       * title 合理吗？"
+       * human's question was exactly that: is "Te Uma" on its own a
+       * reasonable title for the site?
        */
       title: 'Breast Educational Resource',
       htmlAttrs: { lang: 'en' },

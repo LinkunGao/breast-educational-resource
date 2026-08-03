@@ -234,4 +234,15 @@ describe('CaseSidebar', () => {
       expect(store.sidebarOpen).toBe(true) // unaffected -- desktop nav ignores Escape
     })
   })
+
+  /**
+   * The version used to sit under the partner logos here. It is gone at the
+   * human's instruction, and nothing is lost by that: the About page has
+   * carried "Breast Educational Resource v{version}" the whole time, which
+   * is where a reader goes looking for provenance anyway. Pinning the
+   * ABSENCE, because a stray reintroduction would otherwise be invisible.
+   */
+  it('does not put the app version in the persistent chrome', () => {
+    expect(mountSidebar().find('[data-app-version]').exists()).toBe(false)
+  })
 })

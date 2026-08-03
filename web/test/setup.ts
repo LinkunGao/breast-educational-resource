@@ -1,8 +1,21 @@
 import { computed, inject, nextTick, onMounted, onScopeDispose, provide, reactive, ref, shallowRef, watch, watchEffect } from 'vue'
 import { vi } from 'vitest'
-import { installTrackballControls } from '../app/composables/installTrackballControls'
 import { useAssetUrl } from '../app/composables/useAssetUrl'
 import { useViewerStore } from '../app/stores/viewer'
+import { useTourStore } from '../app/stores/tour'
+
+/**
+ * copper3d's real `installFastSliceRepaint` patches a `VolumeSlice` with a
+ * canvas-backed repaint, which happy-dom has no business running -- its real
+ * behaviour is covered in `test-browser/mri-exposure.spec.ts`. Everything
+ * else in the barrel is the genuine library.
+ *
+ * A test that wants to assert on the patch can override this per file.
+ */
+vi.mock('../app/composables/copperExtras', async importOriginal => ({
+  ...(await importOriginal<typeof import('../app/composables/copperExtras')>()),
+  installFastSliceRepaint: vi.fn(async () => {}),
+}))
 
 // Nuxt auto-imports Vue's reactivity APIs and its own composables/stores as
 // bare globals inside every <script setup>. Plain Vitest has no equivalent
@@ -21,28 +34,14 @@ vi.stubGlobal('onScopeDispose', onScopeDispose)
 vi.stubGlobal('provide', provide)
 vi.stubGlobal('inject', inject)
 vi.stubGlobal('useViewerStore', useViewerStore)
+vi.stubGlobal('useTourStore', useTourStore)
 // useModalityScene calls the real useAssetUrl, which itself calls
 // useRuntimeConfig -- a Nuxt global with no plain-Vitest equivalent.
 // Mirrors nuxt.config.ts's actual defaults (assetBase '/modelView/', root
 // baseURL), so tests exercise the same URL-joining logic production does.
 vi.stubGlobal('useRuntimeConfig', () => ({
-  public: { assetBase: '/modelView/' },
+  public: { assetBase: '/modelView/', appVersion: '0.0.0-test' },
   app: { baseURL: '/' },
 }))
 vi.stubGlobal('useAssetUrl', useAssetUrl)
 
-// useModalityScene reaches these three as auto-imports too. They are here
-// rather than in one test file because forgetting them does not fail
-// loudly: `load()` catches its own errors into `loadError`, so a missing
-// global surfaces as "loadNrrd was never called" thirty tests later, which
-// is exactly how it surfaced the first time.
-//
-// The real `installTrackballControls` -- it is pure object and DOM work,
-// and swapping copper3d's OrbitControls for the trackball is behaviour the
-// unit tests genuinely check.
-vi.stubGlobal('installTrackballControls', installTrackballControls)
-// These two dynamically `import('three')`, which a happy-dom unit test has
-// no business loading. Their real behaviour is covered in test-browser/.
-// A test that wants to assert on either can stub its own over the top.
-vi.stubGlobal('installFastSliceRepaint', vi.fn(async () => {}))
-vi.stubGlobal('addVolumeBoundingBox', vi.fn(async () => {}))

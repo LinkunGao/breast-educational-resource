@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 import { enabledCases } from '../content/cases'
+import { waitForModality } from './helpers'
 
 /**
  * Design doc §12's acceptance criteria, for the ones a browser can settle.
@@ -14,17 +15,9 @@ import { enabledCases } from '../content/cases'
  *
  * Each test names the §12 item it discharges. What is NOT here -- the
  * crossfade reading as a dissolve, orbit feel, screen-reader announcements --
- * is in docs/browser-pass-checklist.md, which is the residue after
- * automation, not the plan.
+ * is in web/test/a11y-checklist.md, which is the residue after automation,
+ * not the plan.
  */
-
-/** Waits until the stage has finished loading whatever it is showing. */
-async function waitForModality(page: Page) {
-  await expect(page.locator('canvas')).toHaveCount(1, { timeout: 60_000 })
-  await expect(page.getByRole('status').filter({ hasText: /^Loading/ }))
-    .toBeHidden({ timeout: 150_000 })
-  await expect(page.getByRole('alert')).toHaveCount(0)
-}
 
 /**
  * GPU draw calls issued over `ms`, by wrapping the live context's own draw
@@ -38,7 +31,11 @@ async function waitForModality(page: Page) {
  */
 async function countDraws(page: Page, ms: number): Promise<number> {
   return page.evaluate(duration => new Promise<number>((resolve) => {
-    const canvas = document.querySelector('canvas')!
+    // The focused panel's canvas: three are mounted, and the hidden two
+    // have their own renderers that this must not measure instead.
+    const canvas = document.querySelector<HTMLCanvasElement>(
+      '[data-panel][data-focused="true"] canvas',
+    )!
     const gl = (canvas.getContext('webgl2') ?? canvas.getContext('webgl')) as WebGLRenderingContext
     let draws = 0
     const realElements = gl.drawElements.bind(gl)
@@ -88,18 +85,29 @@ test.describe('§12 acceptance', () => {
     expect(placeholders, 'requests for a placeholder volume design doc §3.1 retired').toEqual([])
   })
 
-  test('items 5 and 6: exactly one WebGL context, and it stops drawing when idle', async ({ page }) => {
+  /**
+   * §12 item 5 originally read "exactly one WebGL context". Three-up
+   * changed that deliberately: each panel owns a stage, and never
+   * unmounting one is what stops a revisited panel reloading (client
+   * feedback item 5). So the invariant is now one context PER PANEL and no
+   * more -- a fourth would be an orphaned renderer, which is the leak the
+   * item was written to catch.
+   */
+  test('items 5 and 6: one live context per panel, and none draws when idle', async ({ page }) => {
     await page.goto('/density-d/mammogram')
     await waitForModality(page)
 
-    // Item 5. Counting canvases is the proxy the unit tests already make;
-    // this asks each canvas whether it actually holds a live GL context, so
-    // a second offscreen renderer could not hide behind a single <canvas>.
-    const contexts = await page.evaluate(() =>
-      [...document.querySelectorAll('canvas')]
+    // Asks each canvas whether it holds a live GL context, so an offscreen
+    // renderer could not hide behind a canvas that is merely in the DOM.
+    const gl = await page.evaluate(() => ({
+      panels: document.querySelectorAll('[data-panel]').length,
+      contexts: [...document.querySelectorAll('canvas')]
         .filter(c => c.getContext('webgl2') ?? c.getContext('webgl')).length,
-    )
-    expect(contexts, 'design doc §12 item 5: exactly one WebGL context').toBe(1)
+      orphans: [...document.querySelectorAll('canvas')]
+        .filter(c => !c.closest('[data-panel]')).length,
+    }))
+    expect(gl.contexts, 'one live WebGL context per panel').toBe(gl.panels)
+    expect(gl.orphans, 'a canvas outside any panel means a leaked renderer').toBe(0)
 
     // Item 6. On-demand rendering (design doc §8.1). Counting rAF ticks
     // would prove nothing -- the test's own loop keeps rAF alive whatever
@@ -124,6 +132,13 @@ test.describe('§12 acceptance', () => {
     // must pull its one Draco GLB and no NRRD at all (design doc §9.2's
     // third row). That is the half a code change would actually break --
     // wiring the entry point to a volume by accident.
+    //
+    // Sized explicitly rather than left to the project default: at three-up
+    // all three panels are on screen and all three load, which is correct
+    // behaviour and a different measurement. This asserts the FIRST SCREEN,
+    // which is one-up.
+    await page.setViewportSize({ width: 1280, height: 800 })
+
     const assets = new Map<string, number>()
     page.on('response', (r) => {
       if (!r.url().includes('/modelView/')) return
@@ -227,20 +242,40 @@ test.describe('§12 acceptance', () => {
     const cases = enabledCases()
     expect(cases.length, 'design doc §12 item 1: ten enabled cases').toBe(10)
 
+    // Narrow enough that the stage column stays under the 1000px container
+    // threshold, so the one-up tab strip is the thing on screen. At
+    // three-up it is `display: none` and each panel is labelled in place.
+    await page.setViewportSize({ width: 1280, height: 800 })
+
     for (const c of cases) {
       await page.goto(`/${c.slug}`)
-      const stepper = page.getByRole('list', { name: 'Imaging modalities' })
-      // Wait for the stepper to be rendered before reading it. `goto` alone
-      // resolves on the document, not on hydration, and reading too early
-      // returned an empty list that looked like a missing modality.
-      await expect(stepper.getByRole('link').first()).toBeVisible({ timeout: 30_000 })
-      // The stepper renders one link per modality, in sequence order.
-      const got = (await stepper.getByRole('link').allInnerTexts())
+      const tabs = page.getByRole('list', { name: 'Imaging modalities' })
+      // Wait for the strip to render before reading it. `goto` resolves on
+      // the document, not on hydration, and reading too early returned an
+      // empty list that looked like a missing panel.
+      await expect(tabs.getByRole('link').first()).toBeVisible({ timeout: 30_000 })
+
+      // One tab per SLOT, not per modality. `benign-cyst` has four
+      // modalities in three slots: its 2D ultrasound is a variant inside
+      // the mammogram tab, reached by the segmented control rather than by
+      // a fourth tab (client feedback item 6).
+      const got = (await tabs.getByRole('link').allInnerTexts())
         .map(t => t.replace(/\s+/g, ' ').trim())
-      for (const m of c.modalities) {
-        expect(got.join(' | '), `${c.slug} is missing its ${m.id} step`).toContain(m.label)
+      for (const p of c.panels) {
+        expect(got.join(' | '), `${c.slug} is missing its ${p.id} tab`).toContain(p.label)
       }
-      expect(got.length, `${c.slug} has the wrong number of steps`).toBe(c.modalities.length)
+      expect(got.length, `${c.slug} has the wrong number of tabs`).toBe(c.panels.length)
+
+      // Every modality is still reachable: the ones not carried by a tab
+      // are the second entry in a two-modality slot, and the active slot
+      // exposes them as buttons.
+      const twoWay = c.panels.filter(p => p.modalities.length > 1)
+      for (const p of twoWay) {
+        await page.goto(`/${c.slug}/${p.modalities[0]!.id}`)
+        const variants = page.locator('[aria-label="Imaging modalities"] [data-variant] button')
+        await expect(variants, `${c.slug}/${p.id} offers no variant control`)
+          .toHaveCount(p.modalities.length)
+      }
     }
 
     const LEGACY: Record<string, string> = {

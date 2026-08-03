@@ -38,9 +38,15 @@ const copperRendererOnDemond = vi.fn().mockImplementation(function () {
   return makeFakeRenderer()
 })
 
-vi.mock('copper3d', () => ({
-  copperRendererOnDemond,
-  loading: vi.fn(),
+/**
+ * Mocks the app's OWN seam, not the package. `copper3dModule` is what
+ * `useCopperStage` imports from, and it is also what `copperExtras` reads the
+ * real library out of -- replacing only `loadCopper3d` swaps the renderer
+ * without taking copper3d's actual functions away from everything else.
+ */
+vi.mock('../app/composables/copper3dModule', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../app/composables/copper3dModule')>()),
+  loadCopper3d: vi.fn(async () => ({ copperRendererOnDemond, loading: vi.fn() })),
 }))
 
 // ResizeObserver isn't implemented in happy-dom.

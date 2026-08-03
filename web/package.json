@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@pinia/nuxt": "^1",
-    "copper3d": "^3.7.3",
+    "copper3d": "^3.9.0",
     "nuxt": "^4.5.1",
     "pinia": "^4",
     "three": "0.185.1",
@@ -36,5 +36,6 @@
     "pngjs": "^7.0.0",
     "tailwindcss": "^4.3.3",
     "vitest": "^4"
-  }
+  },
+  "version": "2.0.3"
 }

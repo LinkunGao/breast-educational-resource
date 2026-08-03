@@ -1,5 +1,6 @@
 import type { Ref } from 'vue'
 import type { CopperModule, CopperRenderer, StageApi } from './copper-types'
+import { loadCopper3d } from './copper3dModule'
 
 /**
  * Lifecycle of the single renderer (design doc §8.2).
@@ -15,43 +16,14 @@ import type { CopperModule, CopperRenderer, StageApi } from './copper-types'
  * once they finish (design doc §7.6).
  */
 /**
- * Imports copper3d, working around a throw in its own bundle.
+ * Imports copper3d through the shared, memoized loader.
  *
- * `copper3d/dist/bundle.esm.js` inlines a whole nested webpack runtime
- * (for a WASM module it vendors). That runtime resolves its public path at
- * MODULE EVALUATION time, unconditionally -- before any of copper3d's own
- * code runs and whether or not the WASM is ever used -- like this:
- *
- *   currentScript?.src, else the LAST <script> element's src,
- *   else `throw new Error("Automatic publicPath is not supported...")`
- *
- * Under native ESM `document.currentScript` is always null, and Nuxt's last
- * injected `<script>` is inline, so its `src` is `""`. Both fall through and
- * copper3d throws on import. The legacy Nuxt 2 app never hit this because
- * webpack substituted its own public path at build time; Vite does not.
- *
- * Appending a real `<script src>` would satisfy the fallback but fire a
- * doomed network request, so instead `document.currentScript` is shadowed
- * for the duration of the import with an object carrying a same-origin src,
- * then restored. The value only ever becomes the base URL for fetching that
- * vendored WASM, which nothing on this app's NRRD/GLB paths touches.
+ * The `document.currentScript` shim that makes the import possible at all --
+ * and why it is needed -- lives in `copper3dModule.ts`, which is also what
+ * `copperExtras` reads from. One import, one shim, one cached module.
  */
 async function importCopper3d(): Promise<CopperModule> {
-  const shimmed = document.currentScript === null
-  if (shimmed) {
-    Object.defineProperty(document, 'currentScript', {
-      configurable: true,
-      value: { src: new URL('./', document.baseURI).href },
-    })
-  }
-  try {
-    return (await import('copper3d')) as unknown as CopperModule
-  }
-  finally {
-    // Restores the native getter rather than leaving a frozen value behind,
-    // which would break any other consumer that reads currentScript later.
-    if (shimmed) delete (document as unknown as Record<string, unknown>).currentScript
-  }
+  return (await loadCopper3d()) as unknown as CopperModule
 }
 
 // useCopperStage(host, options)
@@ -123,11 +95,9 @@ export function useCopperStage(host: Ref<HTMLElement | undefined>, options: Stag
   }
 
   let resizeObserver: ResizeObserver | undefined
-  /** Set once the input pump below is wired; see its comment. */
-  let detachInput: (() => void) | undefined
 
   /**
-   * The host's current width / height, for `fitToView`'s `fitDistance`.
+   * The host's current width / height, for `fitView`'s `fitDistance`.
    * Measured fresh on every call rather than cached off the ResizeObserver:
    * `refitCurrentScene` also runs right after a load, on a scene the
    * observer has not necessarily fired for yet. Returns 1 for a box this
@@ -266,7 +236,8 @@ export function useCopperStage(host: Ref<HTMLElement | undefined>, options: Stag
       ;(current as { controls?: { handleResize?: () => void } }).controls?.handleResize?.()
       renderer.value?.render()
       // Task 3 (three-up plan): a panel resize is exactly when a scene still
-      // showing its opening framing needs to be refitted -- see fitToView.ts.
+      // showing its opening framing needs to be refitted -- see
+      // ts/Controls/fitView.ts.
       // `useModalityScene` does not exist yet at the point `useCopperStage`
       // is constructed (it is built FROM this stage), so this is a mutable
       // hook rather than a value read once here -- see `StageOptions`.
@@ -275,49 +246,23 @@ export function useCopperStage(host: Ref<HTMLElement | undefined>, options: Stag
     resizeObserver.observe(host.value)
 
     /**
-     * Pumps a frame while the user is manipulating the camera.
+     * Camera input needs no frame pump here, as of copper3d 3.9.0.
      *
-     * LOAD-BEARING, and not obvious. `Copper3dTrackballControls` dispatches
-     * `change` ONLY from inside its `update()` (bundle.esm.js:66479-66522);
-     * its pointer handlers just record positions and dispatch `start`/`end`.
-     * `update()` in turn only runs inside `scene.render()`. Under on-demand
-     * rendering that closes a deadlock: no render, so no `update()`, so the
-     * camera never moves, so no `change`, so nothing ever requests a render.
-     * The whole viewer goes dead to the mouse -- which is exactly what
-     * happened when the trackball first replaced OrbitControls (OrbitControls
-     * has no such problem: it moves the camera in the pointer handler itself
-     * and dispatches `change` there). copper3d's own trackball scenes do not
-     * hit this because they run a continuous `animate()` rAF loop.
+     * It used to. `Copper3dTrackballControls` dispatches `change` only from
+     * inside its `update()`, and `update()` only runs inside
+     * `scene.render()` -- under on-demand rendering that closes a deadlock:
+     * no render, so no update, so the camera never moves, so no `change`, so
+     * nothing requests a render, and the viewer is dead to the mouse. This
+     * composable worked around it by listening for pointer and wheel input
+     * and requesting a frame itself.
      *
-     * `requestRenderIfNotRequested` rather than `render()`: it coalesces to
-     * one frame per rAF, so a 1000Hz mouse still costs 60 renders a second.
-     * Routed through `getCurrentScene()` so it always drives the scene that
-     * is actually on screen, never a cached one.
+     * 3.9.0 fixes it at the source with `updateOnInput`, which
+     * `copperSceneOnDemond` turns on for the scenes it builds with
+     * `{ controls: "copper3d" }`. The input handlers now move the camera and
+     * dispatch `change` themselves, and the scene's own listener schedules
+     * the frame. `test-browser/camera-drag.spec.ts` is what holds this --
+     * the failure mode is invisible to every unit test.
      */
-    const pump = () => {
-      const current = renderer.value?.getCurrentScene() as
-        { requestRenderIfNotRequested?: () => void } | undefined
-      current?.requestRenderIfNotRequested?.()
-    }
-    // `buttons !== 0` limits the move case to an actual drag; a bare hover
-    // must not schedule frames, and the trackball ignores it anyway.
-    const onMove = (e: PointerEvent) => { if (e.buttons !== 0) pump() }
-    const el = host.value
-    el.addEventListener('pointerdown', pump)
-    el.addEventListener('pointermove', onMove)
-    el.addEventListener('pointerup', pump)
-    el.addEventListener('pointercancel', pump)
-    // Wheel zoom needs one frame of its own: the trackball's wheel handler
-    // dispatches `start` and `end` back to back and leaves the actual zoom
-    // for the next `update()`.
-    el.addEventListener('wheel', pump, { passive: true })
-    detachInput = () => {
-      el.removeEventListener('pointerdown', pump)
-      el.removeEventListener('pointermove', onMove)
-      el.removeEventListener('pointerup', pump)
-      el.removeEventListener('pointercancel', pump)
-      el.removeEventListener('wheel', pump)
-    }
   })
 
   onScopeDispose(() => {
@@ -326,7 +271,6 @@ export function useCopperStage(host: Ref<HTMLElement | undefined>, options: Stag
     if (rafId !== null) cancelAnimationFrame(rafId)
     rafId = null
     continuousHolders = 0
-    detachInput?.()
     resizeObserver?.disconnect()
     resizeObserver = undefined
     renderer.value?.stop()

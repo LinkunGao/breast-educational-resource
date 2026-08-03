@@ -2,21 +2,19 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CopperViewPoint } from '../app/composables/copper-types'
 import type { Modality, ModalityId } from '../content/types'
-import { loadGltfModel } from '../app/composables/loadGltfModel'
 import { useCameraChoreography } from '../app/composables/useCameraChoreography'
 import { useCopperStage } from '../app/composables/useCopperStage'
 import { useModalityScene } from '../app/composables/useModalityScene'
 import { useSliceControl } from '../app/composables/useSliceControl'
+import { getTourStage } from '../app/composables/useTourStageBridge'
 import CopperStage from '../app/components/stage/CopperStage.client.vue'
 import StageControls from '../app/components/stage/StageControls.vue'
 
-// `loadGltfModel` is a plain module export that useModalityScene's `loadGlb`
-// calls as a Nuxt-auto-imported bare global (no local `import` for it in the
-// source file -- same convention `useModalityScene.test.ts` already stubs
-// via `vi.stubGlobal`, mirrored here). Mocking the module and re-exposing
-// the mock globally (see beforeEach below) lets every test drive it exactly
-// the way the old `scene.loadGltf` mock it replaces used to be driven.
-vi.mock('../app/composables/loadGltfModel', () => ({ loadGltfModel: vi.fn() }))
+/**
+ * Stands in for `scene.loadGltf(url, onLoad, opts)`. Module-level so a test
+ * can queue behaviour before the scene it will land on exists.
+ */
+const gltfLoad = vi.fn<(url: string, onLoad: (group: any) => void, opts?: any) => void>()
 
 /**
  * The navigation choreography (controller corrections C5 and C6) is the one
@@ -71,12 +69,26 @@ function makeGroup() {
   }
 }
 
+/** An NRRD slice plane this app never displays, which `loadImaging` frees on
+ *  the spot. */
+function unusedSlicePlane() {
+  const mesh = {
+    name: '',
+    isMesh: true,
+    geometry: { dispose: vi.fn() },
+    material: { dispose: vi.fn(), map: { dispose: vi.fn() } },
+    traverse(fn: (child: unknown) => void) { fn(mesh) },
+  }
+  return mesh
+}
+
 function materialOpacityOf(object: { name: string }): number {
   return (object as unknown as { material: { opacity: number } }).material.opacity
 }
 
 function makeScene() {
   const objects: Array<{ name: string }> = []
+  const add = vi.fn((obj: { name: string }) => { objects.push(obj) })
   const scene = {
     camera: {
       fov: 45,
@@ -85,23 +97,26 @@ function makeScene() {
       lookAt: vi.fn(),
       updateProjectionMatrix: vi.fn(),
     },
-    // OrbitControls, as copper3d's constructor leaves it;
-    // `installTrackballControls` replaces it during `load()`.
+    // `Copper3dTrackballControls`, which is what
+    // `createScene(name, { controls: 'copper3d' })` builds.
     controls: {
       rotateSpeed: 0,
       panSpeed: 0,
+      noRotate: false,
+      noPan: false,
+      staticMoving: false,
+      updateOnInput: true,
       enabled: true,
       target: makeVec3(0, 0, 0),
+      handleResize: vi.fn(),
+      addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       dispose: vi.fn(),
     },
     renderer: { domElement: document.createElement('canvas') },
     requestRenderIfNotRequested: vi.fn(),
     scene: {
-      // `loadGlb` (useModalityScene.ts) now does `target.scene.add(group)`
-      // itself -- this is what actually populates `objects`, where
-      // `loadGltf` used to before this app took that job over from copper3d.
-      add: vi.fn((obj: { name: string }) => { objects.push(obj) }),
+      add,
       remove: vi.fn((obj: { name: string }) => { objects.splice(objects.indexOf(obj), 1) }),
       getObjectByName: vi.fn((name: string) => objects.find(o => o.name === name)),
     },
@@ -118,14 +133,15 @@ function makeScene() {
       const callback = args[3] as (volume: unknown, meshes: unknown, slices: unknown) => void
       callback(
         { RASDimensions: [1, 1, 1], windowHigh: 1, repaintAllSlices: vi.fn() },
-        { x: { name: '' }, y: { name: '' }, z: { name: 'z' } },
+        // Only `z`, matching the `axes: ['z']` the app asks for.
+        { z: { name: 'z' } },
         { z: { index: 0, MaxIndex: 100, volume: { spacing: [1, 1, 1] }, repaint: vi.fn() } },
       )
     }),
-    // Deliberately no `loadGltf` here: `loadGlb` (useModalityScene.ts) no
-    // longer calls it -- it calls the module-level `loadGltfModel` instead
-    // (mocked globally, see this file's header) and adds the result to
-    // `scene.scene` itself, which is what actually pushes into `objects`.
+    // copper3d's own `loadGltf` adds the group to the scene itself, so this
+    // does too -- `loadGlb` (useModalityScene.ts) adds nothing.
+    loadGltf: vi.fn((url: string, onLoad: (g: any) => void, opts?: unknown) =>
+      gltfLoad(url, (group) => { add(group); onLoad(group) }, opts)),
     loadView: vi.fn(),
     onWindowResize: vi.fn(),
     confirmResize: vi.fn(),
@@ -140,7 +156,7 @@ const scenes = new Map<string, FakeScene>()
 const renderer = {
   sceneMap: {} as Record<string, unknown>,
   getSceneByName: vi.fn((name: string) => scenes.get(name)),
-  createScene: vi.fn((name: string) => {
+  createScene: vi.fn((name: string, _opt?: unknown) => {
     const scene = makeScene()
     scenes.set(name, scene)
     renderer.sceneMap[name] = scene
@@ -157,7 +173,20 @@ const copperRendererOnDemond = vi.fn().mockImplementation(function () {
   return renderer
 })
 
-vi.mock('copper3d', () => ({
+/**
+ * Mocks the app's OWN seam, not the package. `copper3dModule` is what
+ * `useCopperStage` imports from, and it is also what `copperExtras` reads the
+ * real library out of -- replacing only `loadCopper3d` swaps the renderer and
+ * the controls while leaving copper3d's actual `fitView`, `disposeObject3D`,
+ * crossfade and budget functions in place, which is exactly what these tests
+ * want to exercise.
+ */
+vi.mock('../app/composables/copper3dModule', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../app/composables/copper3dModule')>()),
+  loadCopper3d: vi.fn(async () => fakeCopper),
+}))
+
+const fakeCopper = {
   copperRendererOnDemond,
   loading: () => ({
     loadingContainer: document.createElement('div'),
@@ -181,7 +210,7 @@ vi.mock('copper3d', () => ({
     dispose: vi.fn(),
   }) }),
   addBoxHelper: vi.fn(),
-}))
+}
 
 /** The callbacks live `ResizeObserver` instances were constructed with,
  *  newest last. `useCopperStage` creates exactly one per stage. */
@@ -227,7 +256,7 @@ function mountStage(overrides: Record<string, unknown> = {}) {
   const wrapper = mount(CopperStage, {
     props: {
       slug: 'density-a', group: 'density', lesionSliceIndex: 0, modality: DENSITY_A,
-      panelLabel: 'Anatomy', ...props,
+      panelLabel: 'Anatomy', panelId: 'anatomy', ...props,
     },
     // Nuxt auto-imports components; plain Vitest does not, so the
     // `<StageControls>` in this component's template would resolve to
@@ -298,9 +327,8 @@ describe('CopperStage navigation choreography', () => {
     // fresh group keeps every test that doesn't care about GLB timing
     // working without its own setup; tests that DO care override a specific
     // call with `mockImplementationOnce`/`mockResolvedValueOnce`.
-    vi.stubGlobal('loadGltfModel', loadGltfModel)
-    vi.mocked(loadGltfModel).mockReset()
-    vi.mocked(loadGltfModel).mockImplementation(() => Promise.resolve({ group: makeGroup(), size: 10 }))
+    gltfLoad.mockReset()
+    gltfLoad.mockImplementation((_url, onLoad) => { onLoad(makeGroup()) })
     vi.stubGlobal('useCopperStage', useCopperStage)
     vi.stubGlobal('useModalityScene', useModalityScene)
     vi.stubGlobal('useCameraChoreography', useCameraChoreography)
@@ -321,9 +349,9 @@ describe('CopperStage navigation choreography', () => {
     mountStage({})
     await settle()
 
-    expect(renderer.createScene).toHaveBeenCalledWith('/modelView/density-1/left/density25.glb')
-    expect(loadGltfModel).toHaveBeenCalledTimes(1)
-    expect(loadGltfModel).toHaveBeenCalledWith('/modelView/density-1/left/density25.glb', '/draco/')
+    expect(renderer.createScene).toHaveBeenCalledWith('/modelView/density-1/left/density25.glb', { controls: 'copper3d' })
+    expect(gltfLoad).toHaveBeenCalledTimes(1)
+    expect(gltfLoad.mock.calls[0]![0]).toBe('/modelView/density-1/left/density25.glb')
     // The new guarantee this app now owns instead of copper3d: without this
     // call the model would decode perfectly and simply never appear.
     expect(scenes.get('/modelView/density-1/left/density25.glb')!.scene.add).toHaveBeenCalledTimes(1)
@@ -352,8 +380,8 @@ describe('CopperStage navigation choreography', () => {
     expect(scenes.size).toBe(1)
     // The incoming model was loaded into the SAME scene and the outgoing one
     // removed once the crossfade committed.
-    expect(loadGltfModel).toHaveBeenCalledTimes(2)
-    expect(vi.mocked(loadGltfModel).mock.calls[1]![0]).toBe('/modelView/density-2/left/density50.glb')
+    expect(gltfLoad).toHaveBeenCalledTimes(2)
+    expect(gltfLoad.mock.calls[1]![0]).toBe('/modelView/density-2/left/density50.glb')
     // Adding the incoming model to the scene is this app's own job now, not
     // copper3d's -- once for the initial load, once for the morph.
     expect(scene.scene.add).toHaveBeenCalledTimes(2)
@@ -403,7 +431,10 @@ describe('CopperStage navigation choreography', () => {
       const callback = args[3] as (v: unknown, m: unknown, s: unknown) => void
       finishLoad = () => callback(
         { RASDimensions: [1, 1, 1], windowHigh: 1, repaintAllSlices: vi.fn() },
-        { x: { name: '' }, y: { name: '' }, z: { name: 'z' } },
+        // `traverse` because the unused x/y planes are freed by
+        // `disposeObject3D`, which walks them the same way it walks a
+        // subtree -- a real THREE.Mesh has it.
+        { x: unusedSlicePlane(), y: unusedSlicePlane(), z: { name: 'z' } },
         { z: { index: 0, MaxIndex: 100, volume: { spacing: [1, 1, 1] }, repaint: vi.fn() } },
       )
     })
@@ -438,8 +469,8 @@ describe('CopperStage navigation choreography', () => {
    * keyed by asset rather than by slug, nothing to rebuild either.
    *
    * This used to build a second scene under a second name and decode the
-   * same file twice. The human caught it: "The Breast 页面和 density-A 页面
-   * 他们就是完全一样的内容，直接复用就行了，为何要反复渲染？！"
+   * same file twice. The human caught it: The Breast and density-A are
+   * exactly the same content, so just reuse it -- why render it twice?
    */
   it('reuses the one scene when two cases ship the same asset', async () => {
     const wrapper = mountStage({ slug: 'the-breast', group: 'overview' })
@@ -450,10 +481,10 @@ describe('CopperStage navigation choreography', () => {
 
     // One scene, built once, for one file -- not one per case.
     expect(renderer.createScene).toHaveBeenCalledTimes(1)
-    expect(renderer.createScene).toHaveBeenCalledWith('/modelView/density-1/left/density25.glb')
+    expect(renderer.createScene).toHaveBeenCalledWith('/modelView/density-1/left/density25.glb', { controls: 'copper3d' })
     // And the model in it is left alone: no teardown, no second download.
     expect(scenes.get('/modelView/density-1/left/density25.glb')!.scene.remove).not.toHaveBeenCalled()
-    expect(loadGltfModel).toHaveBeenCalledTimes(1)
+    expect(gltfLoad).toHaveBeenCalledTimes(1)
   })
 
   /**
@@ -477,8 +508,8 @@ describe('CopperStage navigation choreography', () => {
     const first = scenes.get('/modelView/density-1/left/density25.glb')!
 
     // Hold density-b's GLB open, as a slow network would.
-    let landB!: (value: { group: ReturnType<typeof makeGroup>, size: number }) => void
-    vi.mocked(loadGltfModel).mockImplementationOnce(() => new Promise((resolve) => { landB = resolve }))
+    let landB!: () => void
+    gltfLoad.mockImplementationOnce((_url, onLoad) => { landB = () => onLoad(makeGroup()) })
     await wrapper.setProps({ slug: 'density-b', modality: DENSITY_B })
     await settle()
     animate.mockClear()
@@ -488,7 +519,7 @@ describe('CopperStage navigation choreography', () => {
     await settle()
     const animateCallsForNavTwo = animate.mock.calls.length
 
-    landB({ group: makeGroup(), size: 10 })
+    landB()
     await settle()
 
     // The superseded morph settled its own scene without ever reaching the
@@ -639,6 +670,35 @@ describe('load gate: nothing downloads until CSS has given this panel a box', ()
     // circuits on it, but it must not be called again from the gate.
     expect(loadSpy).toHaveBeenCalledTimes(1)
   })
+
+  it('does not load while loadEnabled is false, and loads once it flips true', async () => {
+    const wrapper = mountStage({ loadEnabled: false })
+    await flushPromises()
+    expect(loadSpy).not.toHaveBeenCalled()
+
+    await wrapper.setProps({ loadEnabled: true })
+    await settle()
+    expect(loadSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('emits settled once the load resolves', async () => {
+    const wrapper = mountStage({ loadEnabled: true })
+    await settle()
+    expect(wrapper.emitted('settled')).toHaveLength(1)
+  })
+
+  it('emits settled even when the load rejects, so siblings are never blocked', async () => {
+    loadSpy.mockImplementation(() => Promise.reject(new Error('network')))
+    const wrapper = mountStage({ loadEnabled: true })
+    await settle()
+    expect(wrapper.emitted('settled')).toHaveLength(1)
+  })
+
+  it('defaults to enabled, so any caller that does not stage behaves as before', async () => {
+    mountStage({})
+    await settle()
+    expect(loadSpy).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('the control bar is the stage\'s own', () => {
@@ -672,5 +732,22 @@ describe('the control bar is the stage\'s own', () => {
     await flushPromises()
     expect(without.findComponent(StageControls).props('lesionSliceIndex')).toBe(0)
     expect(without.text()).not.toContain('Locate lesion')
+  })
+})
+
+describe('tour bridge registration', () => {
+  it('registers its capabilities under its own panel id, and drops them on unmount', async () => {
+    const wrapper = mountStage({ panelId: 'mri' })
+    await settle()
+    expect(getTourStage('mri')).toBeDefined()
+    wrapper.unmount()
+    expect(getTourStage('mri')).toBeUndefined()
+  })
+
+  it('reports the lesion slice its props carry, so the director need not know the content model', async () => {
+    const wrapper = mountStage({ panelId: 'mri', modality: MRI, lesionSliceIndex: 62 })
+    await settle()
+    expect(getTourStage('mri')!.lesionSliceIndex()).toBe(62)
+    wrapper.unmount()
   })
 })

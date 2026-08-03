@@ -7,10 +7,17 @@ const store = useViewerStore()
 // design -- a stale "expanded" carried across an unrelated navigation is a
 // much smaller papercut than xl+'s content column defaulting collapsed.
 const sheetExpanded = ref(false)
+
+// The launcher and the header both start the tour; TourLayer owns the
+// director, so both routes go through it. The layout itself owns neither.
+const tourLayerRef = ref<{ startTour: () => void } | null>(null)
+function startTour() { tourLayerRef.value?.startTour() }
 </script>
 
 <template>
-  <div class="flex h-dvh flex-col overflow-hidden bg-bg">
+  <!-- `ground` (not `bg-bg`) is what the app's glass has to sit on: the page
+       colour plus three very low-alpha radials. See tokens.css. -->
+  <div class="ground flex h-dvh flex-col overflow-hidden">
     <!-- Skip link: first tab stop, hidden until focused. Below-xl the
          resident-looking sidebar is really 10+ off-canvas links a keyboard
          user would otherwise have to tab past on every single page. -->
@@ -23,7 +30,7 @@ const sheetExpanded = ref(false)
       Skip to main content
     </a>
 
-    <AppHeader />
+    <AppHeader data-tour-region @start-tour="startTour" />
 
     <div class="flex min-h-0 flex-1">
       <!-- Case navigation: resident + collapsible at xl+ (§10.1); a drawer
@@ -49,9 +56,10 @@ const sheetExpanded = ref(false)
            transition finish before the panel actually goes
            non-interactive; opening/expanding reacts instantly. -->
       <CaseSidebar
+        data-tour-region
         class="max-md:fixed max-md:inset-x-0 max-md:top-14 max-md:bottom-0 max-md:z-30 max-md:w-full
-               max-md:shadow-lg max-md:transition-[transform,visibility] max-md:duration-200
-               md:max-xl:fixed md:max-xl:top-14 md:max-xl:bottom-0 md:max-xl:left-0 md:max-xl:z-30 md:max-xl:shadow-lg
+               max-md:pane-lift max-md:transition-[transform,visibility] max-md:duration-200
+               md:max-xl:fixed md:max-xl:top-14 md:max-xl:bottom-0 md:max-xl:left-0 md:max-xl:z-30 md:max-xl:pane-lift
                md:max-xl:transition-[transform,visibility] md:max-xl:duration-200
                xl:transition-[width,visibility] xl:duration-200"
         :class="[
@@ -100,9 +108,12 @@ const sheetExpanded = ref(false)
         <!-- `data-stage-column` marks the fullscreen target for the control
              bar's ⛶ button (design doc §10.1): heading, stepper, stage and
              the bar itself, so the control that entered fullscreen is still
-             on screen to leave it again. `bg-bg` is load-bearing only in
+             on screen to leave it again. `ground` is load-bearing only in
              that state -- a fullscreened element with no background of its
-             own shows the UA's black backdrop through it. -->
+             own shows the UA's black backdrop through it. It paints the
+             same ground the layout root does, and because that utility is
+             `background-attachment: fixed` the two align seamlessly rather
+             than showing a seam down the middle. -->
         <!--
           `max-md:flex-none` is the phone fix, and it is not cosmetic.
 
@@ -123,7 +134,7 @@ const sheetExpanded = ref(false)
         -->
         <div
           data-stage-column
-          class="flex min-h-0 min-w-0 flex-1 flex-col bg-bg max-md:flex-none"
+          class="ground flex min-h-0 min-w-0 flex-1 flex-col max-md:flex-none"
         >
           <!-- Case heading (group label + title). -->
           <slot name="heading" />
@@ -166,10 +177,11 @@ const sheetExpanded = ref(false)
              clickable while the case-nav drawer was supposedly modal. -->
         <div
           id="case-content-panel"
-          class="shrink-0 border-border bg-surface
+          data-tour-region
+          class="pane-flat shrink-0 border-border
                  max-md:border-t
                  md:max-xl:fixed md:max-xl:inset-x-0 md:max-xl:bottom-0 md:max-xl:z-10 md:max-xl:overflow-y-auto
-                 md:max-xl:rounded-t-card md:max-xl:border md:max-xl:shadow-lg
+                 md:max-xl:rounded-t-card md:max-xl:border md:max-xl:pane-lift
                  md:max-xl:transition-[max-height] md:max-xl:duration-200
                  xl:overflow-y-auto xl:border-l xl:transition-[width,visibility] xl:duration-200"
           :class="[
@@ -203,5 +215,12 @@ const sheetExpanded = ref(false)
         </div>
       </main>
     </div>
+
+    <TourLauncher @start="startTour" />
+    <!-- expand-sheet: the tour's `description` step needs the tablet sheet
+         open to point at content that is otherwise peeking at 80px. That
+         state is local to this layout (see sheetExpanded's own comment), so
+         it is handed down as a setter rather than moved into the store. -->
+    <TourLayer ref="tourLayerRef" :expand-sheet="() => { sheetExpanded = true }" />
   </div>
 </template>

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import type { CaseGroup, Modality } from '~~/content/types'
+import type { CaseGroup, Modality, PanelId } from '~~/content/types'
 import { chooseTransition } from '~/composables/cameraTransitions'
 import type { ViewKey } from '~/composables/cameraTransitions'
 import type { StageOptions } from '~/composables/useCopperStage'
+import { registerTourStage, unregisterTourStage } from '~/composables/useTourStageBridge'
 
 /**
  * Controller correction C7: this component takes `slug` plus the two case
@@ -12,7 +13,13 @@ import type { StageOptions } from '~/composables/useCopperStage'
  * would give the same value two names inside one component. Everything else
  * on `Case` is content, which this component has no business seeing.
  */
-const props = defineProps<{
+/**
+ * `withDefaults`, not a bare `defineProps<T>()`: Vue casts an absent
+ * `boolean`-typed prop to `false` when it has no declared default, which
+ * would silently invert "loadEnabled defaults to true" for every caller
+ * that does not pass it.
+ */
+const props = withDefaults(defineProps<{
   /** Namespaces the scene copper3d builds (`${slug}:${modality.id}`), so
    * two cases can never collide and switching back to an already-loaded
    * modality of the same case can find its scene again. */
@@ -29,6 +36,21 @@ const props = defineProps<{
   panelLabel: string
   /** Three-up: icon-only buttons, since three bars share the width one had. */
   compact?: boolean
+  /** Which of the three slots this stage is. Used to register its
+   *  capabilities with the tour (Task 5). */
+  panelId: PanelId
+  /**
+   * Staged loading gate. False keeps this stage idle so a sibling can have
+   * the connection to itself; flipping it true starts the load. Defaults
+   * true so any caller that does not stage still behaves as before.
+   */
+  loadEnabled?: boolean
+}>(), { loadEnabled: true })
+
+const emit = defineEmits<{
+  /** Fired once this stage's load has settled -- resolved OR rejected.
+   *  CasePanels uses it to release the next stage in the queue. */
+  settled: []
 }>()
 
 /** §7.1: the crossfade's own duration. This is a MATERIAL crossfade between
@@ -91,8 +113,9 @@ const slice = useSliceControl(host, modalityScene.scene, modalityScene.sliceStat
 
 /*
  * §5.3's dark "reading lightbox" background for imaging modalities is GONE,
- * at the human's instruction: "所有images的panel背景为何是黑色的呢？不应该
- * 是要一致都是透明色吗？". Every modality now sits on the same background,
+ * at the human's instruction: why is every image panel's background black
+ * -- shouldn't they all be transparent, consistently? Every modality now
+ * sits on the same background,
  * and copper3d's canvas is alpha:true, so that background is entirely CSS's
  * -- exactly as the legacy app had it (frontend/plugins/copper.js's
  * `alpha: true` on all three renderers, with the page's own colour showing
@@ -200,31 +223,43 @@ async function enterView() {
   const transition = previousView ? chooseTransition(previousView, next) : 'cut'
   previousView = next
 
-  if (transition === 'density-morph' && await runDensityMorph(token)) return
+  if (transition === 'density-morph' && await runDensityMorph(token)) {
+    if (token === navToken) emit('settled')
+    return
+  }
   if (token !== navToken) return
 
   // Every modality switch is a hard cut, and the first view of a case has no
   // entrance orbit. Both §7.3's inter-modality camera flight and §7.4's
   // entrance orbit were built and then removed at the human's explicit
-  // instruction ("去掉所有的模型和image上的旋转动画", and the flight with it):
+  // instruction (remove every rotation animation on the models and on the
+  // images, and the flight with them):
   // they moved the camera away from wherever the reader had put it and got
   // in the way of the interactions this stage exists for. `load()` applies
   // the modality's own view preset and renders, which is the whole job now.
   //
   // `chooseTransition` is still consulted above -- the density morph is a
   // material crossfade with a stationary camera, and is unaffected.
-  await modalityScene.load(props.slug, props.modality)
+  try {
+    await modalityScene.load(props.slug, props.modality)
+  }
+  finally {
+    // Settled means "no longer occupying the connection", which a failed
+    // load satisfies just as much as a successful one. A sibling waiting
+    // on this must never be stranded by a network error.
+    if (token === navToken) emit('settled')
+  }
 }
 
 watch(
-  [() => stage.ready.value, () => everSized.value, () => props.slug, () => props.modality.id],
-  ([ready, sized]) => {
+  [() => stage.ready.value, () => everSized.value, () => props.slug, () => props.modality.id, () => props.loadEnabled !== false],
+  ([ready, sized, , , enabled]) => {
     // Fire-and-forget by design, but never unhandled: a frame callback that
     // throws rejects the driver's promise (Task 9's M-9), and there is
     // nothing useful to do about a failed decorative transition beyond not
     // stacking a second error on top of whatever the load-failure overlay
     // is already showing.
-    if (ready && sized) void enterView().catch(() => {})
+    if (ready && sized && enabled) void enterView().catch(() => {})
   },
   { immediate: true },
 )
@@ -346,6 +381,36 @@ onScopeDispose(() => {
   host.value?.removeEventListener('wheel', onUserInput)
 })
 
+/**
+ * Publish this stage's capabilities to the tour.
+ *
+ * The tour never imports three.js or copper3d; it looks this row up by
+ * panel id. Registered after mount (when `camera`/`slice` are live) and
+ * dropped on dispose, so a stale row can never outlive its renderer.
+ */
+onMounted(() => {
+  registerTourStage(props.panelId, {
+    // isHealthy() alone goes true the instant an EMPTY scene is created
+    // (activateScene, before the asset itself has loaded) -- the tour's
+    // stall/fallback logic needs "the volume actually finished", not just
+    // "a scene object exists", or a demo starts against data that is not
+    // there yet and silently no-ops instead of degrading.
+    isReady: () => isHealthy() && !loading.value,
+    isFailed: () => Boolean(chunkLoadError.value || assetLoadError.value),
+    snapshot: () => camera.currentPose(),
+    applyPose: pose => camera.applyPose(pose),
+    orbit: (yawRad, durationMs) => camera.orbitBy(yawRad, durationMs),
+    scrubTo: index => slice.jumpTo(index),
+    sliceMax: () => slice.max.value,
+    loadProgress: () => modalityScene.progress.value,
+    lesionSliceIndex: () => props.lesionSliceIndex,
+    locate: onLocate,
+    reset: onReset,
+    prefersReducedMotion: () => camera.prefersReducedMotion.value,
+  })
+})
+onScopeDispose(() => unregisterTourStage(props.panelId))
+
 defineExpose({ stage, modalityScene, host, camera, slice })
 </script>
 
@@ -360,8 +425,11 @@ defineExpose({ stage, modalityScene, host, camera, slice })
        for one (StageControls falls back to the column for any caller not
        inside a panel). -->
   <div data-stage-panel class="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
+    <!-- `stage-ground`, not a top-to-bottom ramp: a neutral radial vignette
+         puts the model in a pool of light instead of on a flat field. See
+         tokens.css for why this one carries no hue. -->
     <div
-      class="relative flex-1 bg-linear-to-b from-surface-sunken to-bg"
+      class="stage-ground relative flex-1"
     >
       <!--
         `role="application"`, NOT `role="img"`.
@@ -431,7 +499,7 @@ defineExpose({ stage, modalityScene, host, camera, slice })
         class="pointer-events-none absolute inset-0 flex items-center justify-center"
       >
         <div
-          class="flex items-center gap-3 rounded-card bg-surface/80 px-4 py-3 text-text backdrop-blur-sm"
+          class="pane flex items-center gap-3 rounded-card px-4 py-3 text-text"
           role="status"
           aria-live="polite"
         >

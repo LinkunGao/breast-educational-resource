@@ -1,6 +1,7 @@
 import type { Ref } from 'vue'
 import type { CopperScene } from './copper-types'
 import type { SliceState } from './useModalityScene'
+import { beginGesture } from './copperExtras'
 
 /**
  * Slice scrubbing (design doc §7.5 and §11's `[`/`]` binding).
@@ -16,8 +17,9 @@ import type { SliceState } from './useModalityScene'
  * An earlier version set a target and let an eased follower chase it. It
  * looked smoother in isolation and felt wrong in the hand: the image visibly
  * lagged the pointer, which is unacceptable for an instrument the reader is
- * using to look for something. The human's words were "为何不是鼠标移动时
- * 实时更新slice". The follower survives only for the `[`/`]` keys, where a
+ * using to look for something. The human's words were: why doesn't the
+ * slice update in real time as the mouse moves? The follower survives only
+ * for the `[`/`]` keys, where a
  * discrete step genuinely does read better as a short glide than a jump.
  *
  * Three things this file deliberately does not do:
@@ -82,14 +84,8 @@ export function useSliceControl(
 
   let dragging = false
   let lastY = 0
-  /** Whether rotation was allowed before a scrub suppressed it -- i.e.
-   * `!controls.noRotate` at pointerdown, stored positively so the flat-view
-   * reasoning below reads the same way it always did. Not a
-   * hardcoded `true` on restore: the 2D ultrasound modality ships with
-   * rotation already disabled (useModalityScene's `flat` branch), and
-   * restoring it to `true` there would silently make the one flat modality
-   * orbitable. */
-  let rotateWasEnabled: boolean | null = null
+  /** Releases the camera suppression a scrub holds; see `onPointerDown`. */
+  let releaseCamera: (() => void) | null = null
 
   /**
    * `repaint()` is expensive: copper3d re-extracts the whole plane out of the
@@ -119,6 +115,22 @@ export function useSliceControl(
     state.raw.index = clamped * state.raw.volume.spacing[2]
     state.raw.repaint.call(state.raw)
     index.value = clamped
+    /**
+     * LOAD-BEARING under on-demand rendering: a repaint is not a frame. This
+     * redraws the slice's backing canvas, and without asking for a frame the
+     * new texture is simply never uploaded -- the stage keeps showing the
+     * previous slice until something else happens to draw.
+     *
+     * Every writer of the slice index used to ride someone else's render
+     * source: a drag rode useCopperStage's input pump, `[`/`]` rides the
+     * animation driver's lease. That pump is gone (copper3d 3.9.0's
+     * `updateOnInput` replaced it for the CAMERA), and a scrub suppresses
+     * rotation for its whole gesture anyway, so the controls dispatch no
+     * `change` and nothing else was left to schedule the frame. Requesting it
+     * here makes every path self-sufficient rather than dependent on which
+     * other subsystem happens to be running.
+     */
+    scene.value?.requestRenderIfNotRequested()
   }
 
   /**
@@ -126,7 +138,7 @@ export function useSliceControl(
    * A high-polling mouse delivers well over 100 moves a second; without this
    * every one of them paid the full `repaint` cost above, and only the last
    * one before each frame was ever seen. The human's report was simply
-   * "渲染的也太慢了吧".
+   * that the rendering was far too slow.
    *
    * This is a single-frame coalescer, NOT a second animation loop -- it
    * schedules at most one callback, holds no lease, and cancels on detach.
@@ -218,15 +230,17 @@ export function useSliceControl(
     // This handler runs in the CAPTURE phase specifically so this write
     // lands before the trackball sees the same pointerdown: its listener is
     // on the canvas (a descendant of `host`) in the bubble phase, and it
-    // latches its rotate state during that handler. Setting `noRotate`
+    // latches its rotate state during that handler. Suppressing rotation
     // afterwards would be one gesture too late, and the drag would both
     // scrub and orbit -- exactly what the legacy app avoided by setting the
     // same property at the same moment (frontend/plugins/copper.js:80).
+    //
+    // `beginGesture` restores whatever was there rather than re-enabling:
+    // the 2D ultrasound modality ships with rotation already off
+    // (useModalityScene's `flat` branch), and unlocking it here would make
+    // the one flat modality orbitable for the rest of the session.
     const controls = scene.value?.controls
-    if (controls) {
-      rotateWasEnabled = !controls.noRotate
-      controls.noRotate = true
-    }
+    if (controls) releaseCamera = beginGesture(controls)
     // No `setPointerCapture` here: the controls capture the pointer on the
     // canvas during the same gesture, and whichever element captures last
     // wins. Their capture keeps delivering moves to the canvas, which bubble
@@ -270,9 +284,8 @@ export function useSliceControl(
     // re-decides from an actual raycast, and the pointer may well have left
     // the plane during the drag.
     if (host.value) host.value.style.cursor = ''
-    const controls = scene.value?.controls
-    if (controls && rotateWasEnabled !== null) controls.noRotate = !rotateWasEnabled
-    rotateWasEnabled = null
+    releaseCamera?.()
+    releaseCamera = null
   }
 
   /** §11: `[` and `]` step the slice on the focused stage. */
@@ -295,7 +308,7 @@ export function useSliceControl(
    * `endDrag` covers both.
    */
   function onPointerLeave() {
-    // `endDrag` restores `noRotate` to whatever it was BEFORE the scrub,
+    // `endDrag` restores rotation to whatever it was BEFORE the scrub,
     // which is the only correct restore: on the flat 2D modalities rotation
     // was already locked by useModalityScene and must stay locked. Nothing
     // here may unlock it unconditionally.
@@ -355,21 +368,13 @@ export function useSliceControl(
    */
   function jumpTo(sliceNumber: number) {
     if (!sliceState.value) return
+    // `applyIndex` requests the frame; see its own comment for why that
+    // matters here. This was the first path to need it -- clicking "Locate
+    // lesion" produced no reaction at all until the reader next rotated the
+    // view, and only then did it jump to that slice.
     applyIndex(sliceNumber)
     target = current
     settle()
-    /**
-     * LOAD-BEARING under on-demand rendering. `applyIndex` repaints the
-     * slice texture, but a repaint is not a frame: nothing on this branch
-     * draws until something asks it to. Every other writer of the slice
-     * index happens to be riding an existing render source -- a drag has
-     * useCopperStage's input pump, `[`/`]` has the animation driver's lease
-     * -- but a click on "Locate lesion" has neither, so the new slice sat
-     * finished-but-undrawn until the user next rotated the view. That is
-     * exactly what the human saw: "他点了是不会立即有反应，必须要rotate
-     * 一下images，他才会跳到那个slice".
-     */
-    scene.value?.requestRenderIfNotRequested()
   }
 
   watch(sliceState, (state) => {

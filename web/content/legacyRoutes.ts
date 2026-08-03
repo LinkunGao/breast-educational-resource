@@ -27,8 +27,9 @@ export const LEGACY_ROUTES: Record<string, string> = {
  * The five lesion cases are deliberately absent from the table above.
  *
  * Case pages used to live under `/case/<slug>`; they are now served at
- * `/<slug>` directly (the human's #9: "你这个app的路由为何会有一个case呢？
- * 很奇怪"). For `benign-cyst`, `benign-fibroadenoma`, `cancer-dcis`,
+ * `/<slug>` directly (the human's #9: why does this app's routing carry a
+ * `case` segment at all -- it reads oddly). For `benign-cyst`,
+ * `benign-fibroadenoma`, `cancer-dcis`,
  * `cancer-lobular` and `cancer-ductal` the legacy path and the new path are
  * now the SAME string, so a redirect entry for them would be a rule pointing
  * at itself -- a loop in the router and a `<meta http-equiv="refresh">`

@@ -1,19 +1,28 @@
 import type { Modality } from '~~/content/types'
 import type { CopperModule, CopperRenderer, CopperScene, CopperViewPoint, NrrdMesh, NrrdSlice, SceneObject, SceneObjectChild, StageApi } from './copper-types'
-import type { FitBounds } from './fitToView'
-import type { SceneBudget } from './sceneBudget'
-import { fitDistance } from './fitToView'
+import type { FitBounds, SceneBudget } from './copperExtras'
 import { getSceneBudget } from './sceneBudget'
+import {
+  addVolumeBoundingBox,
+  collectFadeTargets,
+  disposeObject3D,
+  disposeScene,
+  exposureExponent,
+  fitView,
+  installFastSliceRepaint,
+  removeSceneFromMap,
+  restoreFade,
+  setDracoDecoderPath,
+  setFade,
+  setPanEnabled,
+  setRotateEnabled,
+} from './copperExtras'
 
 /**
  * GLBs are all <=1.28MB (this app's four `density*.glb` anatomy assets --
  * checked their sizes directly), so a flat wall-clock timeout is fine for
- * them. `loadGltf` also has no progress signal to stall-detect against
- * even if it mattered: its three-arg `loader.load(url, onLoad, onProgress)`
- * call passes a function that does nothing with the `xhr` it receives
- * (Scene/copperSceneOnDemond.js:27-31) into what three's `GLTFLoader.load`
- * treats as the *onProgress* slot -- there is no fourth `onError` argument
- * at all, so a failed fetch/parse never invokes anything here either.
+ * them. It is a net under `loadGltf`'s `onError`, not a substitute for it:
+ * it catches a connection that neither completes nor fails.
  */
 const GLB_LOAD_TIMEOUT_MS = 30_000
 
@@ -24,12 +33,9 @@ const GLB_LOAD_TIMEOUT_MS = 30_000
  * that file; ~6 Mbps, a realistic shared-network speed, takes 71s). "No
  * progress for 15s" is a genuine stall signal a large-but-healthy transfer
  * won't trip, whereas a fixed deadline eventually will regardless of file
- * size. `copperNrrdLoader` writes a fresh percentage string into
- * `bar.progress`'s text on every xhr progress event
- * (Loader/copperNrrdLoader.js:150-155); observing that DOM node for
- * mutations is the only liveness signal copper3d exposes, since `loadNrrd`
- * never receives an `onError` from the underlying three.js loader either
- * (same file, same gap as `loadGltf` above).
+ * size. `loadNrrd`'s `onProgress` (copper3d 3.9.0) is what re-arms it;
+ * before that existed, the only liveness signal copper3d exposed was the
+ * text of its own loading bar, watched with a `MutationObserver`.
  */
 const NRRD_STALL_TIMEOUT_MS = 15_000
 
@@ -49,7 +55,8 @@ const NRRD_STALL_TIMEOUT_MS = 15_000
  *
  *   0.4*(163,147,42) + 0.6*(251,247,248) = (216,207,166)  -- khaki
  *
- * which is exactly the "太土了" the human reported, and is reproduced
+ * which is exactly the drab, dated colour the human reported, and is
+ * reproduced
  * pixel-for-pixel by a screenshot of this app. Nothing is wrong with the
  * model or the material; the background changed underneath it.
  *
@@ -122,7 +129,17 @@ function sceneBytes(slice: SliceState | null): number {
   return data?.byteLength ?? GLB_ESTIMATED_BYTES
 }
 
-export function useModalityScene(stage: StageApi, budget: SceneBudget = getSceneBudget()) {
+/**
+ * `injectedBudget` is resolved lazily rather than defaulted in the signature:
+ * the shared budget is built by copper3d's `createSceneBudget`, and this
+ * composable is constructed during `setup()`, before `useCopperStage`'s mount
+ * hook has finished importing the library. Every real use of it happens after
+ * a load, by which time the module is there.
+ */
+export function useModalityScene(stage: StageApi, injectedBudget?: SceneBudget) {
+  let resolvedBudget: SceneBudget | undefined = injectedBudget
+  const budget = () => (resolvedBudget ??= getSceneBudget())
+
   const { url } = useAssetUrl()
   /**
    * Where the self-hosted DRACO decoder lives (`public/draco/`), resolved
@@ -131,7 +148,7 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
    * this verbatim, applying no base of its own -- the same trap
    * `resolveAssetBase` exists for on the model URLs.
    */
-  const dracoPath = `${useRuntimeConfig().app.baseURL.replace(/\/$/, '')}/draco/`
+  setDracoDecoderPath(`${useRuntimeConfig().app.baseURL.replace(/\/$/, '')}/draco/`)
 
   const scene = shallowRef<CopperScene>()
   const loading = ref(false)
@@ -290,9 +307,9 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
    * three files (`density-1/left/density25.glb`,
    * `density-1/middle/m3d.nrrd`, `density-1/right/mri.nrrd`), so stepping
    * between them built a second scene per modality and paid for a second
-   * copy of a 21MB volume -- which is what the human saw: "The Breast 页面
-   * 和 density-A 页面他们就是完全一样的内容，直接复用就行了，为何要反复
-   * 渲染？！". The same waste applied five times over to the lesion cases,
+   * copy of a 21MB volume -- which is what the human saw: The Breast and
+   * density-A are exactly the same content, so just reuse it; why render
+   * it twice? The same waste applied five times over to the lesion cases,
    * which all borrow `density-3/left/density75.glb` for their anatomy.
    *
    * `slug` stays in the signature because every call site has it and the
@@ -311,77 +328,25 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
   }
 
   /**
-   * Removes `name` from copper3d's own scene map. The only way out of that
-   * map: copper3d has no eviction method at all (see copper-types.ts's
-   * `sceneMap`), and `delete` on a missing property is a silent no-op, so a
-   * copper3d upgrade that restructured `sceneMap` into, say, a real Map
-   * would stop evicting with no crash and no type error -- quietly
-   * unbounding both the failed-load cache poisoning this originally fixed
-   * and, since fix round 1, this composable's residency cap. Confirm
-   * through the library's OWN accessor, which survives that kind of change,
-   * and fail loudly if it did not take.
-   */
-  function evictFromSceneMap(renderer: CopperRenderer, name: string) {
-    delete renderer.sceneMap[name]
-    if (renderer.getSceneByName(name)) {
-      throw new Error(
-        `copper3d scene "${name}" survived eviction: its sceneMap is no `
-        + `longer a plain object keyed by scene name. Failed loads will `
-        + `poison the cache and cached scenes will accumulate without bound `
-        + `until this is updated to match the new shape.`,
-      )
-    }
-  }
-
-  /**
    * Drops a cached scene entirely: out of copper3d's map, out of this
    * composable's bookkeeping, and out of the GPU.
    *
-   * On what is NOT done here: `scene.controls.dispose()` looks like the
-   * obvious way to break the last reference (three's `OrbitControls`
-   * listeners live on the shared canvas and reach the scene through the
-   * `change` handler copper3d registers), but `dispose()` calls
-   * `disconnect()`, which ends with `this.domElement.style.touchAction = ''`
-   * (dist/bundle.esm.js, OrbitControls.disconnect). Every scene shares ONE
-   * canvas, and only `connect()` ever sets `touchAction` back to `'none'`,
-   * so disposing an evicted scene's controls would re-enable browser touch
-   * scrolling over the stage for whichever scene is actually on screen --
-   * one eviction would break touch orbiting for the rest of the session.
-   * Removing just the `change` listener breaks the same reference chain
-   * (`requestRenderIfNotRequested` is a stable property on the scene, the
-   * exact reference copper3d registered) and touches nothing shared.
+   * `disposeScene` owns the library half -- unregistering, dropping the
+   * `change` listener without touching the shared controls, and freeing
+   * every child's geometry, material and textures. What stays here is this
+   * composable's own bookkeeping, which copper3d knows nothing about.
    */
   function evictScene(renderer: CopperRenderer, name: string) {
-    const victim = renderer.getSceneByName(name)
-    evictFromSceneMap(renderer, name)
+    const victim = disposeScene(renderer, name)
     sliceStateByScene.delete(name)
     viewpointByScene.delete(name)
     boundsByScene.delete(name)
     posedScenes.delete(name)
-    budget.release(name)
+    budget().release(name)
     if (!victim) return
 
     anatomyAssetByScene.delete(victim)
     nameOfScene.delete(victim)
-    victim.controls.enabled = false
-    victim.controls.removeEventListener?.('change', victim.requestRenderIfNotRequested)
-    // `scene.remove` only unlinks; three keeps the geometry's buffers and
-    // the material's textures (an NRRD slice plane's texture is the decoded
-    // volume slice) alive on the GPU until they are disposed explicitly.
-    //
-    // Sweeps every child actually IN the scene graph, rather than a
-    // hardcoded list of names (finding 2, code review, Important): that
-    // list -- previously `['anatomy-model', 'anatomy-model-outgoing', 'z']`
-    // -- is exactly what let the x/y NRRD slice planes go unswept, because
-    // nobody had added their names to it (they in fact are never added to
-    // the scene at all -- see `disposeUnusedSlicePlane`, which frees them
-    // at load time instead). A hardcoded list can silently miss anything
-    // future code adds under a name nobody thought to list here; iterating
-    // `victim.scene.children` directly cannot.
-    for (const object of [...victim.scene.children]) {
-      victim.scene.remove(object)
-      disposeSceneObject(object)
-    }
   }
 
   /** Records `name` as most-recently-used and applies the budget. Called
@@ -391,15 +356,15 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
    *  without touching the queue. */
   function touchScene(renderer: CopperRenderer, scene: CopperScene, name: string) {
     nameOfScene.set(scene, name)
-    budget.touch(name)
+    budget().touch(name)
     // Whatever this stage is showing is off limits: three-up has up to
     // three of these composables live at once, and evicting a visible
     // scene to satisfy a soft byte budget would blank a panel the reader
     // is looking at.
-    if (pinnedName && pinnedName !== name) budget.unpin(pinnedName)
+    if (pinnedName && pinnedName !== name) budget().unpin(pinnedName)
     pinnedName = name
-    budget.pin(name)
-    for (const victim of budget.overflow()) evictScene(renderer, victim)
+    budget().pin(name)
+    for (const victim of budget().overflow()) evictScene(renderer, victim)
   }
 
   /**
@@ -425,7 +390,7 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
     if (occupant && occupant !== target) evictScene(renderer, nextName)
 
     if (currentName !== undefined) {
-      evictFromSceneMap(renderer, currentName)
+      removeSceneFromMap(renderer,currentName)
       const slice = sliceStateByScene.get(currentName)
       if (slice !== undefined) {
         sliceStateByScene.set(nextName, slice)
@@ -448,14 +413,14 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
       // Carries the budget's bytes, queue position and pin state across --
       // the morphed scene held content (and, if on screen, the pin) under
       // `currentName` a moment ago, and holds content now too.
-      budget.rename(currentName, nextName)
+      budget().rename(currentName, nextName)
       if (pinnedName === currentName) pinnedName = nextName
     }
     else {
       // No previous name: this scene was never registered in the budget at
       // all (unreachable in practice -- a morph target always has one --
       // but kept so the scene is still counted rather than silently free).
-      budget.register(nextName, GLB_ESTIMATED_BYTES)
+      budget().register(nextName, GLB_ESTIMATED_BYTES)
     }
 
     renderer.sceneMap[nextName] = target
@@ -482,47 +447,7 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
     const preset = viewpointByScene.get(name)
     if (!bounds || !preset) return
 
-    const [px, py, pz] = preset.targetPosition
-    const [ex, ey, ez] = preset.eyePosition
-    const dx = ex - px
-    const dy = ey - py
-    const dz = ez - pz
-    const length = Math.hypot(dx, dy, dz)
-    // A preset whose eye sits exactly on its target has no direction to
-    // preserve; leave it to `loadView`'s own result rather than guessing one.
-    if (length === 0) return
-
-    /**
-     * Aim at the object's own centre, not at the preset's target.
-     *
-     * The presets all target the origin, which is right for the NRRD
-     * volumes -- `RASDimensions` describes a box centred there. A GLB is
-     * not: `density25.glb`'s bounding box sits well off the origin, so
-     * framing from the origin pushed half the model out of frame, and
-     * narrowing a panel made it obvious -- the human's screenshot showed
-     * the anatomy model clipped against the left edge of its own cell.
-     *
-     * `centre` is [0,0,0] for imaging scenes, so this is a no-op there and
-     * the imaging framing is unchanged.
-     */
-    const [cx, cy, cz] = bounds.center
-    const tx = px + cx
-    const ty = py + cy
-    const tz = pz + cz
-
-    const distance = fitDistance(bounds, aspect, target.camera.fov)
-    target.camera.position.set(
-      tx + (dx / length) * distance,
-      ty + (dy / length) * distance,
-      tz + (dz / length) * distance,
-    )
-    target.camera.lookAt(tx, ty, tz)
-    // TrackballControls orbits around `target`; leaving it at the preset's
-    // origin would make the first drag swing the model out of frame again.
-    target.controls.target?.set?.(tx, ty, tz)
-    target.camera.updateProjectionMatrix()
-    target.controls.handleResize?.()
-    renderer.render()
+    if (fitView(target, preset, aspect, bounds)) renderer.render()
   }
 
   /** Called by `CopperStage` on the first real user gesture, and undone by
@@ -584,7 +509,13 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
     let next: CopperScene | undefined
 
     try {
-      next = renderer.createScene(name)
+      // `controls: 'copper3d'` is `Copper3dTrackballControls`, which is what
+      // the legacy app used on every viewer it had (`controls: "copper3d"`,
+      // frontend/plugins/copper.js:20). Until copper3d 3.9.0 this class
+      // hardcoded OrbitControls and the app had to swap the instance out
+      // after construction; the option also turns on `updateOnInput`, without
+      // which an on-demand viewer is dead to the mouse (see useCopperStage).
+      next = renderer.createScene(name, { controls: 'copper3d' })
       if (!next) throw new Error(`copper3d refused to create scene "${name}"`)
       // Review fix #1 (second half): remove the leaked resize listener
       // immediately at creation, not deferred to this scope's disposal.
@@ -592,24 +523,38 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
       // `getCurrentScene().onWindowResize()` on every container resize (a
       // strict superset of window-resize-triggered changes -- it also
       // catches panel-collapse layout changes with no window resize event
-      // at all), so `confirmResize`'s window-resize wiring
-      // (Scene/copperSceneOnDemond.js:9-12,27) is entirely redundant here.
-      // Removing it up front makes the leak fix unconditional instead of
-      // depending on this scope ever actually disposing.
+      // at all), so `confirmResize`'s window-resize wiring is entirely
+      // redundant here. Removing it up front makes the leak fix
+      // unconditional instead of depending on this scope ever disposing --
+      // 3.9.0's `scene.dispose()` covers the eviction path, not this one.
       window.removeEventListener('resize', next.confirmResize, false)
 
       activateScene(renderer, next)
-      // Must come before any controls tuning: this REPLACES the controls
-      // object copper3d's constructor built, so anything written first would
-      // land on the instance being discarded.
-      installTrackballControls(Copper, next)
-      // Legacy control feel, on the class the legacy app actually tuned
-      // (LeftModel.vue:156-157, Model.vue:236-237). 3.0 is a TRACKBALL
-      // number; the same value on the OrbitControls this used to run against
-      // is 3x that class's default, which is what made imaging rotation feel
-      // uncontrollable. The anatomy viewer pans slower than the imaging
-      // viewers, which orbit a much larger NRRD volume.
-      next.controls.rotateSpeed = 3.0
+      // No inertia -- the human's requirement #2: the model stops the instant
+      // the pointer does. The legacy app left this off (its `staticMoving`
+      // lines are commented out, Model.vue:235), i.e. it drifted on release.
+      next.controls.staticMoving = true
+      /**
+       * A TRACKBALL number, not an OrbitControls one -- the same value there
+       * is 3x that class's default, which is what made rotation feel
+       * uncontrollable when this ran against OrbitControls.
+       *
+       * Halved from the legacy app's 3.0 (LeftModel.vue:156, Model.vue:236)
+       * because copper3d 3.9.0's `updateOnInput` changed what the number
+       * means. `rotateCamera` turns by `_moveCurr - _movePrev` and then sets
+       * `_movePrev = _moveCurr`, while `onMouseMove` shifts both along on
+       * every event -- so with one `update()` per FRAME only the last event's
+       * delta survived and everything between frames was discarded. Updating
+       * per event integrates the whole gesture instead, which is both correct
+       * and, for the same hand movement, several times more rotation.
+       *
+       * Side effect worth knowing: the old feel depended on mouse polling
+       * rate (a 1000Hz mouse threw away more motion, so it rotated SLOWER).
+       * This one does not, so the value is stable across devices.
+       */
+      next.controls.rotateSpeed = 1.5
+      // The anatomy viewer pans slower than the imaging viewers, which orbit
+      // a much larger NRRD volume.
       next.controls.panSpeed = modality.id === 'anatomy' ? 0.2 : 0.5
 
       const slice = modality.id === 'anatomy'
@@ -634,7 +579,7 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
       // `touchScene` below to register it there itself. Without this, a
       // scene a superseded load finished building sat in copper3d's
       // `sceneMap` forever, invisible to the budget's overflow check.
-      budget.register(name, sceneBytes(slice))
+      budget().register(name, sceneBytes(slice))
       // Named `preset`, not `viewpoint`, to avoid shadowing the outer
       // `viewpoint` ref this composable exposes.
       const preset = await fetchViewPoint(url(modality.viewPreset))
@@ -676,7 +621,7 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
       // Shared with fix round 1's residency cap, so there is exactly one
       // way out of copper3d's scene map and exactly one place that checks
       // the eviction actually took.
-      if (next) evictFromSceneMap(renderer, name)
+      if (next) removeSceneFromMap(renderer,name)
       if (token !== loadToken) return
       loadError.value = err instanceof Error ? err : new Error(String(err))
       loading.value = false
@@ -685,42 +630,45 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
 
   /**
    * Downloads a GLB into `target` and gives it this app's appearance.
-   * `loadGltf` adds the group to the scene itself
-   * (dist/bundle.esm.js:84314) and never invokes an error callback at all
-   * (see this file's header), so a wall-clock timeout is the only failure
-   * signal available. Shared by the initial load and by §7.1's morph so the
-   * incoming morph model goes through the SAME `tintFatLayer` (controller
-   * correction C2) -- otherwise every crossfade would end on a model that
-   * looks different from the one it replaced, a visible pop at t=1.
+   *
+   * `loadGltf` recentres the group on the origin (every preset in
+   * `public/modelView/**` targets `[0,0,0]`, so a model left at its authored
+   * offset would be framed off-screen), bounds the dolly with
+   * `controls.maxDistance`, and adds it to the scene. Its own "frame the new
+   * model" camera write only runs while `cameraPositionFlag` is unset, and
+   * `load()` applies the modality's view preset immediately afterwards
+   * regardless -- and by the time §7.1's morph calls this, `loadView` has
+   * already set the flag, which is what keeps a crossfade from moving the
+   * camera.
+   *
+   * The `onError` is copper3d 3.9.0; before it there was no error channel at
+   * all and this app ran its own `GLTFLoader`. The wall-clock timeout stays
+   * as the net for a connection that neither completes nor errors.
+   *
+   * Shared by the initial load and by the morph so the incoming morph model
+   * goes through the SAME `tintFatLayer` (controller correction C2) --
+   * otherwise every crossfade would end on a model that looks different from
+   * the one it replaced, a visible pop at t=1.
    */
   async function loadGlb(target: CopperScene, assetUrl: string): Promise<SceneObject> {
     let timer: ReturnType<typeof setTimeout> | undefined
-    const stalled = new Promise<never>((_, reject) => {
+    const group = await new Promise<SceneObject>((resolve, reject) => {
       timer = setTimeout(
         () => reject(new Error(`Timed out loading anatomy model: ${assetUrl}`)),
         GLB_LOAD_TIMEOUT_MS,
       )
-    })
-    try {
-      const { group, size } = await Promise.race([
-        loadGltfModel(assetUrl, dracoPath),
-        stalled,
-      ])
-      // Both were copper3d's job inside `loadGltf`; taking the load over
-      // means taking these two with it. `maxDistance` bounds how far the
-      // user can dolly out (`bundle.esm.js:83648`), and without the `add`
-      // the model would load correctly and never appear.
-      target.controls.maxDistance = size * 10
-      target.scene.add(group)
-      // Awaited: it swaps the fat layer's material, and returning before that
-      // lands would let the morph's `collectFadeTargets` capture the GLB's
-      // original material and then fade a material no longer on the mesh.
-      await tintFatLayer(group)
-      return group
-    }
-    finally {
-      clearTimeout(timer)
-    }
+      target.loadGltf(assetUrl, resolve, {
+        onError: err => reject(
+          err instanceof Error ? err : new Error(`Failed to load ${assetUrl}: ${String(err)}`),
+        ),
+      })
+    }).finally(() => clearTimeout(timer))
+
+    // Awaited: it swaps the fat layer's material, and returning before that
+    // lands would let the morph's `collectFadeTargets` capture the GLB's
+    // original material and then fade a material no longer on the mesh.
+    await tintFatLayer(group)
+    return group
   }
 
   async function loadAnatomy(target: CopperScene, assetUrl: string, name: string): Promise<null> {
@@ -832,7 +780,7 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
         committed = true
         restoreFade(incomingFade)
         target.scene.remove(previous)
-        disposeSceneObject(previous)
+        disposeObject3D(previous)
         anatomyAssetByScene.set(target, assetUrl)
         // The scene now holds the incoming case's model, so it has to
         // answer to the incoming case's name -- see `adoptSceneName`.
@@ -866,43 +814,28 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
           ))
         }, NRRD_STALL_TIMEOUT_MS)
       }
-      // Watches copper3d's own progress node for the mutations
-      // `copperNrrdLoader`'s xhr progress handler writes into it (see this
-      // file's header comment) -- the only liveness/progress signal
-      // available, since there is no onProgress/onError callback exposed
-      // to us directly. Re-arms the stall timer unconditionally (even for
-      // a superseded load -- it still needs to eventually settle so
-      // review fix #1's eviction can run), but only writes the shared
-      // `progress` ref when this is still the current load (review round
-      // 2, fix #2): without that guard, a superseded load's own late
-      // progress events kept landing in the ref a newer, on-screen load
-      // already owns, which would jitter design doc §13.1's progress ring
-      // between two unrelated downloads.
-      const observer = new MutationObserver(() => {
-        if (token === loadToken) {
-          const text = bar.progress.textContent ?? ''
-          if (/Infinity/.test(text)) {
-            // The server omitted Content-Length, so xhr.total is 0 and
-            // copper3d's own `Math.ceil((xhr.loaded / xhr.total) * 100)`
-            // (Loader/copperNrrdLoader.js:152) divides by zero -> the
-            // literal string "Infinity". Bytes are still arriving, there
-            // is just no way to express a fraction -- NaN signals
-            // "indeterminate" to whatever renders this, rather than
-            // silently freezing at whatever `progress` last held (review
-            // round 2, fix #3).
-            progress.value = Number.NaN
-          }
-          else {
-            const match = /(\d+)\s*%/.exec(text)
-            if (match) progress.value = Number(match[1]) / 100
-          }
-        }
-        armStallTimer()
-      })
-      observer.observe(bar.progress, { childList: true, characterData: true, subtree: true })
       function settle() {
         clearTimeout(stallTimer)
-        observer.disconnect()
+      }
+      /**
+       * Re-arms the stall timer unconditionally (even for a superseded load
+       * -- it still needs to eventually settle so review fix #1's eviction
+       * can run), but only writes the shared `progress` ref while this is
+       * still the current load (review round 2, fix #2): without that guard,
+       * a superseded load's late progress events kept landing in a ref a
+       * newer, on-screen load already owns, jittering design doc §13.1's
+       * progress ring between two unrelated downloads.
+       */
+      function onProgress(event: ProgressEvent) {
+        if (token === loadToken) {
+          // `total` is 0 unless the server sent a Content-Length, and it does
+          // not send one for a gzipped or chunked response. Bytes are still
+          // arriving, there is just no fraction to express -- NaN signals
+          // "indeterminate" to whatever renders this, rather than silently
+          // freezing at whatever `progress` last held (review round 2, fix #3).
+          progress.value = event.total > 0 ? event.loaded / event.total : Number.NaN
+        }
+        armStallTimer()
       }
       armStallTimer() // starts the clock even before the first progress event
 
@@ -916,25 +849,9 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
             target.addObject(meshes.z)
             meshes.z.name = 'z'
 
-            // Finding 2 (code review, Important). copper3d's `loadNrrd`
-            // builds a full VolumeSlice -- its own PlaneGeometry, its own
-            // MeshBasicMaterial, its own canvas-backed Texture -- for x, y
-            // AND z (`Volume.extractSlice`/`VolumeSlice`'s constructor,
-            // dist/bundle.esm.js ~61278/~60571), not just the z plane this
-            // app displays. Only `meshes.z` is ever added to a scene: the
-            // stage shows a single axial slice and `useSliceControl`
-            // raycasts only against it (confirmed no reference to
-            // meshes.x/y or slices.x/y anywhere else in app/). Every
-            // extracted slice is also retained forever in
-            // `volume.sliceList`, and `slices.z.volume` -- that same
-            // volume -- lives on in `sliceStateByScene` for this scene's
-            // whole cached lifetime, so x/y were never eligible for GC
-            // either. Disposed here, immediately, rather than tracked
-            // through to `evictScene`: nothing in this app is ever going to
-            // need them, so there is nothing to gain by keeping them alive
-            // even until eviction.
-            disposeUnusedSlicePlane(meshes.x)
-            disposeUnusedSlicePlane(meshes.y)
+            // MRI only: that is the modality the client reported too dark,
+            // and the mammograms' dynamic range is already even.
+            const exposure = modality.id === 'mri' ? exposureExponent(volume) : 1
 
             // copper3d's `loadNrrd` builds the slice objects and their
             // canvas-backed textures but never PAINTS them, so the plane
@@ -952,11 +869,19 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
             // Called via `.call` because copper3d's own scrubbing does the
             // same (`frontend/plugins/copper.js:110`): `repaint` is taken
             // off the slice object and needs its `this` bound back.
-            // Before the first paint, so that paint already uses it. Async,
-            // but the `repaint` below is safe either way: it is the original
-            // until the patch lands, and the patch is a drop-in replacement.
-            void installFastSliceRepaint(slices.z)
-            slices.z.repaint.call(slices.z)
+            //
+            // AWAITED, not fire-and-forget. The exposure LUT lives in the
+            // patched repaint, so painting before the patch lands would draw
+            // one dark frame and correct it on the reader's first scrub --
+            // exactly the colour change the client asked not to see. This
+            // promise gates `resolve` below, and `load()` draws its only
+            // frame after that. A failed patch still paints, just with
+            // copper3d's own repaint and no lift.
+            const painted = installFastSliceRepaint(slices.z, exposure)
+              .catch(() => {})
+              .then(() => {
+                slices.z.repaint.call(slices.z)
+              })
 
             const [rx, ry, rz] = volume.RASDimensions
             // `RASDimensions` describes a box centred on the origin, which
@@ -971,26 +896,45 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
             })
 
             if (flat) {
-              // The same two properties the legacy 2D views set
-              // (frontend/components/model/Model.vue:268-269). They work now
-              // that `installTrackballControls` has put a trackball here --
-              // previously this wrote OrbitControls' `enableRotate`/
-              // `enablePan`, which do not exist on a trackball, silently
-              // no-oped, and left every flat view rotatable.
-              target.controls.noRotate = true
-              target.controls.noPan = true
-              resolve(null)
+              // The legacy 2D views locked both (Model.vue:268-269). Written
+              // through copper3d's normalisers rather than as `noRotate` /
+              // `enableRotate` directly: those are opposite spellings
+              // belonging to different controls classes, and writing the
+              // wrong one lands as an unread field -- which is exactly how
+              // every flat view stayed rotatable for so long.
+              setRotateEnabled(target.controls, false)
+              setPanEnabled(target.controls, false)
+              painted.then(() => resolve(null), reject)
             }
             else {
               // 3D modalities only, exactly like the legacy app: the flat
               // branch above returns before this, and Model.vue:267-283 put
-              // the box in the same `else`.
-              void addVolumeBoundingBox(target, volume.RASDimensions)
+              // the box in the same `else`. The colour is this app's border
+              // tone -- copper3d defaults to white, which reads against a
+              // dark viewer and vanishes on this stage's light background.
               const z = slices.z
-              resolve({ max: z.MaxIndex, raw: z, mesh: meshes.z })
+              addVolumeBoundingBox(target, volume.RASDimensions, { color: 0x8A7F84 })
+              painted.then(
+                () => resolve({ max: z.MaxIndex, raw: z, mesh: meshes.z }),
+                reject,
+              )
             }
           },
-          { openGui: false },
+          {
+            openGui: false,
+            // Only the z plane is ever displayed: the stage shows a single
+            // axial slice and `useSliceControl` raycasts only against it.
+            // `extractSlice` walks the whole volume per axis and the result
+            // is retained on `volume.sliceList` for the volume's lifetime,
+            // so x and y used to cost two full passes over a 10-50MB buffer
+            // plus two slice planes this app disposed immediately.
+            axes: ['z'],
+            onProgress,
+            onError: (err) => {
+              settle()
+              reject(err instanceof Error ? err : new Error(String(err)))
+            },
+          },
         )
       }
       catch (err) {
@@ -1016,91 +960,10 @@ export function useModalityScene(stage: StageApi, budget: SceneBudget = getScene
 
   onScopeDispose(() => {
     disposed = true
-    if (pinnedName) budget.unpin(pinnedName)
+    if (pinnedName) budget().unpin(pinnedName)
   })
 
   return { scene, loading, progress, sliceState, loadError, viewpoint, load, prepareMorph, refitCurrentScene, markPosed }
-}
-
-/** One mesh material enrolled in a crossfade, together with the appearance
- * it had before the fade started. */
-interface FadeTarget {
-  material: NonNullable<SceneObjectChild['material']>
-  opacity: number
-  transparent: boolean
-  depthWrite: boolean
-}
-
-function collectFadeTargets(root: SceneObject): FadeTarget[] {
-  const targets: FadeTarget[] = []
-  root.traverse((child) => {
-    if (!child.isMesh || !child.material) return
-    targets.push({
-      material: child.material,
-      opacity: child.material.opacity,
-      transparent: child.material.transparent,
-      depthWrite: child.material.depthWrite,
-    })
-  })
-  return targets
-}
-
-/**
- * Scales each material toward transparent by `factor`, RELATIVE to the
- * opacity it already had. Scaling rather than assigning is what keeps
- * `tintFatLayer`'s translucent amber fat layer translucent: writing
- * `opacity = factor` (as an earlier draft of this task did) would end every
- * crossfade with the fat layer at 1.0 instead of 0.4, i.e. an opaque shell
- * hiding the fibroglandular tissue the density series exists to show.
- *
- * `depthWrite` is suppressed for the whole fade and only restored at the
- * fully-opaque end: a partially transparent mesh that still writes depth
- * occludes everything drawn behind it, so a crossfade with depth writing
- * left on shows the outgoing model punching holes in the incoming one.
- */
-function setFade(targets: FadeTarget[], factor: number) {
-  for (const t of targets) {
-    t.material.transparent = true
-    t.material.opacity = t.opacity * factor
-    t.material.depthWrite = t.depthWrite && factor >= 1
-  }
-}
-
-/** Puts each material back exactly as `collectFadeTargets` found it. */
-function restoreFade(targets: FadeTarget[]) {
-  for (const t of targets) {
-    t.material.transparent = t.transparent
-    t.material.opacity = t.opacity
-    t.material.depthWrite = t.depthWrite
-  }
-}
-
-/** Frees the GPU buffers behind a model that has been removed from the
- * scene. `scene.remove` only unlinks it -- three keeps the geometry's VBOs
- * and the material's textures alive until they are disposed explicitly, and
- * §7.1 replaces a model on every single density step. */
-function disposeSceneObject(root: SceneObject) {
-  root.traverse((child) => {
-    if (!child.isMesh) return
-    child.geometry?.dispose()
-    child.material?.dispose()
-  })
-}
-
-/**
- * Frees an NRRD slice-plane mesh this app never displays -- `loadImaging`'s
- * x/y handling (finding 2, code review, Important). Never added to any
- * scene, so `disposeSceneObject`'s traversal (which walks a scene graph)
- * cannot reach it; disposed directly here instead. Its geometry and
- * material are its own (not shared with the z plane that IS shown), and
- * `Material.dispose()` does not cascade into `material.map` -- the plane's
- * canvas-backed Texture needs its own call or the decoded pixel data it
- * references stays uploaded to the GPU.
- */
-function disposeUnusedSlicePlane(mesh: NrrdMesh) {
-  mesh.geometry?.dispose()
-  mesh.material?.map?.dispose()
-  mesh.material?.dispose()
 }
 
 /**
@@ -1121,8 +984,8 @@ function disposeUnusedSlicePlane(mesh: NrrdMesh) {
  * REPLACES the material, as the legacy app does. An earlier version instead
  * mutated the GLB's own material in place -- setting `transparent`,
  * `opacity` and `color` on it -- to avoid importing `three` here. That is
- * not the same thing, and it is what the human meant by "颜色不是很对啊 ...
- * 太土了":
+ * not the same thing, and it is what the human meant by the colour being
+ * off, and drab:
  *
  *   - `material.color` MULTIPLIES `material.map` in three. The GLB's fat
  *     mesh carries a flesh-toned baseColor texture, so tinting it olive
@@ -1134,10 +997,13 @@ function disposeUnusedSlicePlane(mesh: NrrdMesh) {
  *     the legacy material does not have (a fresh MeshPhysicalMaterial is
  *     roughness 1, metalness 0, no maps).
  *
- * Importing `three` for this is now fine and was not before: `loadGltfModel`
- * already imports it, pinned to `three@0.185.1`, the exact revision copper3d
- * inlines -- see that file's header for why identical versions interoperate
- * across the two copies.
+ * Importing `three` here means a second copy of it crosses into a copper3d
+ * scene. That is safe because the versions are identical: `three@0.185.1` is
+ * pinned in package.json and is the same build copper3d inlines (yarn
+ * resolves this app's three from copper3d's own dependency), and three's
+ * scene graph dispatches on `.isMesh`/`.isMaterial` marker properties rather
+ * than `instanceof` precisely so mixed copies interoperate. If copper3d ever
+ * bundles a different revision, that pin must move with it.
  */
 async function tintFatLayer(group: SceneObject): Promise<void> {
   const targets: NonNullable<SceneObjectChild['material']>[] = []

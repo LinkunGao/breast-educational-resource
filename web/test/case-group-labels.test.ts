@@ -2,7 +2,6 @@ import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it } from 'vitest'
 import CaseHeader from '../app/components/content/CaseHeader.vue'
-import CaseNav from '../app/components/nav/CaseNav.vue'
 import CaseSidebar from '../app/components/nav/CaseSidebar.vue'
 import { CASE_GROUP_LABEL, getCase } from '../content/cases'
 import type { CaseGroup } from '../content/types'
@@ -17,9 +16,14 @@ const NuxtLinkStub = {
  * above-the-title eyebrow, CaseSidebar's nav-group heading, and CaseNav's
  * prev/next overline used to type this label out three separate times --
  * 'Benign Condition' (singular) in CaseHeader disagreed with 'Benign
- * Conditions' (plural) in the other two. All three now read the one
- * CASE_GROUP_LABEL map from content/cases.ts; this test fails if any of
- * them goes back to a hand-typed literal that drifts from it.
+ * Conditions' (plural) in the other two. Both remaining places now read the
+ * one CASE_GROUP_LABEL map from content/cases.ts; this test fails if either
+ * goes back to a hand-typed literal that drifts from it.
+ *
+ * CaseNav is the third place and no longer shows the group at all: its
+ * overline became the SLOT, so that pressing next -- which now steps
+ * anatomy -> mammogram -> MRI -> next case -- says which view it is stepping
+ * to. Its own drift guard lives in CaseNav.test.ts.
  */
 describe('the case group label agrees everywhere it is shown', () => {
   beforeEach(() => setActivePinia(createPinia()))
@@ -44,15 +48,5 @@ describe('the case group label agrees everywhere it is shown', () => {
       CASE_GROUP_LABEL.benign,
       CASE_GROUP_LABEL.cancer,
     ])
-  })
-
-  it('CaseNav\'s neighbour overline renders CASE_GROUP_LABEL, not a hand-typed copy', () => {
-    // density-b has both a previous and a next neighbour in the catalogue,
-    // so both overlines render off one mount.
-    const wrapper = mount(CaseNav, {
-      props: { slug: 'density-b' },
-      global: { stubs: { NuxtLink: NuxtLinkStub } },
-    })
-    expect(wrapper.text()).toContain(CASE_GROUP_LABEL.density)
   })
 })
