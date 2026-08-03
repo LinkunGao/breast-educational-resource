@@ -12,6 +12,12 @@ const sheetExpanded = ref(false)
 // director, so both routes go through it. The layout itself owns neither.
 const tourLayerRef = ref<{ startTour: () => void } | null>(null)
 function startTour() { tourLayerRef.value?.startTour() }
+
+// Gates the two tour components below; see the comment on their `v-if`.
+// They read localStorage and measure the DOM, so they were never able to
+// render on the server anyway -- this only changes HOW that is arranged.
+const tourMounted = ref(false)
+onMounted(() => { tourMounted.value = true })
 </script>
 
 <template>
@@ -216,11 +222,33 @@ function startTour() { tourLayerRef.value?.startTour() }
       </main>
     </div>
 
-    <TourLauncher @start="startTour" />
-    <!-- expand-sheet: the tour's `description` step needs the tablet sheet
-         open to point at content that is otherwise peeking at 80px. That
-         state is local to this layout (see sheetExpanded's own comment), so
-         it is handed down as a setter rather than moved into the store. -->
-    <TourLayer ref="tourLayerRef" :expand-sheet="() => { sheetExpanded = true }" />
+    <!--
+      `v-if="tourMounted"`, and these two components are deliberately NOT
+      named `*.client.vue` any more.
+
+      The `.client` suffix wraps a component in Nuxt's client-only wrapper.
+      On a COLD hydration (empty cache, hard reload) that wrapper re-renders
+      the server's markup for itself as a static vnode; for a component the
+      server rendered nothing for, that static vnode owns no DOM node at all,
+      and the next update runs
+      `patch(prevTree, nextTree, hostParentNode(prevTree.el), ...)` with a
+      null `el`. Measured against the deployed site by rewriting that exact
+      call site in the shipped chunk: it named `TourLayer` and reported
+      `[data-tour-layer]` absent from the document entirely -- so the guided
+      tour could never open, on every cold load.
+
+      A plain `v-if` off a mounted flag has the same effect (nothing on the
+      server, everything after mount) with none of that machinery: the
+      components simply do not exist until the client says so, and when they
+      appear they mount into this layout's own stable subtree.
+    -->
+    <template v-if="tourMounted">
+      <TourLauncher @start="startTour" />
+      <!-- expand-sheet: the tour's `description` step needs the tablet sheet
+           open to point at content that is otherwise peeking at 80px. That
+           state is local to this layout (see sheetExpanded's own comment), so
+           it is handed down as a setter rather than moved into the store. -->
+      <TourLayer ref="tourLayerRef" :expand-sheet="() => { sheetExpanded = true }" />
+    </template>
   </div>
 </template>

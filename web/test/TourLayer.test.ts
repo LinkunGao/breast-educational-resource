@@ -2,7 +2,7 @@ import { computed } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import TourLayer from '../app/components/tour/TourLayer.client.vue'
+import TourLayer from '../app/components/tour/TourLayer.vue'
 import { useTourStore } from '../app/stores/tour'
 import type { TourStep } from '../content/tourTypes'
 
@@ -15,7 +15,7 @@ import type { TourStep } from '../content/tourTypes'
  * paint once it finally resolved, and could leave `data-tour-focus` stuck
  * after the tour had already exited.
  *
- * `TourLayer` is `.client` and calls `useRoute()`/`navigateTo()` (Nuxt
+ * `TourLayer` calls `useRoute()`/`navigateTo()` (Nuxt
  * globals `test/setup.ts` deliberately does not stub) and the bare global
  * `useTourDirector()` (Nuxt auto-import, not a real import in the SFC). All
  * three are stubbed locally in this file only, via `vi.stubGlobal` --
