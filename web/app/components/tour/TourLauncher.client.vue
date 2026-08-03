@@ -23,21 +23,21 @@ const visible = computed(() => !store.hasSeen && !dismissed.value && !store.acti
   <div
     v-if="visible"
     data-tour-launcher
-    class="hud-glass fixed right-4 z-40 flex w-64 max-w-[calc(100vw-2rem)] flex-col gap-2
-           rounded-card p-3
+    class="hud-glass fixed right-4 z-40 flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2.5
+           rounded-card p-3.5
            max-md:bottom-4 md:max-xl:bottom-24 xl:bottom-6"
   >
     <!-- Above the tablet bottom sheet's 80px peek and clear of the phone
          layout's prev/next cards: the app already owns its bottom-right. -->
-    <p class="text-caption font-medium text-(--hud-ink)">
+    <p class="text-caption font-medium whitespace-nowrap text-(--hud-ink)">
       New here? A 90-second guided tour.
     </p>
     <div class="flex items-center justify-end gap-2">
       <button
         type="button"
         data-tour-dismiss
-        class="flex min-h-11 items-center rounded-full px-3 text-body-sm text-(--hud-dim)
-               hover:bg-white/5"
+        class="flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-full px-3 text-body-sm
+               text-(--hud-dim) hover:bg-white/5"
         @click="dismissed = true; store.markSeen()"
       >
         Not now
@@ -45,8 +45,8 @@ const visible = computed(() => !store.hasSeen && !dismissed.value && !store.acti
       <button
         type="button"
         data-tour-take
-        class="flex min-h-11 items-center gap-2 rounded-full bg-(--hud-accent) px-5 text-body-sm
-               font-bold text-(--hud-base) hover:opacity-90"
+        class="flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-full bg-(--hud-accent)
+               px-4 text-body-sm font-bold text-(--hud-base) hover:opacity-90"
         @click="emit('start')"
       >
         ✦ Take the tour

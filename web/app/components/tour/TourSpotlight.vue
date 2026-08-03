@@ -20,15 +20,17 @@ const props = defineProps<{
 }>()
 
 const OFFSET = 6 // brackets float just outside the target rect
-const OUTER_STROKE = 3.5 // dark stroke, drawn first -- shows as an edge on both sides of the accent stroke
-const INNER_STROKE = 1.5 // accent stroke, drawn on top, inset inside the dark one
+const OUTER_STROKE = 5 // dark stroke, drawn first -- shows as an edge on both sides of the accent stroke
+const INNER_STROKE = 2.5 // accent stroke, drawn on top, inset inside the dark one
 
 /** Arm length scales with the target so it reads at small sizes without
- *  swallowing large ones: 18% of the shorter side, clamped to [14, 28]px. */
+ *  swallowing large ones: 20% of the shorter side, clamped to [18, 44]px.
+ *  Raised from the original [14, 28] band -- at panel size the old clamp
+ *  capped every bracket at 28px, too small to read as a deliberate reticle. */
 const armLen = computed(() => {
-  if (!props.rect) return 18
+  if (!props.rect) return 22
   const short = Math.min(props.rect.width, props.rect.height)
-  return Math.round(Math.min(28, Math.max(14, short * 0.18)))
+  return Math.round(Math.min(44, Math.max(18, short * 0.2)))
 })
 
 /** Each corner's L-shaped path, vertex nearest the actual target corner --
@@ -71,7 +73,10 @@ const corners = computed(() => {
          the same path, so the bracket keeps an edge against BOTH a near-
          black MRI slice and a white content panel -- a single accent-only
          stroke measures well under 3:1 on white; drop-shadow alone did not
-         fix that either. -->
+         fix that either. Outer alpha raised to .82 (from .55) so it reads
+         as a real dark ring rather than a translucent smudge; inner uses
+         --hud-accent-strong, not --hud-accent -- see tokens.css for the
+         measured contrast that made a deeper rose necessary here. -->
     <svg
       v-for="corner in corners"
       :key="corner.name"
@@ -81,8 +86,8 @@ const corners = computed(() => {
       :viewBox="`0 0 ${armLen} ${armLen}`"
       :style="corner.style"
     >
-      <path :d="corner.d" fill="none" stroke="rgb(20 18 26 / .55)" :stroke-width="OUTER_STROKE" />
-      <path :d="corner.d" fill="none" stroke="var(--hud-accent)" :stroke-width="INNER_STROKE" />
+      <path :d="corner.d" fill="none" stroke="rgb(20 18 26 / .82)" :stroke-width="OUTER_STROKE" stroke-linecap="square" />
+      <path :d="corner.d" fill="none" stroke="var(--hud-accent-strong)" :stroke-width="INNER_STROKE" stroke-linecap="square" />
     </svg>
 
     <!-- One top-to-bottom pass on open, not a loop -- motion-safe gated, and

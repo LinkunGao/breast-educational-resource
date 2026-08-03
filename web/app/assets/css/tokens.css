@@ -110,7 +110,17 @@
      --hud-accent (muted rose)  "you are here" -- focus/current state only.
      --hud-num    (champagne)   measurements only -- slice #, step #, readouts.
    Tabular/monospace figures are reserved for --hud-num usage; nothing else
-   in the overlay should use a numeric font. */
+   in the overlay should use a numeric font.
+
+   --hud-accent-strong is a companion, not a replacement: --hud-accent is
+   tuned for the dark glass chrome (card/rail/launcher) and reads at 1.8:1
+   on white -- unusable there. The ROI bracket in TourSpotlight sits on
+   arbitrary imagery, light panel surfaces included, so it needs a deeper
+   rose from the same family. Measured (contrastRatio in app/utils/contrast):
+   4.70:1 on --color-surface (#FFFFFF), 4.42:1 on --color-bg (#F7F8FA),
+   4.01:1 on --color-brand-subtle (#FCE8ED, the case-panel header fill),
+   3.95:1 on --hud-base -- clears the 3:1 graphics floor everywhere it can
+   land, on light or dark. */
 :root {
   --hud-base:  #14121A;
   --hud-glass: rgb(20 18 26 / .74);
@@ -118,6 +128,7 @@
   --hud-ink:   #F0ECEF;
   --hud-dim:   #A39CA0;
   --hud-accent: #E8B4B8;
+  --hud-accent-strong: #BD4E6C;
   --hud-num:    #D8C3A5;
 }
 
