@@ -23,20 +23,21 @@ const visible = computed(() => !store.hasSeen && !dismissed.value && !store.acti
   <div
     v-if="visible"
     data-tour-launcher
-    class="fixed right-4 z-40 flex flex-col items-end gap-2
+    class="hud-glass fixed right-4 z-40 flex w-64 max-w-[calc(100vw-2rem)] flex-col gap-2
+           rounded-card p-3
            max-md:bottom-4 md:max-xl:bottom-24 xl:bottom-6"
   >
     <!-- Above the tablet bottom sheet's 80px peek and clear of the phone
          layout's prev/next cards: the app already owns its bottom-right. -->
-    <p class="rounded-ctl bg-text px-3 py-2 text-caption font-medium text-surface shadow-md">
+    <p class="text-caption font-medium text-(--hud-ink)">
       New here? A 90-second guided tour.
     </p>
-    <div class="flex items-center gap-2">
+    <div class="flex items-center justify-end gap-2">
       <button
         type="button"
         data-tour-dismiss
-        class="flex min-h-11 items-center rounded-full px-3 text-body-sm text-text-muted
-               hover:bg-surface-sunken"
+        class="flex min-h-11 items-center rounded-full px-3 text-body-sm text-(--hud-dim)
+               hover:bg-white/5"
         @click="dismissed = true; store.markSeen()"
       >
         Not now
@@ -44,9 +45,8 @@ const visible = computed(() => !store.hasSeen && !dismissed.value && !store.acti
       <button
         type="button"
         data-tour-take
-        class="flex min-h-11 items-center gap-2 rounded-full bg-brand-hover px-5 text-body-sm
-               font-bold text-surface shadow-md
-               motion-safe:animate-[tour-breathe_2.8s_ease-in-out_infinite]"
+        class="flex min-h-11 items-center gap-2 rounded-full bg-(--hud-accent) px-5 text-body-sm
+               font-bold text-(--hud-base) hover:opacity-90"
         @click="emit('start')"
       >
         ✦ Take the tour
@@ -54,3 +54,20 @@ const visible = computed(() => !store.hasSeen && !dismissed.value && !store.acti
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Same glass FAMILY as TourCard/TourRail (design doc T2), but more opaque:
+   --hud-glass's .74 alpha is tuned for sitting over the dimmed tour theatre.
+   This launcher floats over the ordinary, undimmed light page instead, so
+   that alpha lets enough page colour bleed through to fail --hud-dim's
+   contrast (axe caught this: composited over white it measures ~3:1, not
+   the 4.5:1 body floor). .94 keeps the frosted-glass read while measuring
+   ~5.6-6.3:1 for every HUD ink against any real page background. */
+.hud-glass {
+  background: rgb(20 18 26 / .94);
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  border: 1px solid var(--hud-line);
+  box-shadow: 0 16px 40px rgb(0 0 0 / .45), inset 0 1px 0 rgb(255 255 255 / .07);
+}
+</style>

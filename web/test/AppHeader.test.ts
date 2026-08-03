@@ -201,10 +201,12 @@ describe('AppHeader', () => {
     it('About is a filled control, not bare text: it reads as a button without hover', () => {
       // The bug this fixes: About had only `hover:bg-surface-sunken`, and a
       // touch device never hovers, so on iPad and phone it was a grey word.
+      // HUD redesign (T3) swapped the heavy black fill for a soft neutral
+      // one; it must still be filled at rest, not reliant on :hover.
       const wrapper = mountHeader()
       const about = wrapper.get('[data-header-actions] a[href="/about"]')
-      expect(about.classes()).toContain('bg-text')
-      expect(about.classes()).toContain('text-surface')
+      expect(about.classes()).toContain('bg-surface-sunken')
+      expect(about.classes()).toContain('text-text')
     })
 
     it('About keeps its visible label at every width', () => {

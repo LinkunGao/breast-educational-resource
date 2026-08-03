@@ -96,25 +96,29 @@
 /* Spacing keeps Tailwind's default 4px base (1 = 4px), so design system §6's
    4·8·12·16·24·32·40·48·64 maps to 1·2·3·4·6·8·10·12·16. */
 
-/* ── Tour HUD tokens (plan/2026-08-03-tour-hud-redesign.md §2) ────────────
+/* ── Tour HUD tokens (plan/2026-08-03-tour-hud-redesign.md §2, direction B) ─
    Scoped to the guided-tour overlay ONLY -- not in @theme, so they generate
    no bg-, text- or border- utilities and never touch the app's light-theme
    palette above. T2 is the first consumer; this task only defines the
    contract.
 
+   Direction B, not C: a muted rose in the SAME family as --color-brand
+   (#D94F70), just far less saturated -- leaving the tour should not feel
+   like leaving a different product.
+
    Two accents, each with exactly one job -- not decoration, a system:
-     --hud-accent (orchid)   "you are here" -- focus/current state only.
-     --hud-num    (periwinkle) measurements only -- slice #, step #, readouts.
+     --hud-accent (muted rose)  "you are here" -- focus/current state only.
+     --hud-num    (champagne)   measurements only -- slice #, step #, readouts.
    Tabular/monospace figures are reserved for --hud-num usage; nothing else
    in the overlay should use a numeric font. */
 :root {
-  --hud-base:  #0D0F1A;
-  --hud-glass: rgb(13 15 26 / .74);
-  --hud-line:  rgb(190 205 255 / .14);
-  --hud-ink:   #ECEEFA;
-  --hud-dim:   #98A2B8;
-  --hud-accent: #E0A6E8;
-  --hud-num:    #8FA0FF;
+  --hud-base:  #14121A;
+  --hud-glass: rgb(20 18 26 / .74);
+  --hud-line:  rgb(255 245 240 / .14);
+  --hud-ink:   #F0ECEF;
+  --hud-dim:   #A39CA0;
+  --hud-accent: #E8B4B8;
+  --hud-num:    #D8C3A5;
 }
 
 @layer base {
@@ -217,14 +221,6 @@
 
   body[data-tour-active] [data-tour-region][data-tour-focus] {
     transition: opacity .4s ease, filter .4s ease;
-  }
-
-  /* The halo around the current target. Two rings: a solid brand edge and a
-     soft outer glow that breathes. Both are box-shadows on an overlay
-     element, so nothing about the target itself is touched. */
-  @keyframes tour-breathe {
-    0%, 100% { box-shadow: 0 0 0 2px var(--color-brand), 0 0 0 6px rgb(217 79 112 / .18); }
-    50%      { box-shadow: 0 0 0 2px var(--color-brand), 0 0 0 14px rgb(217 79 112 / 0); }
   }
 
   /* ROI reticle scan line (TourSpotlight): one top-to-bottom pass across the

@@ -81,7 +81,7 @@ const corners = computed(() => {
       :viewBox="`0 0 ${armLen} ${armLen}`"
       :style="corner.style"
     >
-      <path :d="corner.d" fill="none" stroke="rgb(13 15 26 / .55)" :stroke-width="OUTER_STROKE" />
+      <path :d="corner.d" fill="none" stroke="rgb(20 18 26 / .55)" :stroke-width="OUTER_STROKE" />
       <path :d="corner.d" fill="none" stroke="var(--hud-accent)" :stroke-width="INNER_STROKE" />
     </svg>
 

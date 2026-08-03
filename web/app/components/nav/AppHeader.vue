@@ -101,44 +101,45 @@ const emit = defineEmits<{ startTour: [] }>()
       <!--
         Secondary to About by design. The loud, unmissable invitation is the
         first-visit launcher, which expires; this one only has to be
-        findable again afterwards, so it is an outline, not a fill.
+        findable again afterwards, so it stays a quiet outline. The corner-
+        bracket glyph previews the tour HUD's own visual language.
+
+        Border is text-muted, not border-strong (1.48:1 on white -- under
+        the 3:1 non-text floor; see nav-contrast.test.ts's existing rejection
+        of border-strong for the same reason on ModalityStepper/default.vue).
       -->
       <button
         type="button"
         data-tour-open
-        class="flex min-h-11 items-center gap-1.5 rounded-full border border-border-strong
-               px-3 text-body-sm font-semibold text-text hover:bg-surface-sunken md:px-4"
+        class="flex min-h-11 items-center gap-1.5 rounded-full border border-text-muted
+               px-3 text-body-sm font-semibold text-text-muted hover:bg-surface-sunken hover:text-text md:px-4"
         :aria-label="tour.active ? 'Guided tour is running' : 'Start the guided tour'"
         @click="emit('startTour')"
       >
-        <svg viewBox="0 0 24 24" class="size-4 shrink-0" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M12 2.5 13.6 8l5.4 1.6-5.4 1.6L12 16.6 10.4 11.2 5 9.6 10.4 8z"
-          />
+        <svg viewBox="0 0 16 16" class="size-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+          <path d="M1 4.5V1h3.5" />
+          <path d="M11.5 1H15v3.5" />
+          <path d="M15 11.5V15h-3.5" />
+          <path d="M4.5 15H1v-3.5" />
         </svg>
         <span data-tour-label class="max-md:sr-only">Guided tour</span>
       </button>
 
       <!--
-        A filled control, not a text link.
+        A filled control, not a text link -- a touch device never hovers, so
+        bare text with only a hover background read as a grey word, not a
+        control.
 
-        It used to be `text-body-sm text-text-muted` with a hover background
-        and nothing else, so on a touch device -- where nothing ever hovers
-        -- it read as a grey word rather than a control. Below xl the
-        content-panel toggle beside it is display:none too, leaving it the
-        lone item on the right with no context that this strip is controls
-        at all.
-
-        Filled with `--color-text`, NOT `--color-brand`: rose is this app's
-        focus semantic (the focused panel's ring, the sidebar's current row,
-        Locate lesion), and spending it on a permanent header button would
-        blur what "current" means everywhere else.
+        Soft neutral fill, not the old heavy black: still filled (outranks
+        the tour button's outline), still NOT `--color-brand` (rose is this
+        app's focus semantic -- the focused panel's ring, the sidebar's
+        current row, Locate lesion -- and spending it here would blur what
+        "current" means everywhere else).
       -->
       <NuxtLink
         to="/about"
-        class="flex min-h-11 items-center gap-1.5 rounded-full bg-text px-4
-               text-body-sm font-bold text-surface transition-opacity hover:opacity-90"
+        class="flex min-h-11 items-center gap-1.5 rounded-full bg-surface-sunken px-4
+               text-body-sm font-bold text-text transition-colors hover:bg-border"
       >
         <svg viewBox="0 0 24 24" class="size-4 shrink-0" aria-hidden="true">
           <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" />
