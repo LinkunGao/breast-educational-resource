@@ -114,15 +114,15 @@ const btn = 'flex min-h-11 items-center rounded-full px-4 text-body-sm font-bold
     tabindex="-1"
     :aria-labelledby="titleId"
     data-tour-card
-    class="fixed z-50 w-80 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-7rem)] overflow-y-auto
-           rounded-card border border-border bg-surface/95 p-5 shadow-lg backdrop-blur-sm"
+    class="hud-glass fixed z-50 w-80 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-7rem)] overflow-y-auto
+           rounded-card p-5"
     :style="style"
   >
     <div class="flex items-center justify-between gap-2">
-      <p class="text-caption font-bold uppercase tracking-[0.14em] text-brand-hover">
+      <p class="text-caption font-bold uppercase tracking-[0.16em] text-(--hud-accent)">
         {{ props.chapterLabel }}
       </p>
-      <p class="text-caption tabular-nums text-text-muted">
+      <p class="font-mono text-caption tabular-nums text-(--hud-num)">
         {{ props.stepNumber }} / {{ props.stepCount }}
       </p>
     </div>
@@ -132,10 +132,10 @@ const btn = 'flex min-h-11 items-center rounded-full px-4 text-body-sm font-bold
          "polite" so it queues behind that status rather than talking over
          it, avoiding a double announcement of the same step change. -->
     <div aria-live="polite">
-      <h2 :id="titleId" class="mt-1.5 text-h2 font-bold tracking-tight text-text">
+      <h2 :id="titleId" class="mt-1.5 text-h2 font-bold tracking-tight text-(--hud-ink)">
         {{ props.title }}
       </h2>
-      <p class="mt-2 text-body-sm leading-relaxed text-text-muted">
+      <p class="mt-2 text-body-sm leading-relaxed text-(--hud-dim)">
         {{ props.body }}
       </p>
     </div>
@@ -144,7 +144,7 @@ const btn = 'flex min-h-11 items-center rounded-full px-4 text-body-sm font-bold
       <button
         type="button"
         data-tour-back
-        :class="`${btn} text-text-muted hover:bg-surface-sunken`"
+        :class="`${btn} text-(--hud-dim) hover:bg-white/5`"
         @click="emit('back')"
       >
         Back
@@ -152,7 +152,7 @@ const btn = 'flex min-h-11 items-center rounded-full px-4 text-body-sm font-bold
       <button
         type="button"
         data-tour-next
-        :class="`${btn} ml-auto bg-text text-surface hover:opacity-90`"
+        :class="`${btn} ml-auto bg-(--hud-accent) text-(--hud-base) hover:opacity-90`"
         @click="emit('next')"
       >
         {{ props.atEnd ? 'Finish' : 'Next' }}
@@ -161,7 +161,7 @@ const btn = 'flex min-h-11 items-center rounded-full px-4 text-body-sm font-bold
         type="button"
         data-tour-exit
         aria-label="Close the guided tour"
-        :class="`${btn} text-text-muted hover:bg-surface-sunken`"
+        :class="`${btn} text-(--hud-dim) hover:bg-white/5`"
         @click="emit('exit')"
       >
         ✕
@@ -169,3 +169,15 @@ const btn = 'flex min-h-11 items-center rounded-full px-4 text-body-sm font-bold
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Dark glass: the inset top highlight is what reads as glass rather than a
+   flat grey box (design doc T2). */
+.hud-glass {
+  background: var(--hud-glass);
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  border: 1px solid var(--hud-line);
+  box-shadow: 0 16px 40px rgb(0 0 0 / .45), inset 0 1px 0 rgb(255 255 255 / .07);
+}
+</style>

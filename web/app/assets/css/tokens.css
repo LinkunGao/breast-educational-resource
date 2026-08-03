@@ -227,6 +227,17 @@
     50%      { box-shadow: 0 0 0 2px var(--color-brand), 0 0 0 14px rgb(217 79 112 / 0); }
   }
 
+  /* ROI reticle scan line (TourSpotlight): one top-to-bottom pass across the
+     target, not a loop -- a permanently blinking overlay on medical imaging
+     is exactly the effect the HUD redesign rejects. `top` is a percentage of
+     the halo's own height, so it always spans exactly the target rect. */
+  @keyframes tour-scan {
+    0%   { top: 0%; opacity: 0; }
+    8%   { opacity: 1; }
+    92%  { opacity: 1; }
+    100% { top: 100%; opacity: 0; }
+  }
+
   /* Global constraint: prefers-reduced-motion disables motion, it does not
    * merely shorten it. Zero duration/delay (not a "fast" 1ms) so transitions
    * and animations resolve to their end state with no intermediate frames,
