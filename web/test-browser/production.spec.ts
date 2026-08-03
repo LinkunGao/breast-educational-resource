@@ -237,6 +237,58 @@ test.describe('§12 acceptance, against the generated site', () => {
   })
 
   /**
+   * The same thing again, but hydrating SLOWLY.
+   *
+   * The bug this exists for only ever appeared on the deployed site, and only
+   * after an empty-cache hard reload. Everything local -- dev server and this
+   * generated build alike -- serves its chunks instantly, so hydration was
+   * over before anything could race it and the failure never showed.
+   *
+   * What it was: `TourLayer.client.vue`'s `.client` suffix wrapped it in
+   * Nuxt's client-only wrapper, which on a cold hydration re-renders the
+   * server's own markup for itself as a static vnode. The server renders
+   * nothing for a client-only component, so that vnode owned no DOM node,
+   * and the next update ran
+   * `patch(prev, next, hostParentNode(prev.el), ...)` against a null `el`.
+   * Confirmed by rewriting that exact call site in the shipped chunk and
+   * reading back the component name: `TourLayer`, with `[data-tour-layer]`
+   * absent from the document entirely. Both tour components are now plain
+   * components behind the layout's own mounted gate, so no wrapper is
+   * involved at all.
+   *
+   * Throttling is the closest a local run gets to that, and it is the axis
+   * this suite had no coverage on at any tier.
+   */
+  test('the tour still opens when the page hydrates under latency', async ({ page }) => {
+    const failures: string[] = []
+    page.on('pageerror', e => failures.push(`pageerror: ${e.message}`))
+
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send('Network.enable')
+    await cdp.send('Network.emulateNetworkConditions', {
+      offline: false,
+      latency: 300,
+      downloadThroughput: (1.5 * 1024 * 1024) / 8,
+      uploadThroughput: (750 * 1024) / 8,
+    })
+
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await page.goto(`${base}/the-breast/anatomy`)
+
+    // The gate the layout opens on mount. Its arrival is the whole point:
+    // under the old wrapper this element could never appear at all.
+    await expect(page.locator('[data-tour-layer]')).toBeAttached({ timeout: 60_000 })
+
+    await page.locator('[data-tour-take]').click({ timeout: 60_000 })
+    await expect(page.locator('[data-tour-card]')).toBeVisible({ timeout: 30_000 })
+
+    await page.keyboard.press('Escape')
+    await expect(page.locator('body[data-tour-active]')).toHaveCount(0)
+
+    expect(failures, `the built site threw while hydrating:\n${failures.join('\n')}`).toEqual([])
+  })
+
+  /**
    * Client feedback item 1, against the real build. `test/pwa.test.ts`
    * asserts the `nuxt.config.ts` `pwa` object; these assert what actually
    * shipped -- see this file's header for why that has to be here rather

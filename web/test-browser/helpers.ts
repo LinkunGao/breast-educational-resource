@@ -68,7 +68,7 @@ export async function waitForAllPanels(page: Page) {
  * Waits for hydration before a test interacts with a server-rendered
  * control (e.g. AppHeader's "Start the guided tour" button).
  *
- * `[data-tour-take]` lives in TourLauncher.client.vue, a `.client`
+ * `[data-tour-take]` lives in TourLauncher.vue, rendered behind the layout's own mounted gate
  * component that cannot exist in the DOM until Nuxt has mounted it -- so
  * its arrival is proof the surrounding tree has hydrated and event
  * listeners are attached. Playwright's `.click()` fires the instant an

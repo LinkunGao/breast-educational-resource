@@ -161,7 +161,7 @@ test.describe('guided tour demos', () => {
    * Task 11: the design doc's distinction (§4.4) between finishing and
    * exiting, proved end to end. `waitForHydration` is required here --
    * "Start the guided tour" is AppHeader's server-rendered button, and a
-   * click on it before TourLauncher.client.vue hydrates hits inert markup.
+   * click on it before TourLauncher mounts hits inert markup.
    */
   test('finishing leaves the reader on the lesion case; exiting returns them', async ({ page }) => {
     await page.goto('/the-breast/anatomy')

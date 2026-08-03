@@ -61,6 +61,8 @@ async function focusPanelByRoute(panel: PanelId) {
 const step = computed(() => director.currentStep.value)
 const rect = ref<DOMRect | null>(null)
 const targetEl = shallowRef<HTMLElement | null>(null)
+/** The overlay's own root, read by the fail-safe in the step watcher. */
+const layerEl = shallowRef<HTMLElement | null>(null)
 
 function measure() {
   rect.value = targetEl.value?.getBoundingClientRect() ?? null
@@ -195,11 +197,14 @@ watch([() => store.active, () => store.stepIndex], async () => {
    * much worse one, so check and back out.
    *
    * Asks whether the LAYER ROOT has any child element, not whether a
-   * specific `[data-tour-card]` exists. Two reasons: it catches any of the
-   * three children failing rather than one, and it is null-safe under the
-   * unit suite, where this component is mounted detached and its children do
-   * not resolve to real components at all -- a `[data-tour-card]` probe
-   * aborts every tour test in the file.
+   * specific `[data-tour-card]` exists: that catches any of the three
+   * children failing rather than one. It reads the root through this
+   * component's own template ref rather than `document.querySelector`,
+   * because the first version did the latter and had a hole exactly where
+   * it mattered -- when the root itself never mounted the query returned
+   * null, the `layer && ...` guard fell through, and the app stayed in
+   * theatre mode with no card. A ref is null in precisely one case (not
+   * mounted), which is the case that has to bail.
    *
    * Two ticks, not one: the watcher runs pre-render, so the first gets past
    * this component's own re-render and the second past the children's.
@@ -207,8 +212,7 @@ watch([() => store.active, () => store.stepIndex], async () => {
   await nextTick()
   await nextTick()
   if (!store.active) return
-  const layer = document.querySelector('[data-tour-layer]')
-  if (layer && layer.childElementCount === 0) {
+  if (!layerEl.value || layerEl.value.childElementCount === 0) {
     clearTheatre()
     store.exit()
     return
@@ -351,19 +355,17 @@ defineExpose({ startTour: director.startTour })
     A STABLE ROOT ELEMENT, and it is not decoration.
 
     This component's root used to be the `<template v-if>` below, so its own
-    subtree alternated between a comment vnode and a fragment. On the
-    deployed (subpath, minified, prerendered) build that left Vue updating a
-    component whose previous subtree had no DOM node, and
-    `patch(prev, next, hostParentNode(prev.el), ...)` threw
-    `Cannot read properties of null (reading 'parentNode')` -- so the card,
-    rail and spotlight never mounted while `data-tour-active` was already on
-    <body>, i.e. a dimmed, inert app with nothing explaining why.
-
-    An always-present root can never have a null `el`. `display: contents`
+    subtree alternated between a comment vnode and a fragment. An
+    always-present root can never have a null `el`, which is what the step
+    watcher's fail-safe reads back through `layerEl`. `display: contents`
     means it generates no box at all, so it changes no layout: all three
     children position themselves against the viewport anyway.
+
+    This alone was NOT enough to fix the deployed failure -- see the `v-if`
+    in layouts/default.vue for the other half, and for what the `.client`
+    suffix was actually doing.
   -->
-  <div data-tour-layer class="contents">
+  <div ref="layerEl" data-tour-layer class="contents">
     <template v-if="store.active && step">
       <TourSpotlight :rect="rect" :step-id="step.id" />
       <TourCard

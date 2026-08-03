@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it } from 'vitest'
-import TourLauncher from '../app/components/tour/TourLauncher.client.vue'
+import TourLauncher from '../app/components/tour/TourLauncher.vue'
 import { TOUR_SEEN_KEY, useTourStore } from '../app/stores/tour'
 
 describe('TourLauncher', () => {
