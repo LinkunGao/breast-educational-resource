@@ -235,15 +235,14 @@ describe('CaseSidebar', () => {
     })
   })
 
-  it('shows the app version at the foot of the sidebar', () => {
-    const wrapper = mountSidebar()
-    const version = wrapper.get('[data-app-version]')
-    expect(version.text()).toBe('v0.0.0-test')
-  })
-
-  it('renders the version below the partner logos, not above them', () => {
-    const wrapper = mountSidebar()
-    const html = wrapper.html()
-    expect(html.indexOf('data-app-version')).toBeGreaterThan(html.indexOf('logos/'))
+  /**
+   * The version used to sit under the partner logos here. It is gone at the
+   * human's instruction, and nothing is lost by that: the About page has
+   * carried "Breast Educational Resource v{version}" the whole time, which
+   * is where a reader goes looking for provenance anyway. Pinning the
+   * ABSENCE, because a stray reintroduction would otherwise be invisible.
+   */
+  it('does not put the app version in the persistent chrome', () => {
+    expect(mountSidebar().find('[data-app-version]').exists()).toBe(false)
   })
 })

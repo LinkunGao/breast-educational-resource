@@ -5,8 +5,11 @@ const emit = defineEmits<{ startTour: [] }>()
 </script>
 
 <template>
+  <!-- `pane-flat`, not `bg-surface`: the header is one of the app's glass
+       panes, so it lets the ground's tint through and carries the same
+       specular top edge every other pane does. -->
   <header
-    class="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-surface px-4"
+    class="pane-flat flex h-14 shrink-0 items-center gap-3 border-b border-border px-4"
   >
     <!-- Mobile/tablet only: opens/closes the case-nav drawer. Below xl the
          drawer's presence is sidebarOpen's job; at xl+ the sidebar is

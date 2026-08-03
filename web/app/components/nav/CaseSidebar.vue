@@ -8,8 +8,6 @@ import { GROUP_INK } from '~/utils/groupInk'
 
 const store = useViewerStore()
 const { publicUrl } = useAssetUrl()
-// Build-time value from package.json; see web/version.ts.
-const appVersion = useRuntimeConfig().public.appVersion
 
 /**
  * Per-group icon paths (client feedback item 9), drawn stroke-only at
@@ -145,7 +143,7 @@ function onKeydown(event: KeyboardEvent) {
     id="case-sidebar"
     ref="navEl"
     aria-label="Cases"
-    class="flex w-60 shrink-0 flex-col gap-6 overflow-y-auto border-r border-border bg-surface p-4"
+    class="pane-flat flex w-60 shrink-0 flex-col gap-6 overflow-y-auto border-r border-border p-4"
     @keydown="onKeydown"
   >
     <NuxtLink
@@ -256,14 +254,9 @@ function onKeydown(event: KeyboardEvent) {
       >
     </NuxtLink>
 
-    <!-- Provenance lives at the foot of the persistent chrome, next to the
-         partner logos. A version is only ever wanted when something has
-         gone wrong, so it does not earn header space. -->
-    <p
-      data-app-version
-      class="px-2 pb-1 text-caption tabular-nums text-text-muted"
-    >
-      v{{ appVersion }}
-    </p>
+    <!-- No version line here. It lives on the About page instead
+         ("Breast Educational Resource v{version}"), which is where a reader
+         looks for provenance; in the persistent chrome it was a number on
+         every screen that almost nobody ever needs. -->
   </nav>
 </template>

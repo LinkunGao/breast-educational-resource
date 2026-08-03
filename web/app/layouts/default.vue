@@ -15,7 +15,9 @@ function startTour() { tourLayerRef.value?.startTour() }
 </script>
 
 <template>
-  <div class="flex h-dvh flex-col overflow-hidden bg-bg">
+  <!-- `ground` (not `bg-bg`) is what the app's glass has to sit on: the page
+       colour plus three very low-alpha radials. See tokens.css. -->
+  <div class="ground flex h-dvh flex-col overflow-hidden">
     <!-- Skip link: first tab stop, hidden until focused. Below-xl the
          resident-looking sidebar is really 10+ off-canvas links a keyboard
          user would otherwise have to tab past on every single page. -->
@@ -56,8 +58,8 @@ function startTour() { tourLayerRef.value?.startTour() }
       <CaseSidebar
         data-tour-region
         class="max-md:fixed max-md:inset-x-0 max-md:top-14 max-md:bottom-0 max-md:z-30 max-md:w-full
-               max-md:shadow-lg max-md:transition-[transform,visibility] max-md:duration-200
-               md:max-xl:fixed md:max-xl:top-14 md:max-xl:bottom-0 md:max-xl:left-0 md:max-xl:z-30 md:max-xl:shadow-lg
+               max-md:pane-lift max-md:transition-[transform,visibility] max-md:duration-200
+               md:max-xl:fixed md:max-xl:top-14 md:max-xl:bottom-0 md:max-xl:left-0 md:max-xl:z-30 md:max-xl:pane-lift
                md:max-xl:transition-[transform,visibility] md:max-xl:duration-200
                xl:transition-[width,visibility] xl:duration-200"
         :class="[
@@ -106,9 +108,12 @@ function startTour() { tourLayerRef.value?.startTour() }
         <!-- `data-stage-column` marks the fullscreen target for the control
              bar's ⛶ button (design doc §10.1): heading, stepper, stage and
              the bar itself, so the control that entered fullscreen is still
-             on screen to leave it again. `bg-bg` is load-bearing only in
+             on screen to leave it again. `ground` is load-bearing only in
              that state -- a fullscreened element with no background of its
-             own shows the UA's black backdrop through it. -->
+             own shows the UA's black backdrop through it. It paints the
+             same ground the layout root does, and because that utility is
+             `background-attachment: fixed` the two align seamlessly rather
+             than showing a seam down the middle. -->
         <!--
           `max-md:flex-none` is the phone fix, and it is not cosmetic.
 
@@ -129,7 +134,7 @@ function startTour() { tourLayerRef.value?.startTour() }
         -->
         <div
           data-stage-column
-          class="flex min-h-0 min-w-0 flex-1 flex-col bg-bg max-md:flex-none"
+          class="ground flex min-h-0 min-w-0 flex-1 flex-col max-md:flex-none"
         >
           <!-- Case heading (group label + title). -->
           <slot name="heading" />
@@ -173,10 +178,10 @@ function startTour() { tourLayerRef.value?.startTour() }
         <div
           id="case-content-panel"
           data-tour-region
-          class="shrink-0 border-border bg-surface
+          class="pane-flat shrink-0 border-border
                  max-md:border-t
                  md:max-xl:fixed md:max-xl:inset-x-0 md:max-xl:bottom-0 md:max-xl:z-10 md:max-xl:overflow-y-auto
-                 md:max-xl:rounded-t-card md:max-xl:border md:max-xl:shadow-lg
+                 md:max-xl:rounded-t-card md:max-xl:border md:max-xl:pane-lift
                  md:max-xl:transition-[max-height] md:max-xl:duration-200
                  xl:overflow-y-auto xl:border-l xl:transition-[width,visibility] xl:duration-200"
           :class="[

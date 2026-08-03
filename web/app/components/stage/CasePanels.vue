@@ -114,11 +114,15 @@ function loadEnabledFor(id: PanelId) {
   <div class="@container flex min-h-0 min-w-0 flex-1 flex-col">
     <!-- One-up only. Three-up labels each panel in place, so a strip there
          would name the same three things twice. -->
+    <!-- Transparent, and no bottom rule: the strip sits on the ground above
+         a stage that is now its own floating card, so a full-bleed white bar
+         with a hairline under it would read as a second surface butting into
+         the first. -->
     <PanelTabs
       :case="props.case"
       :active-panel="focusedPanel"
       :variants="variants"
-      class="shrink-0 border-b border-border bg-surface @[1000px]:hidden"
+      class="shrink-0 @[1000px]:hidden"
       @variant="onVariant"
     />
 
@@ -143,9 +147,15 @@ function loadEnabledFor(id: PanelId) {
       cut up; gap plus a card edge each makes them read as three things being
       compared, which is what they are.
     -->
+    <!-- Padded at every width now, not only at three-up. One-up used to run
+         the stage edge to edge, so the biggest surface on screen butted into
+         the sidebar and the content column with nothing but a hairline
+         between them -- three flat regions, no depth. Inset, the stage reads
+         as a slab floating on the ground, which is the whole point of
+         putting the chrome in glass. -->
     <div
       data-tour="panels"
-      class="flex min-h-0 flex-1 flex-col
+      class="flex min-h-0 flex-1 flex-col px-3 pb-3
              @[1000px]:grid @[1000px]:grid-cols-3 @[1000px]:gap-3 @[1000px]:p-3"
     >
       <div
@@ -161,16 +171,25 @@ function loadEnabledFor(id: PanelId) {
           // sized to whatever it last measured -- spills out of the cell
           // and over its neighbours. `overflow-hidden` is the second half:
           // a canvas is not clipped by its parent unless something says so.
-          'relative min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-bg',
-          // A card at three-up; edge to edge at one-up, where there is only
-          // one panel and a card border would just be a box round the page.
-          '@[1000px]:rounded-card @[1000px]:border transition-shadow',
+          'relative min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface',
+          // A card at every width. One-up used to be edge to edge on the
+          // grounds that a border there is just a box round the page; that
+          // was true when the page had no ground worth seeing.
+          'rounded-card border shadow-sm transition-shadow duration-200',
           panel.id === focusedPanel
             // The WHOLE card is the highlight, not a tinted title strip: a
             // brand border all the way round plus a lift off the page, so
             // which canvas the paragraph on the right belongs to is
             // readable from across a lecture theatre.
-            ? 'flex @[1000px]:border-brand @[1000px]:ring-1 @[1000px]:ring-brand @[1000px]:shadow-md'
+            //
+            // Four corner brackets were tried here instead, on the argument
+            // that four corners are how a radiologist marks a region and
+            // that it would echo the tour's own spotlight. It was wrong at
+            // this scale: the mark works on a small target, but stretched to
+            // the corners of a full panel card it reads as a frame that
+            // failed to draw rather than as a reticle. A focus indicator has
+            // to look finished before it looks clever.
+            ? 'flex @[1000px]:border-brand @[1000px]:ring-1 @[1000px]:ring-brand @[1000px]:shadow-lg'
             : 'hidden @[1000px]:flex @[1000px]:border-border',
         ]"
         @focusin="focus(panel.id)"
@@ -185,7 +204,7 @@ function loadEnabledFor(id: PanelId) {
             : 'border-border bg-surface'"
         >
           <span
-            class="text-caption font-bold uppercase tracking-wide"
+            class="text-caption font-bold uppercase tracking-[0.12em]"
             :class="panel.id === focusedPanel ? 'text-brand-hover' : 'text-text-muted'"
           >
             {{ panel.label }}

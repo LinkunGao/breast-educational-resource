@@ -425,8 +425,11 @@ defineExpose({ stage, modalityScene, host, camera, slice })
        for one (StageControls falls back to the column for any caller not
        inside a panel). -->
   <div data-stage-panel class="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
+    <!-- `stage-ground`, not a top-to-bottom ramp: a neutral radial vignette
+         puts the model in a pool of light instead of on a flat field. See
+         tokens.css for why this one carries no hue. -->
     <div
-      class="relative flex-1 bg-linear-to-b from-surface-sunken to-bg"
+      class="stage-ground relative flex-1"
     >
       <!--
         `role="application"`, NOT `role="img"`.
@@ -496,7 +499,7 @@ defineExpose({ stage, modalityScene, host, camera, slice })
         class="pointer-events-none absolute inset-0 flex items-center justify-center"
       >
         <div
-          class="flex items-center gap-3 rounded-card bg-surface/80 px-4 py-3 text-text backdrop-blur-sm"
+          class="pane flex items-center gap-3 rounded-card px-4 py-3 text-text"
           role="status"
           aria-live="polite"
         >
