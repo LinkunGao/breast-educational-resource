@@ -263,7 +263,11 @@
      compositing layer (WebGL canvas included) to repaint every frame, and
      the rotate step animates the camera at exactly this moment. Measured
      cost of saturate on the GPU is effectively nil. */
-  body[data-tour-active] [data-tour-region]:not([data-tour-focus]) {
+  /* `:not([data-tour-nodim])` is the escape hatch TourLayer sets whenever a
+     step resolved no region at all. Without it, "nothing matched" dimmed
+     EVERY region -- the reader got the whole app at 30% opacity and inert,
+     with the card pointing at something they could no longer see. */
+  body[data-tour-active]:not([data-tour-nodim]) [data-tour-region]:not([data-tour-focus]) {
     opacity: .3;
     filter: saturate(.25);
     transition: opacity .4s ease, filter .4s ease;

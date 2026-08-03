@@ -75,17 +75,45 @@ function measure() {
  * communicate.
  */
 function paintRegions() {
-  for (const el of document.querySelectorAll<HTMLElement>('[data-tour-region]')) {
-    // A region is focused if it IS the target, CONTAINS the target (a step
-    // targeting one control inside a larger region), or is CONTAINED BY the
-    // target (a step like `panels-wide` that targets the parent wrapping
-    // several regions -- without this branch none of them ever matched and
-    // all three dimmed while the copy described looking across them).
-    const isFocus = Boolean(targetEl.value && (
-      el === targetEl.value || el.contains(targetEl.value) || targetEl.value.contains(el)
-    ))
+  const regions = [...document.querySelectorAll<HTMLElement>('[data-tour-region]')]
+
+  // A region is focused if it IS the target, CONTAINS the target (a step
+  // targeting one control inside a larger region), or is CONTAINED BY the
+  // target (a step like `panels-wide` that targets the parent wrapping
+  // several regions -- without this branch none of them ever matched and
+  // all three dimmed while the copy described looking across them).
+  const focused = regions.filter(el => Boolean(targetEl.value && (
+    el === targetEl.value || el.contains(targetEl.value) || targetEl.value.contains(el)
+  )))
+
+  /*
+   * Never dim everything.
+   *
+   * If no region matched, dimming the whole app tells the reader nothing --
+   * it just hides the thing the card is pointing at behind 30% opacity, and
+   * (because dimmed regions are also `inert`) makes the app unusable while
+   * the tour looks broken. That is not hypothetical: two steps shipped
+   * targeting elements that sat outside every region -- the case heading and
+   * the one-up tab strip -- and both blacked the app out. Those two now
+   * carry `data-tour-region`, but this is the guard that stops the next one
+   * doing it again, because a target moving out from under its region is
+   * invisible to every unit test in the repo.
+   *
+   * Expressed as a BODY-level flag, not by marking every region focused.
+   * Marking them all focused would have been fewer lines and was wrong:
+   * `data-tour-focus` means "this region IS the target", and the transient
+   * no-target window a navigating step passes through would then have
+   * claimed every region as the target of a step that has not arrived yet --
+   * the same stale-paint bug the pre-paint guard below exists to prevent,
+   * reached from the other side. TourLayer.test.ts catches exactly that.
+   */
+  const dimOthers = focused.length > 0
+  document.body.toggleAttribute('data-tour-nodim', !dimOthers)
+
+  for (const el of regions) {
+    const isFocus = focused.includes(el)
     el.toggleAttribute('data-tour-focus', isFocus)
-    el.inert = !isFocus
+    el.inert = dimOthers && !isFocus
   }
 }
 
@@ -120,22 +148,71 @@ function scheduleDwell() {
   }, tourDwellMs(body))
 }
 
+/**
+ * The other half of the same guarantee as the fail-safe below: if any of the
+ * three overlay components throws while rendering, take the app out of
+ * theatre mode rather than leaving it dimmed and inert around a card that
+ * does not exist. Returning false lets the error still reach the app's own
+ * handler and the console -- this suppresses the consequence, not the report.
+ */
+onErrorCaptured(() => {
+  if (store.active) {
+    clearTheatre()
+    store.exit()
+  }
+  return false
+})
+
+/** Undo theatre mode: no dimming, nothing inert, nothing measured. */
+function clearTheatre() {
+  document.body.removeAttribute('data-tour-active')
+  document.body.removeAttribute('data-tour-nodim')
+  for (const el of document.querySelectorAll<HTMLElement>('[data-tour-region]')) {
+    el.removeAttribute('data-tour-focus')
+    el.inert = false
+  }
+  targetEl.value = null
+  rect.value = null
+}
+
 watch([() => store.active, () => store.stepIndex], async () => {
   clearDwellTimer()
   dwellReady = false
   if (!store.active) {
-    document.body.removeAttribute('data-tour-active')
-    for (const el of document.querySelectorAll<HTMLElement>('[data-tour-region]')) {
-      el.removeAttribute('data-tour-focus')
-      el.inert = false
-    }
-    targetEl.value = null
-    rect.value = null
+    clearTheatre()
     return
   }
   document.body.setAttribute('data-tour-active', '')
   const s = step.value
   if (!s) return
+
+  /*
+   * Fail-safe: this function dims and `inert`s the whole app BEFORE the
+   * overlay that explains why has rendered. If the overlay never arrives,
+   * the reader is left in an unusable, greyed-out app with no card, no rail
+   * and no visible way out -- which is exactly what the deployed build did.
+   * Leaving the tour unopened is a bad outcome; leaving the app bricked is a
+   * much worse one, so check and back out.
+   *
+   * Asks whether the LAYER ROOT has any child element, not whether a
+   * specific `[data-tour-card]` exists. Two reasons: it catches any of the
+   * three children failing rather than one, and it is null-safe under the
+   * unit suite, where this component is mounted detached and its children do
+   * not resolve to real components at all -- a `[data-tour-card]` probe
+   * aborts every tour test in the file.
+   *
+   * Two ticks, not one: the watcher runs pre-render, so the first gets past
+   * this component's own re-render and the second past the children's.
+   */
+  await nextTick()
+  await nextTick()
+  if (!store.active) return
+  const layer = document.querySelector('[data-tour-layer]')
+  if (layer && layer.childElementCount === 0) {
+    clearTheatre()
+    store.exit()
+    return
+  }
 
   // Guards against a second Next/Back arriving while this step's demo is
   // still running (the rotate step's orbit alone is 2500ms): without this,
@@ -270,33 +347,51 @@ defineExpose({ startTour: director.startTour })
 </script>
 
 <template>
-  <template v-if="store.active && step">
-    <TourSpotlight :rect="rect" :step-id="step.id" />
-    <TourCard
-      :title="step.title"
-      :body="bodyText"
-      :step-number="store.stepIndex + 1"
-      :step-count="store.stepCount"
-      :chapter-label="chapterLabel"
-      :at-end="store.atEnd"
-      :rect="rect"
-      :placement="step.placement ?? 'bottom'"
-      @next="advance"
-      @back="goBack"
-      @exit="director.exitTour()"
-    />
-    <TourRail
-      :chapters="TOUR_CHAPTERS"
-      :active-chapter="activeChapter"
-      :step-index="store.stepIndex"
-      :step-count="store.stepCount"
-      :at-end="store.atEnd"
-      :playing="store.playing"
-      @next="advance"
-      @back="goBack"
-      @exit="director.exitTour()"
-      @chapter="onChapter"
-      @toggle-playing="store.togglePlaying()"
-    />
-  </template>
+  <!--
+    A STABLE ROOT ELEMENT, and it is not decoration.
+
+    This component's root used to be the `<template v-if>` below, so its own
+    subtree alternated between a comment vnode and a fragment. On the
+    deployed (subpath, minified, prerendered) build that left Vue updating a
+    component whose previous subtree had no DOM node, and
+    `patch(prev, next, hostParentNode(prev.el), ...)` threw
+    `Cannot read properties of null (reading 'parentNode')` -- so the card,
+    rail and spotlight never mounted while `data-tour-active` was already on
+    <body>, i.e. a dimmed, inert app with nothing explaining why.
+
+    An always-present root can never have a null `el`. `display: contents`
+    means it generates no box at all, so it changes no layout: all three
+    children position themselves against the viewport anyway.
+  -->
+  <div data-tour-layer class="contents">
+    <template v-if="store.active && step">
+      <TourSpotlight :rect="rect" :step-id="step.id" />
+      <TourCard
+        :title="step.title"
+        :body="bodyText"
+        :step-number="store.stepIndex + 1"
+        :step-count="store.stepCount"
+        :chapter-label="chapterLabel"
+        :at-end="store.atEnd"
+        :rect="rect"
+        :placement="step.placement ?? 'bottom'"
+        @next="advance"
+        @back="goBack"
+        @exit="director.exitTour()"
+      />
+      <TourRail
+        :chapters="TOUR_CHAPTERS"
+        :active-chapter="activeChapter"
+        :step-index="store.stepIndex"
+        :step-count="store.stepCount"
+        :at-end="store.atEnd"
+        :playing="store.playing"
+        @next="advance"
+        @back="goBack"
+        @exit="director.exitTour()"
+        @chapter="onChapter"
+        @toggle-playing="store.togglePlaying()"
+      />
+    </template>
+  </div>
 </template>

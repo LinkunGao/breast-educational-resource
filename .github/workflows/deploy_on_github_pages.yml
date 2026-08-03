@@ -22,15 +22,35 @@ jobs:
       - run: yarn install --frozen-lockfile
         working-directory: web
 
+      # Pages serves a project site under /<repo-name>/, so app.baseURL has to
+      # match the repo this workflow is running in. It used to be the literal
+      # string "/breast-educational-resource/", which is wrong the moment the
+      # same code is deployed from a fork or a second organisation's repo:
+      # every /_nuxt/*.js request 404s under the real name, the page never
+      # hydrates, and what ships is a static screenshot of the app with no
+      # sidebar navigation, no 3D and no guided tour.
+      #
+      # $GITHUB_REPOSITORY is "owner/name" on every event type, so deriving
+      # from it needs no `github.event` shape and works for release,
+      # workflow_dispatch and anything added later. A user/organisation site
+      # (<owner>.github.io) is served from the root instead and must stay "/".
+      - name: Derive the Pages base path from this repo
+        run: |
+          name="${GITHUB_REPOSITORY#*/}"
+          if [ "${name}" = "${GITHUB_REPOSITORY_OWNER}.github.io" ]; then
+            base="/"
+          else
+            base="/${name}/"
+          fi
+          echo "Deploying under base path: ${base}"
+          echo "NUXT_APP_BASE_URL=${base}" >> "$GITHUB_ENV"
+
+      # Nuxt resolves the public runtime config's `assetBase` against
+      # `app.baseURL`, so NUXT_APP_BASE_URL alone is enough -- do NOT also set
+      # NUXT_PUBLIC_ASSET_BASE or the imaging URLs double up to
+      # /<repo>/<repo>/modelView/.
       - run: yarn generate
         working-directory: web
-        env:
-          # Pages serves this repo under /<repo-name>/. Nuxt resolves the
-          # public runtime config's `assetBase` against `app.baseURL`, so this
-          # one variable is enough -- do not also set NUXT_PUBLIC_ASSET_BASE
-          # or the imaging URLs double up to /breast-educational-resource/
-          # breast-educational-resource/modelView/.
-          NUXT_APP_BASE_URL: /breast-educational-resource/
 
       - uses: peaceiris/actions-gh-pages@v3
         with:

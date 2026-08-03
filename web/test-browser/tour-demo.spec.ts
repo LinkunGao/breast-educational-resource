@@ -41,6 +41,67 @@ test.describe('guided tour demos', () => {
     expect(Math.abs(halo!.x - panel!.x)).toBeLessThan(4)
   })
 
+  /**
+   * The invariant nothing in this repo was checking: theatre mode must always
+   * leave SOMETHING lit.
+   *
+   * Two steps shipped with targets that sat outside every `[data-tour-region]`
+   * -- the case heading and the one-up tab strip -- so no region matched and
+   * every one of them dimmed. The reader got the whole app at 30% opacity and
+   * `inert`, with the card pointing at something they could barely see. It
+   * survived a full review, 620 unit tests and 63 browser tests because every
+   * existing assertion checked that dimming HAPPENS (the test below) or that
+   * the card is on screen; none checked that the dimming spared anything.
+   *
+   * Walks all 14 steps, because the two broken ones were 3 and 5 -- a spot
+   * check on the first step would have passed.
+   */
+  test('every step lights something: theatre mode never dims the whole app', async ({ page }) => {
+    await page.setViewportSize({ width: 1920, height: 1080 })
+    await page.goto('/the-breast/anatomy')
+    await waitForHydration(page)
+    await page.getByRole('button', { name: 'Start the guided tour' }).click()
+
+    const card = page.locator('[data-tour-card]')
+    await expect(card).toBeVisible()
+    // Read the length off the card's own "n / N" counter rather than
+    // hardcoding 14, so adding a step extends the walk instead of skipping it.
+    const counter = await page.locator('[data-tour-card]').getByText(/^\d+ \/ \d+$/).textContent()
+    const total = Number(counter?.split('/')[1]?.trim() ?? 14)
+    expect(total).toBeGreaterThan(1)
+
+    /*
+     * Read the three facts together in one pass, because they only mean
+     * anything together. Polled rather than sampled: a step's demo can still
+     * be running when the card's title has already changed.
+     *
+     * The last step deliberately has NO target -- it is the closing card, and
+     * there is nothing left to point at -- so "something must be lit" is the
+     * wrong rule. The rule that holds for every step is: if the SPOTLIGHT is
+     * pointing at something, a region has to be covering it.
+     */
+    const verdict = () => page.evaluate(() => {
+      const focused = document.querySelectorAll('[data-tour-region][data-tour-focus]').length
+      const spotlit = Boolean(document.querySelector('[data-tour-halo]'))
+      const nodim = document.body.hasAttribute('data-tour-nodim')
+      const usable = document.querySelectorAll('[data-tour-region]:not([inert])').length
+      if (usable === 0) return 'every region is inert: the app is unusable'
+      if (!nodim && focused === 0) return 'every region is dimmed and nothing is lit'
+      if (spotlit && focused === 0) return 'the spotlight points at something no region covers'
+      return 'ok'
+    })
+
+    for (let i = 0; i < total; i++) {
+      const title = await page.locator('[data-tour-card] h2').textContent()
+      await expect.poll(verdict, { message: `step ${i + 1} ("${title}")` }).toBe('ok')
+
+      const next = page.locator('[data-tour-next]')
+      if (await next.count() === 0) break
+      await next.click()
+      await page.waitForTimeout(400)
+    }
+  })
+
   test('theatre mode dims the other regions and never uses blur', async ({ page }) => {
     await page.setViewportSize({ width: 1920, height: 1080 })
     await page.goto('/the-breast/anatomy')

@@ -20,6 +20,11 @@ const visible = computed(() => !store.hasSeen && !dismissed.value && !store.acti
 </script>
 
 <template>
+  <!-- Stable root, `display: contents` so it generates no box. Same reason
+       as TourLayer's: a component whose root is a `v-if` alternates between
+       a comment and an element, and on the deployed build that produced an
+       update against a subtree with no DOM node. Costs nothing. -->
+  <div class="contents">
   <div
     v-if="visible"
     data-tour-launcher
@@ -52,6 +57,7 @@ const visible = computed(() => !store.hasSeen && !dismissed.value && !store.acti
         ✦ Take the tour
       </button>
     </div>
+  </div>
   </div>
 </template>
 

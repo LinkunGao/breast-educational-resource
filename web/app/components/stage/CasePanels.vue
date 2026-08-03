@@ -118,10 +118,15 @@ function loadEnabledFor(id: PanelId) {
          a stage that is now its own floating card, so a full-bleed white bar
          with a hairline under it would read as a second surface butting into
          the first. -->
+    <!-- `data-tour-region` for the same reason the case heading carries one:
+         the tour's `panel-tabs` step targets this strip, and it sits outside
+         the panel grid below, so without it that step matched no region and
+         dimmed the whole app. -->
     <PanelTabs
       :case="props.case"
       :active-panel="focusedPanel"
       :variants="variants"
+      data-tour-region
       class="shrink-0 @[1000px]:hidden"
       @variant="onVariant"
     />
