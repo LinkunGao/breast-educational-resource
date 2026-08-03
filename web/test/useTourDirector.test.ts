@@ -28,18 +28,22 @@ function makeDirector(extra: Partial<Parameters<typeof useTourDirector>[0]> = {}
   const navigate = vi.fn(async () => {})
   const focusPanel = vi.fn()
   const openSidebar = vi.fn()
+  const closeSidebar = vi.fn()
+  const isSidebarOpen = vi.fn(() => false)
   const expandSheet = vi.fn()
   const director = useTourDirector({
     navigate,
     focusPanel,
     openSidebar,
+    closeSidebar,
+    isSidebarOpen,
     expandSheet,
     currentRoute: () => '/the-breast/anatomy',
     stallMs: 20,
     ceilingMs: 100,
     ...extra,
   })
-  return { director, navigate, focusPanel, openSidebar, expandSheet }
+  return { director, navigate, focusPanel, openSidebar, closeSidebar, isSidebarOpen, expandSheet }
 }
 
 const ORBIT_STEP: TourStep = {
@@ -61,6 +65,32 @@ describe('tour director', () => {
     expect(director.resolveTarget({ ...ORBIT_STEP, target: ['#nope', '[data-panel="anatomy"]'] }))
       .toBe(document.querySelector('[data-panel="anatomy"]'))
     expect(director.resolveTarget({ ...ORBIT_STEP, target: ['#nope'] })).toBeNull()
+  })
+
+  /**
+   * B1: a match with no layout box (e.g. `display:none`, as a one-up
+   * layout's non-focused panel is) must not win -- it can never be
+   * spotlighted, only drawn as a breathing dot at the viewport origin.
+   * happy-dom has no layout engine, so `getClientRects()` always returns one
+   * zero-size rect regardless of CSS; a real hidden element is simulated
+   * directly here, the same way a real browser's `display:none` makes
+   * `getClientRects().length` 0.
+   */
+  it('resolveTarget skips a match with no layout box and falls through to the next selector', async () => {
+    const { director } = makeDirector()
+    document.body.innerHTML += '<div data-tour="fallback"></div>'
+    const hidden = document.querySelector<HTMLElement>('[data-panel="anatomy"]')!
+    hidden.getClientRects = () => ({ length: 0 }) as unknown as DOMRectList
+    expect(director.resolveTarget({
+      ...ORBIT_STEP, target: ['[data-panel="anatomy"]', '[data-tour="fallback"]'],
+    })).toBe(document.querySelector('[data-tour="fallback"]'))
+  })
+
+  it('resolveTarget returns null when every match has no layout box', async () => {
+    const { director } = makeDirector()
+    const hidden = document.querySelector<HTMLElement>('[data-panel="anatomy"]')!
+    hidden.getClientRects = () => ({ length: 0 }) as unknown as DOMRectList
+    expect(director.resolveTarget({ ...ORBIT_STEP, target: ['[data-panel="anatomy"]'] })).toBeNull()
   })
 
   it('runs the demo when the stage is already ready', async () => {
@@ -177,6 +207,52 @@ describe('tour director', () => {
     })
     expect(openSidebar).toHaveBeenCalled()
     expect(focusPanel).toHaveBeenCalledWith('mri')
+  })
+
+  it('runs the closeSidebar prepare action (B2: case-heading closes what case-list opened)', async () => {
+    const { director, closeSidebar } = makeDirector()
+    await director.runStep({
+      id: 'x', chapter: 'layout', title: 'T', body: 'B',
+      prepare: [{ kind: 'closeSidebar' }],
+    })
+    expect(closeSidebar).toHaveBeenCalled()
+  })
+
+  it('B2: exitTour restores the sidebar to its pre-tour state when the tour left it open', async () => {
+    let open = false // reader had it closed before starting the tour
+    const { director } = makeDirector({
+      isSidebarOpen: () => open,
+      openSidebar: () => { open = true },
+      closeSidebar: () => { open = false },
+    })
+    director.startTour()
+    open = true // simulate the case-list step's openSidebar firing, never closed again
+    await director.exitTour()
+    expect(open).toBe(false)
+  })
+
+  it('B2: finishTour also restores the sidebar to its pre-tour state', async () => {
+    let open = true // reader had it open before starting the tour
+    const { director } = makeDirector({
+      isSidebarOpen: () => open,
+      openSidebar: () => { open = true },
+      closeSidebar: () => { open = false },
+    })
+    director.startTour()
+    open = false
+    director.finishTour()
+    expect(open).toBe(true)
+  })
+
+  it('B2: does not touch the sidebar on exit when the tour never changed its state', async () => {
+    let open = false
+    const openSidebar = vi.fn(() => { open = true })
+    const closeSidebar = vi.fn(() => { open = false })
+    const { director } = makeDirector({ isSidebarOpen: () => open, openSidebar, closeSidebar })
+    director.startTour()
+    await director.exitTour()
+    expect(openSidebar).not.toHaveBeenCalled()
+    expect(closeSidebar).not.toHaveBeenCalled()
   })
 
   it('scrubSlices walks to the last slice and locateLesion jumps to the lesion', async () => {

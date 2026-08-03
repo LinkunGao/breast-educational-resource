@@ -71,4 +71,21 @@ describe('tour script', () => {
       expect(first.length).toBeGreaterThanOrEqual(4)
     }
   })
+
+  // B1: `[data-tour="stage-controls"]` lives on every panel's bar. The
+  // unscoped selector alone always resolves to the FIRST one in the DOM
+  // (the anatomy panel), regardless of which panel is actually focused.
+  it('the controls step is scoped to the focused panel before any unscoped fallback', () => {
+    const step = tourSteps('wide').find(s => s.id === 'controls')!
+    expect(step.target?.[0]).toBe('[data-panel][data-focused="true"] [data-tour="stage-controls"]')
+    expect(step.target).toContain('[data-tour="stage-controls"]')
+  })
+
+  // B2: case-heading is the step the tour reaches right after case-list
+  // opens the (below-xl) case-nav drawer. Without closing it here, the
+  // drawer -- and its scrim -- stays over steps 3-14.
+  it('the case-heading step closes the sidebar the case-list step opened', () => {
+    const step = tourSteps('wide').find(s => s.id === 'case-heading')!
+    expect(step.prepare).toContainEqual({ kind: 'closeSidebar' })
+  })
 })

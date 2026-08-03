@@ -212,6 +212,10 @@ function startTour() { tourLayerRef.value?.startTour() }
     </div>
 
     <TourLauncher @start="startTour" />
-    <TourLayer ref="tourLayerRef" />
+    <!-- expand-sheet: the tour's `description` step needs the tablet sheet
+         open to point at content that is otherwise peeking at 80px. That
+         state is local to this layout (see sheetExpanded's own comment), so
+         it is handed down as a setter rather than moved into the store. -->
+    <TourLayer ref="tourLayerRef" :expand-sheet="() => { sheetExpanded = true }" />
   </div>
 </template>

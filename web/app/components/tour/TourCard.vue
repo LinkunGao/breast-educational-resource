@@ -126,12 +126,19 @@ const btn = 'flex min-h-11 items-center rounded-full px-4 text-body-sm font-bold
         {{ props.stepNumber }} / {{ props.stepCount }}
       </p>
     </div>
-    <h2 :id="titleId" class="mt-1.5 text-h2 font-bold tracking-tight text-text">
-      {{ props.title }}
-    </h2>
-    <p class="mt-2 text-body-sm leading-relaxed text-text-muted">
-      {{ props.body }}
-    </p>
+    <!-- aria-live: role="dialog" only announces on first focus, and
+         stepping swaps this title/body with no re-focus -- without a live
+         region, only the rail's separate "n / N" status is ever announced.
+         "polite" so it queues behind that status rather than talking over
+         it, avoiding a double announcement of the same step change. -->
+    <div aria-live="polite">
+      <h2 :id="titleId" class="mt-1.5 text-h2 font-bold tracking-tight text-text">
+        {{ props.title }}
+      </h2>
+      <p class="mt-2 text-body-sm leading-relaxed text-text-muted">
+        {{ props.body }}
+      </p>
+    </div>
 
     <div class="mt-5 flex items-center gap-2">
       <button

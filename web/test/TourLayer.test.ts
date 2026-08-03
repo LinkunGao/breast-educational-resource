@@ -182,3 +182,55 @@ describe('TourLayer: does not pre-paint a stale target across navigation', () =>
     expect(region.hasAttribute('data-tour-focus')).toBe(true)
   })
 })
+
+/**
+ * I2: a step whose target is the PARENT of one or more `[data-tour-region]`
+ * elements (e.g. `panels-wide` targeting `[data-tour="panels"]`, the wrapper
+ * around all three panel regions) used to dim every region underneath it --
+ * `paintRegions` only ever checked `el === target` or `el.contains(target)`,
+ * never the reverse. Fixed by also treating a region as focused when the
+ * target CONTAINS it.
+ */
+describe('TourLayer: a container target focuses the regions it contains', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    document.body.innerHTML = `
+      <div data-target="wrapper">
+        <div data-tour-region data-region="one"></div>
+        <div data-tour-region data-region="two"></div>
+      </div>
+      <div data-tour-region data-region="unrelated"></div>
+    `
+    vi.stubGlobal('useRoute', () => ({ path: '/test' }))
+    vi.stubGlobal('navigateTo', vi.fn(async () => {}))
+
+    const steps: TourStep[] = [
+      { id: 'wrap', chapter: 'reading', title: 'W', body: 'w', target: ['[data-target="wrapper"]'] },
+    ]
+    vi.stubGlobal('useTourDirector', () => {
+      const store = useTourStore()
+      return {
+        steps: computed(() => steps),
+        currentStep: computed(() => steps[store.stepIndex]),
+        resolveTarget: (step: TourStep) => document.querySelector<HTMLElement>(step.target![0]!),
+        isWideLayout: () => true,
+        layoutScope: () => 'wide' as const,
+        runStep: vi.fn(async () => {}),
+        startTour: vi.fn(),
+        exitTour: vi.fn(async () => { store.exit() }),
+        finishTour: vi.fn(() => { store.exit() }),
+      }
+    })
+  })
+
+  it('focuses (does not dim) every region the target wraps, and leaves siblings dimmed', async () => {
+    const store = useTourStore()
+    mount(TourLayer)
+    store.start('wide', 1, '/test')
+    await flushPromises()
+
+    expect(document.querySelector('[data-region="one"]')!.hasAttribute('data-tour-focus')).toBe(true)
+    expect(document.querySelector('[data-region="two"]')!.hasAttribute('data-tour-focus')).toBe(true)
+    expect(document.querySelector('[data-region="unrelated"]')!.hasAttribute('data-tour-focus')).toBe(false)
+  })
+})

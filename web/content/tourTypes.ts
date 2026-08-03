@@ -8,6 +8,7 @@ export type ChapterId = 'layout' | 'reading' | 'interacting' | 'lesion'
 /** Declarative pre-step actions the director performs before showing a card. */
 export type TourPrepare =
   | { kind: 'openSidebar' }
+  | { kind: 'closeSidebar' }
   | { kind: 'expandSheet' }
   | { kind: 'focusPanel', panel: PanelId }
 

@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 import { PNG } from 'pngjs'
-import { focusedStage, waitForModality } from './helpers'
+import { focusedStage, waitForAllPanels, waitForModality } from './helpers'
 
 /**
  * The first tests on this branch that actually run copper3d.
@@ -153,6 +153,15 @@ test.describe('3D stage', () => {
    * full document load that rebuilds every renderer from scratch, which is
    * a different thing entirely and is not what a reader stepping through
    * the sidebar does -- it would defeat the point of this test.
+   *
+   * Snapshots with `waitForAllPanels`, not `waitForModality`: staged
+   * loading (CasePanels' `released` latch) means the two non-focused panels
+   * start their own downloads in the background once the focused one
+   * settles, which can still be in flight the instant `waitForModality`'s
+   * narrower, focused-only wait resolves. Waiting for all three closes that
+   * race and makes each snapshot a true "nothing left in flight" point --
+   * incidentally also checking the non-focused panels don't re-download,
+   * which is a strictly stronger version of the same assertion.
    */
   test('returning to a case does not re-download its volume', async ({ page }) => {
     const volumeRequests: string[] = []
@@ -161,7 +170,7 @@ test.describe('3D stage', () => {
     })
 
     await page.goto('/cancer-ductal/mammogram')
-    await waitForModality(page)
+    await waitForAllPanels(page)
     const afterFirst = volumeRequests.length
     expect(afterFirst).toBeGreaterThan(0)
 
@@ -169,11 +178,11 @@ test.describe('3D stage', () => {
     // and this test is specifically about the sidebar's own navigation.
     const sidebar = page.locator('#case-sidebar')
     await sidebar.getByRole('link', { name: 'Fibroadenoma' }).click()
-    await waitForModality(page)
+    await waitForAllPanels(page)
 
     const beforeReturn = volumeRequests.length
     await sidebar.getByRole('link', { name: 'Ductal' }).click()
-    await waitForModality(page)
+    await waitForAllPanels(page)
 
     expect(volumeRequests.length).toBe(beforeReturn)
     if (consoleErrors.length) console.log('console errors:', consoleErrors)

@@ -78,17 +78,31 @@ function onVariant(choice: { panel: PanelId, modality: ModalityId }) {
  * The focused panel now has the connection to itself until it settles; the
  * other two follow. Same bytes, far less time before anything is usable.
  *
- * One-way latch: once released, a panel is never gated again, or stepping
- * between slots would re-stage on every step.
+ * One-way latch WITHIN a case: once released, a panel is never gated again
+ * for that case, or stepping between slots would re-stage on every step.
+ * But `pageKey.ts` pins every case page to one constant key, so this
+ * component never remounts across cases -- without re-arming the latch on
+ * `props.case.slug` changing, only the very first case of a session ever
+ * got staged loading, and every case after it (the common prev/next path)
+ * started all three multi-megabyte downloads at once again.
  */
 const released = ref(false)
 function release() { released.value = true }
 
 // Safety net: a stage whose load never settles (a hung connection, a
 // renderer that never became ready) must not strand its siblings forever.
-onMounted(() => {
-  const timer = setTimeout(release, 15_000)
-  onScopeDispose(() => clearTimeout(timer))
+let safetyTimer: ReturnType<typeof setTimeout> | undefined
+function armSafetyTimer() {
+  clearTimeout(safetyTimer)
+  safetyTimer = setTimeout(release, 15_000)
+}
+
+onMounted(armSafetyTimer)
+onScopeDispose(() => clearTimeout(safetyTimer))
+
+watch(() => props.case.slug, () => {
+  released.value = false
+  armSafetyTimer()
 })
 
 function loadEnabledFor(id: PanelId) {

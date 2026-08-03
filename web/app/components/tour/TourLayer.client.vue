@@ -8,6 +8,7 @@ import type { PanelId } from '~~/content/types'
 // Imported, not auto-imported: exported so the decision rule can be unit-
 // tested without mounting this `.client` component.
 import { decideTourKeydown } from '~/utils/tourKeydown'
+import { tourStepBody } from '~/utils/tourBodyText'
 
 /**
  * The tour's one stateful component.
@@ -20,11 +21,26 @@ const store = useTourStore()
 const viewer = useViewerStore()
 const route = useRoute()
 
+const props = defineProps<{
+  /** Expands the tablet-only bottom sheet. That state is deliberately local
+   *  to the layout (not the store -- see stores/viewer.ts's `contentOpen`
+   *  comment), so the layout passes its setter down the same way it takes
+   *  `startTour` back up via a template ref. Optional so a host with no
+   *  sheet concept needs nothing. */
+  expandSheet?: () => void
+}>()
+
 const director = useTourDirector({
   navigate: async (path) => { await navigateTo(path) },
   focusPanel: (panel: PanelId) => { void focusPanelByRoute(panel) },
   openSidebar: () => { viewer.sidebarOpen = true },
-  expandSheet: () => { viewer.contentOpen = true },
+  closeSidebar: () => { viewer.sidebarOpen = false },
+  isSidebarOpen: () => viewer.sidebarOpen,
+  // xl+'s content column (its own `contentOpen`) and tablet's bottom sheet
+  // (the layout-local prop above) are two different mechanisms for the same
+  // "make the description visible" intent -- see I3 in the review this fix
+  // came from. Both run; each is a no-op on the tier it doesn't apply to.
+  expandSheet: () => { viewer.contentOpen = true; props.expandSheet?.() },
   currentRoute: () => route.path,
 })
 
@@ -59,7 +75,14 @@ function measure() {
  */
 function paintRegions() {
   for (const el of document.querySelectorAll<HTMLElement>('[data-tour-region]')) {
-    const isFocus = Boolean(targetEl.value && (el === targetEl.value || el.contains(targetEl.value)))
+    // A region is focused if it IS the target, CONTAINS the target (a step
+    // targeting one control inside a larger region), or is CONTAINED BY the
+    // target (a step like `panels-wide` that targets the parent wrapping
+    // several regions -- without this branch none of them ever matched and
+    // all three dimmed while the copy described looking across them).
+    const isFocus = Boolean(targetEl.value && (
+      el === targetEl.value || el.contains(targetEl.value) || targetEl.value.contains(el)
+    ))
     el.toggleAttribute('data-tour-focus', isFocus)
     el.inert = !isFocus
   }
@@ -170,11 +193,7 @@ const activeChapter = computed<ChapterId>(() => step.value?.chapter ?? 'layout')
 const chapterLabel = computed(
   () => TOUR_CHAPTERS.find(c => c.id === activeChapter.value)?.label ?? '',
 )
-/** The fallback copy replaces the demo copy when the stage never arrived. */
-const bodyText = computed(() =>
-  store.phase === 'fallback' && step.value?.bodyFallback
-    ? step.value.bodyFallback
-    : step.value?.body ?? '')
+const bodyText = computed(() => tourStepBody(store.phase, step.value))
 
 // Exposed so the layout can start the tour without owning the director or
 // any tour state itself -- both the header button and the launcher route

@@ -9,6 +9,10 @@ export interface TourDirectorDeps {
   navigate: (path: string) => Promise<void>
   focusPanel: (panel: PanelId) => void
   openSidebar: () => void
+  closeSidebar: () => void
+  /** Read back so the director can restore whatever the reader had before
+   *  the tour touched it, instead of always forcing one state. */
+  isSidebarOpen: () => boolean
   expandSheet: () => void
   currentRoute: () => string
   /** How long a stage may make no progress before the step degrades. */
@@ -27,11 +31,31 @@ export function useTourDirector(deps: TourDirectorDeps) {
   /** Poses captured before a demo, restored on step end or tour exit. */
   const captured = new Map<PanelId, Pose>()
 
-  /** First selector that matches wins; all missing means "skip this step". */
+  /** Sidebar open/closed state as the reader had it before the tour's own
+   *  `openSidebar`/`closeSidebar` prepare steps touched it. Captured once
+   *  per run (startTour) and put back in restoreCaptured, so the drawer the
+   *  tour opens for the case-list step never outlives the tour itself. */
+  let sidebarOpenAtStart = false
+
+  /**
+   * First selector that matches wins; all missing (or all invisible) means
+   * "skip this step".
+   *
+   * `querySelector` finds a match regardless of CSS visibility, so a
+   * selector that also exists on a `display:none` element (e.g. a one-up
+   * layout's non-focused panels) would otherwise win with an element that
+   * can never be spotlighted -- `getBoundingClientRect` on it is
+   * `DOMRect(0,0,0,0)`, which still passes TourSpotlight's `v-if="rect"`
+   * and draws a halo at the viewport origin. `getClientRects().length` is
+   * 0 exactly when an element (or an ancestor) is `display:none`, and >0 for
+   * any element that is actually laid out, even a legitimately zero-sized
+   * one -- so it is the right "is this a real target" check, not width/
+   * height, which can't tell those two cases apart.
+   */
   function resolveTarget(step: TourStep): HTMLElement | null {
     for (const selector of step.target ?? []) {
       const el = document.querySelector<HTMLElement>(selector)
-      if (el) return el
+      if (el && el.getClientRects().length > 0) return el
     }
     return null
   }
@@ -60,6 +84,7 @@ export function useTourDirector(deps: TourDirectorDeps) {
   async function runPrepare(step: TourStep) {
     for (const action of step.prepare ?? []) {
       if (action.kind === 'openSidebar') deps.openSidebar()
+      else if (action.kind === 'closeSidebar') deps.closeSidebar()
       else if (action.kind === 'expandSheet') deps.expandSheet()
       else deps.focusPanel(action.panel)
     }
@@ -194,15 +219,22 @@ export function useTourDirector(deps: TourDirectorDeps) {
   }
 
   function startTour() {
+    sidebarOpenAtStart = deps.isSidebarOpen()
     const scope = layoutScope()
     store.start(scope, tourSteps(scope).length, deps.currentRoute())
   }
 
-  /** Restores every captured pose and clears the map. Shared by exitTour
-   *  and finishTour -- exiting then also navigates, finishing does not. */
+  /** Restores every captured pose and clears the map, then puts the sidebar
+   *  back exactly how the reader had it (see `sidebarOpenAtStart`). Shared
+   *  by exitTour and finishTour -- exiting then also navigates, finishing
+   *  does not, but both must leave the drawer as they found it. */
   function restoreCaptured() {
     for (const [panel, pose] of captured) getTourStage(panel)?.applyPose(pose)
     captured.clear()
+    if (deps.isSidebarOpen() !== sidebarOpenAtStart) {
+      if (sidebarOpenAtStart) deps.openSidebar()
+      else deps.closeSidebar()
+    }
   }
 
   /** Puts everything back: every captured pose, then the entry route. */

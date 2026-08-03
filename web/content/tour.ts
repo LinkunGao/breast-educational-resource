@@ -38,6 +38,10 @@ const STEPS: TourStep[] = [
     id: 'case-heading',
     chapter: 'layout',
     target: ['[data-tour="case-heading"]'],
+    // Below xl the previous step opened the case-nav drawer (a fixed,
+    // scrim-covered overlay there); it must close again once the tour moves
+    // past it, or every later step's halo is drawn under a dimmed drawer.
+    prepare: [{ kind: 'closeSidebar' }],
     placement: 'bottom',
     title: 'Where you are',
     body: 'The heading names the group and the case you are looking at.',
@@ -119,7 +123,11 @@ const STEPS: TourStep[] = [
   {
     id: 'controls',
     chapter: 'interacting',
-    target: ['[data-tour="stage-controls"]'],
+    // `[data-tour="stage-controls"]` lives on EVERY panel's bar (three-up
+    // renders three). Scoped to the focused panel first, so the halo rings
+    // the bar the copy is actually describing; the unscoped selector stays
+    // as a fallback for the rare case no panel is marked focused yet.
+    target: ['[data-panel][data-focused="true"] [data-tour="stage-controls"]', '[data-tour="stage-controls"]'],
     placement: 'top',
     title: 'Per-view controls',
     body: 'Reset the view, go fullscreen, and — where a case has one — jump straight to the lesion.',
