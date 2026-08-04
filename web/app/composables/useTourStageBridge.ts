@@ -17,6 +17,9 @@ export interface TourStageApi {
   /** Eased yaw sweep. Resolves when it lands or is interrupted. */
   orbit: (yawRad: number, durationMs: number) => Promise<void>
   scrubTo: (index: number) => void
+  /** The slice on screen right now. The scrub demo has to put the reader
+   *  back where they were, and without this it could only guess. */
+  sliceIndex: () => number
   sliceMax: () => number
   /** Fractional load progress, 0..1. NaN is possible mid-flight; treat any
    *  change as progress. GLB loads only ever report 0 then 1. */

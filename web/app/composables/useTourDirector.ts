@@ -31,6 +31,23 @@ export function useTourDirector(deps: TourDirectorDeps) {
   /** Poses captured before a demo, restored on step end or tour exit. */
   const captured = new Map<PanelId, Pose>()
 
+  /**
+   * Slice indices captured before a `scrubSlices` demo, restored the same way
+   * and on the same schedule as `captured` above.
+   *
+   * This exists because the scrub demo used to do neither half of that. It
+   * returned to `Math.round(max / 2)` -- an INVENTED index, not the reader's
+   * -- and it did so after a staleness `return`, so any step that was
+   * superseded mid-demo (auto-advance is enough; the dwell timer fires while
+   * the scrub is still waiting) left the volume parked on its LAST slice. At
+   * the last slice the plane sits far closer to the camera than at the
+   * middle, so it renders much larger and spills outside the panel: the
+   * "3D panel is deformed after the tour" report. Measured on a full tour
+   * run -- the MRI came out of it reading 191/191 where a fresh load reads
+   * 96/191, with the anatomy and mammogram panels pixel-identical.
+   */
+  const capturedSlices = new Map<PanelId, number>()
+
   /** Sidebar open/closed state as the reader had it before the tour's own
    *  `openSidebar`/`closeSidebar` prepare steps touched it. Captured once
    *  per run (startTour) and put back in restoreCaptured, so the drawer the
@@ -157,14 +174,28 @@ export function useTourDirector(deps: TourDirectorDeps) {
       return
     }
     // scrubSlices: step to the far end of the volume and back to where the
-    // reader was, so nothing is left displaced.
+    // reader actually was, so nothing is left displaced.
     const max = api.sliceMax()
     if (max <= 0) return
-    const from = Math.round(max / 2)
+
+    // Where the reader ACTUALLY was, read from the stage -- not `max / 2`,
+    // which only ever looked right because the app's own default happens to
+    // open near the middle. Recorded before the first scrub so `restoreCaptured`
+    // can put it back even if this demo never reaches its own restore.
+    capturedSlices.set(demo.panel, api.sliceIndex())
+
     api.scrubTo(max)
     await new Promise(r => setTimeout(r, demo.durationMs))
-    if (token !== store.runToken) return
-    api.scrubTo(from)
+
+    // Restore FIRST, then honour staleness. The old order returned on a
+    // superseded token without restoring, which is precisely how the volume
+    // got left on its last slice -- and auto-advance supersedes this step as
+    // a matter of course, because the dwell timer runs while this demo waits.
+    const from = capturedSlices.get(demo.panel)
+    if (from !== undefined) {
+      api.scrubTo(from)
+      capturedSlices.delete(demo.panel)
+    }
   }
 
   /** Runs one step end to end. Never throws; never blocks indefinitely. */
@@ -224,13 +255,17 @@ export function useTourDirector(deps: TourDirectorDeps) {
     store.start(scope, tourSteps(scope).length, deps.currentRoute())
   }
 
-  /** Restores every captured pose and clears the map, then puts the sidebar
-   *  back exactly how the reader had it (see `sidebarOpenAtStart`). Shared
-   *  by exitTour and finishTour -- exiting then also navigates, finishing
-   *  does not, but both must leave the drawer as they found it. */
+  /** Restores every captured pose AND slice index and clears both maps, then
+   *  puts the sidebar back exactly how the reader had it (see
+   *  `sidebarOpenAtStart`). Shared by exitTour and finishTour -- exiting then
+   *  also navigates, finishing does not, but both must leave the app as they
+   *  found it. Finishing matters as much as exiting here: the reported
+   *  "deformed panel" was seen by readers who let the tour run to its end. */
   function restoreCaptured() {
     for (const [panel, pose] of captured) getTourStage(panel)?.applyPose(pose)
     captured.clear()
+    for (const [panel, index] of capturedSlices) getTourStage(panel)?.scrubTo(index)
+    capturedSlices.clear()
     if (deps.isSidebarOpen() !== sidebarOpenAtStart) {
       if (sidebarOpenAtStart) deps.openSidebar()
       else deps.closeSidebar()
