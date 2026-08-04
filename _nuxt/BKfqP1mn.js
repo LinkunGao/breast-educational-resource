@@ -1,0 +1,1 @@
+import{F as e,O as t,Z as n,ot as r}from"./RP-THlrn.js";import{u as i}from"./BwrMeYLI.js";var a=e({__name:`index`,async setup(e){let a,o;return[a,o]=r(()=>i(`/the-breast`,{redirectCode:302})),await a,o(),(e,r)=>(n(),t(`div`))}});export{a as default};
