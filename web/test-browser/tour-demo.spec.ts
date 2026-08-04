@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { waitForHydration } from './helpers'
+import { waitForAllPanels, waitForHydration } from './helpers'
 
 /**
  * Task 10: chapter 3's one camera exemption, proved in a real browser.
@@ -100,6 +100,69 @@ test.describe('guided tour demos', () => {
       await next.click()
       await page.waitForTimeout(400)
     }
+  })
+
+  /**
+   * The tour must not leave the viewer displaced once it is over.
+   *
+   * Reported as "the model and the image are deformed after the guided tour".
+   * They were not deformed -- the canvas measured 622x1045 before and after,
+   * identically -- the MRI was parked on its LAST slice instead of the one
+   * the reader started on. At the last slice the plane sits far closer to the
+   * camera than at the middle, so it renders much larger and spills outside
+   * the panel, which is what "deformed" looked like.
+   *
+   * `useTourDirector.test.ts` pins the restore logic directly; this pins the
+   * outcome a reader can actually see, after a REAL tour with real
+   * auto-advance -- which is what supersedes the scrub step in practice and
+   * is the thing no unit test was simulating.
+   */
+  test('a completed tour leaves every panel where the reader left it', async ({ page }) => {
+    await page.setViewportSize({ width: 1920, height: 1080 })
+    await page.goto('/the-breast/anatomy')
+    await waitForHydration(page)
+
+    const readouts = () => page.locator('[data-panel] [data-tour="stage-controls"] p[aria-hidden="true"]')
+      .allTextContents()
+
+    // `waitForAllPanels`, not a "does the readout look like n / m" poll. A
+    // volume's `max` GROWS as it decodes, so a readout matches that shape
+    // long before it settles -- an earlier version of this test compared
+    // "9 / 18" against "20 / 39" and failed for that reason alone.
+    await waitForAllPanels(page)
+    const before = await readouts()
+
+    await page.getByRole('button', { name: 'Start the guided tour' }).click()
+    for (let i = 0; i < 20; i++) {
+      const next = page.locator('[data-tour-next]')
+      if (await next.count() === 0) break
+      // 1600ms, not a tighter loop, and the number matters. The scrub demo
+      // holds the far end of the volume for its own `durationMs`; advance
+      // faster than that and the step is skipped before the demo starts, so
+      // the window this test exists for is never entered at all. Verified:
+      // at 700ms this test passes even with both restore paths deleted.
+      await page.waitForTimeout(1600)
+      await next.click().catch(() => {})
+    }
+    await expect(page.locator('[data-tour-card]')).toHaveCount(0)
+
+    /*
+     * Back to the case the "before" reading was taken on, by CLICKING THE
+     * SIDEBAR -- the way a reader gets there, and the only way this test
+     * means anything. Two traps, both hit while writing it:
+     *
+     *  - `page.goto` would work but proves nothing: a full reload remounts
+     *    every stage and resets the slice by construction, so the test passed
+     *    even with both restore paths deleted.
+     *  - Escape is not enough either. Running the tour to its END calls
+     *    `finishTour`, which deliberately does NOT navigate back (design doc
+     *    §4.4), so the reader is left on the lesion case and Escape has
+     *    nothing to exit. Comparing there compares two different volumes.
+     */
+    await page.locator('#case-sidebar a', { hasText: 'The Breast' }).first().click()
+    await waitForAllPanels(page)
+
+    await expect.poll(readouts, { timeout: 30_000 }).toEqual(before)
   })
 
   test('theatre mode dims the other regions and never uses blur', async ({ page }) => {

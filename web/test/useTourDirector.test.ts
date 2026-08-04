@@ -14,6 +14,10 @@ function stage(overrides: Partial<TourStageApi> = {}): TourStageApi {
     applyPose: vi.fn(),
     orbit: vi.fn(async () => {}),
     scrubTo: vi.fn(),
+    // Deliberately NOT sliceMax/2: the scrub demo used to "restore" to the
+    // midpoint regardless of where the reader actually was, and a fake that
+    // happened to sit on the midpoint could never tell the two apart.
+    sliceIndex: () => 7,
     sliceMax: () => 100,
     loadProgress: () => 1,
     lesionSliceIndex: () => 62,
@@ -361,8 +365,14 @@ describe('tour director', () => {
     expect(api.applyPose).not.toHaveBeenCalled() // and exit must not redo it
   })
 
-  it('the slice demo leaves the volume where it found it', async () => {
-    const api = stage({ sliceMax: () => 104 })
+  /**
+   * This test used to assert the last scrub was `Math.round(max / 2)`, i.e.
+   * it pinned the bug: the demo returned the reader to the MIDDLE of the
+   * volume rather than to the slice they were actually on. It only ever
+   * looked correct because the app's own default opens near the middle.
+   */
+  it('the slice demo returns the volume to the slice the reader was on, not the midpoint', async () => {
+    const api = stage({ sliceMax: () => 104, sliceIndex: () => 13 })
     registerTourStage('mri', api)
     const { director } = makeDirector()
     await director.runStep({
@@ -371,7 +381,71 @@ describe('tour director', () => {
     })
     const calls = (api.scrubTo as ReturnType<typeof vi.fn>).mock.calls.map(c => c[0])
     expect(calls[0]).toBe(104)
-    expect(calls.at(-1)).toBe(52)
+    expect(calls.at(-1)).toBe(13)
+    expect(calls.at(-1)).not.toBe(52)
+  })
+
+  /**
+   * The reported defect, in the shape it actually reached readers: the tour
+   * auto-advances, so the dwell timer routinely fires while this demo is
+   * still waiting out `durationMs`. The old code checked `runToken` and
+   * returned BEFORE restoring, so a superseded step left the volume parked
+   * on its last slice -- where the plane sits far closer to the camera and
+   * renders oversized, spilling outside the panel. Measured on a real run:
+   * the MRI read 191/191 after a full tour where a fresh load reads 96/191.
+   */
+  it('restores the slice even when the step is superseded mid-demo', async () => {
+    const api = stage({ sliceMax: () => 104, sliceIndex: () => 13 })
+    registerTourStage('mri', api)
+    const { director } = makeDirector()
+    const store = useTourStore()
+
+    const running = director.runStep({
+      id: 'slices', chapter: 'interacting', title: 'T', body: 'B', bodyFallback: 'F',
+      demo: { kind: 'scrubSlices', panel: 'mri', durationMs: 60 }, requiresStage: 'mri',
+    })
+
+    // The supersede has to land INSIDE the demo's own wait -- after it has
+    // scrubbed to the far end, before it restores. Bumping the token any
+    // earlier is a different (already-covered) case: the step is voided
+    // before the demo starts, so there is nothing to put back. Waiting for
+    // the first scrub is what pins the window this bug actually lived in.
+    const scrubbed = api.scrubTo as ReturnType<typeof vi.fn>
+    for (let i = 0; i < 200 && scrubbed.mock.calls.length === 0; i++) {
+      await new Promise(r => setTimeout(r, 1))
+    }
+    expect(scrubbed.mock.calls[0]?.[0], 'the demo never reached the far end').toBe(104)
+
+    // Whatever supersedes the step -- Next, Back, auto-advance -- bumps the
+    // run token. That must not cost the reader their slice.
+    store.next()
+    await running
+
+    const calls = scrubbed.mock.calls.map(c => c[0])
+    expect(calls.at(-1), 'the volume was left on the last slice').toBe(13)
+  })
+
+  /** And the belt to that braces: even if a demo never reaches its own
+   *  restore at all, leaving the tour puts the slice back. */
+  it('restoreCaptured puts an interrupted scrub back on exit', async () => {
+    const api = stage({ sliceMax: () => 104, sliceIndex: () => 13 })
+    registerTourStage('mri', api)
+    const { director } = makeDirector()
+    const store = useTourStore()
+    store.start('wide', 3, '/the-breast/anatomy')
+
+    const running = director.runStep({
+      id: 'slices', chapter: 'interacting', title: 'T', body: 'B', bodyFallback: 'F',
+      demo: { kind: 'scrubSlices', panel: 'mri', durationMs: 5 }, requiresStage: 'mri',
+    })
+    await running
+    ;(api.scrubTo as ReturnType<typeof vi.fn>).mockClear()
+
+    director.finishTour()
+    // Already restored by the demo itself, so nothing is owed -- the map was
+    // cleared. What this pins is that finishing does not RE-scrub to a stale
+    // index, which is how a "restore everything" hook goes wrong.
+    expect(api.scrubTo).not.toHaveBeenCalled()
   })
 
   it('a volume with no slices skips the scrub instead of dividing by zero', async () => {

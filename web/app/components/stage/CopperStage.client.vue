@@ -401,6 +401,7 @@ onMounted(() => {
     applyPose: pose => camera.applyPose(pose),
     orbit: (yawRad, durationMs) => camera.orbitBy(yawRad, durationMs),
     scrubTo: index => slice.jumpTo(index),
+    sliceIndex: () => slice.index.value,
     sliceMax: () => slice.max.value,
     loadProgress: () => modalityScene.progress.value,
     lesionSliceIndex: () => props.lesionSliceIndex,
