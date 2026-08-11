@@ -143,7 +143,7 @@ function onKeydown(event: KeyboardEvent) {
     id="case-sidebar"
     ref="navEl"
     aria-label="Cases"
-    class="flex w-60 shrink-0 flex-col gap-6 overflow-y-auto border-r border-border bg-surface p-4"
+    class="pane-flat flex w-60 shrink-0 flex-col gap-6 overflow-y-auto border-r border-border p-4"
     @keydown="onKeydown"
   >
     <NuxtLink
@@ -253,5 +253,10 @@ function onKeydown(event: KeyboardEvent) {
         loading="lazy"
       >
     </NuxtLink>
+
+    <!-- No version line here. It lives on the About page instead
+         ("Breast Educational Resource v{version}"), which is where a reader
+         looks for provenance; in the persistent chrome it was a number on
+         every screen that almost nobody ever needs. -->
   </nav>
 </template>

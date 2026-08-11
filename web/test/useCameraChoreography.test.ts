@@ -350,4 +350,60 @@ describe('useCameraChoreography', () => {
     changeHandler?.()
     expect(camera.prefersReducedMotion.value).toBe(true)
   })
+
+  describe('orbitBy / applyPose (tour-only, design doc D7)', () => {
+    it('sweeps over many frames instead of cancelling itself on the first one', async () => {
+      // nudgeOrbit() calls interrupt(), so it CANNOT drive animate()'s frame
+      // callback -- it would kill the very animation feeding it. orbitBy
+      // exists precisely because of that.
+      //
+      // Uses the outer `clock` (already wired to requestAnimationFrame/
+      // cancelAnimationFrame by the top-level beforeEach) rather than a local
+      // one -- a fresh makeFakeClock() here would shadow the name without
+      // ever being the clock the global rAF stub actually calls.
+      const scene = ref<CopperScene | undefined>(makeFakeScene([0, 0, 10]))
+      const { camera, wrapper } = mountChoreography(makeFakeStage(), scene)
+
+      const done = camera.orbitBy(Math.PI / 2, 400)
+      clock.advance(120)
+      const mid = scene.value!.camera.position.x
+      clock.advance(400)
+      await done
+
+      expect(mid).not.toBe(0)
+      expect(scene.value!.camera.position.x).not.toBe(mid)
+      wrapper.unmount()
+    })
+
+    it('resolves immediately when there is no scene to orbit', async () => {
+      const scene = ref<CopperScene | undefined>(undefined)
+      const { camera, wrapper } = mountChoreography(makeFakeStage(), scene)
+      await expect(camera.orbitBy(Math.PI, 200)).resolves.toBeUndefined()
+      wrapper.unmount()
+    })
+
+    it('applyPose writes the pose through and renders', () => {
+      const stage = makeFakeStage()
+      const scene = ref<CopperScene | undefined>(makeFakeScene([0, 0, 10]))
+      const { camera, wrapper } = mountChoreography(stage, scene)
+
+      camera.applyPose({ position: [1, 2, 3], up: [0, 1, 0], target: [0, 0, 0] })
+      expect(scene.value!.camera.position.x).toBe(1)
+      expect(stage.renderer.value!.render).toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('applyPose takes ownership of an in-flight orbit, so a restore always wins', async () => {
+      const scene = ref<CopperScene | undefined>(makeFakeScene([0, 0, 10]))
+      const { camera, wrapper } = mountChoreography(makeFakeStage(), scene)
+
+      const inFlight = camera.orbitBy(Math.PI, 5000)
+      camera.applyPose({ position: [9, 9, 9], up: [0, 1, 0], target: [0, 0, 0] })
+      clock.advance(6000)
+      await inFlight
+
+      expect(scene.value!.camera.position.x).toBe(9)
+      wrapper.unmount()
+    })
+  })
 })

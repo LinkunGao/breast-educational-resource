@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CaseHeader from '../app/components/content/CaseHeader.vue'
 import ModalityText from '../app/components/content/ModalityText.vue'
-import { splitLede } from '../app/components/content/splitLede'
+import { layOutCopy } from '../app/components/content/groupSentences'
 import StageControls from '../app/components/stage/StageControls.vue'
 import { getModality } from '../content/cases'
 import CasePage from '../app/pages/[slug]/[[modality]].vue'
@@ -118,16 +118,32 @@ describe('case page', () => {
     stubRoute({ slug: 'benign-cyst', modality: 'ultrasound' })
     const wrapper = mountPage()
     const expected = getModality('benign-cyst', 'ultrasound')!.text
-    const { lede, rest } = splitLede(expected)
+    const { lede, body } = layOutCopy(expected)
 
-    // Rendered as separate <p v-html> elements (the lede enlarged, the rest
-    // as body paragraphs), so compare each against splitLede's own output
-    // rather than the whole modality text in one node.
-    const paragraphs = wrapper.findAll('.content-slot .prose-medical > p')
-    expect(paragraphs[0]!.element.innerHTML).toBe(lede)
-    rest.forEach((para, i) => {
-      expect(paragraphs[i + 1]!.element.innerHTML).toBe(para)
-    })
+    /*
+     * `[data-modality-copy]`, not `.prose-medical > p`.
+     *
+     * The column now opens with a modality overline (an interface word, not
+     * clinical copy) and the remaining sentences are laid out as BALANCED
+     * paragraphs rather than one block, so neither "the first <p> is the
+     * lede" nor a 1:1 mapping onto splitLede's output holds any more. The
+     * attribute marks exactly the nodes that carry frozen copy, and the
+     * concatenation below is the assertion that actually matters: whatever
+     * the layout decides, not one character may move.
+     */
+    const paragraphs = wrapper.findAll('.content-slot [data-modality-copy]')
+    expect(paragraphs.map(p => p.element.innerHTML))
+      .toEqual([lede, ...body].filter(Boolean))
+    expect(paragraphs.map(p => p.element.innerHTML).join(' ').replace(/\s+/g, ' '))
+      .toBe(expected.replace(/\s+/g, ' '))
+  })
+
+  it('names the panel the copy belongs to, in that modality\'s ink', () => {
+    stubRoute({ slug: 'benign-cyst', modality: 'ultrasound' })
+    const overline = mountPage().get('.content-slot [data-modality-overline]')
+
+    expect(overline.text()).toBe(getModality('benign-cyst', 'ultrasound')!.label)
+    expect(overline.classes()).toContain('text-ultrasound-ink')
   })
 
   /**

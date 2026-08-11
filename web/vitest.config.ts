@@ -21,6 +21,9 @@ export default defineConfig({
   },
   test: {
     environment: 'happy-dom',
+    // The suites for the functions this app contributed back to copper3d
+    // moved out with them: they live in that repo now and run against
+    // copper3d's own harness. What is left here is this app's own code.
     include: ['test/**/*.test.ts'],
     setupFiles: ['./test/setup.ts'],
   },

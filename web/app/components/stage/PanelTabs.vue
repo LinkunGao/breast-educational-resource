@@ -99,6 +99,7 @@ function onKeydown(event: KeyboardEvent) {
     the quietest available way to say "you are here".
   -->
   <ol
+    data-tour="panel-tabs"
     class="flex items-center gap-1 overflow-x-auto px-4"
     aria-label="Imaging modalities"
     @keydown="onKeydown"

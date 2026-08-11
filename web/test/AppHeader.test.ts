@@ -197,5 +197,69 @@ describe('AppHeader', () => {
       expect(headerGap).toBeDefined()
       expect(groupGap).toBe(headerGap)
     })
+
+    it('About is a filled control, not bare text: it reads as a button without hover', () => {
+      // The bug this fixes: About had only `hover:bg-surface-sunken`, and a
+      // touch device never hovers, so on iPad and phone it was a grey word.
+      // HUD redesign (T3) swapped the heavy black fill for a soft neutral
+      // one; it must still be filled at rest, not reliant on :hover.
+      const wrapper = mountHeader()
+      const about = wrapper.get('[data-header-actions] a[href="/about"]')
+      expect(about.classes()).toContain('bg-surface-sunken')
+      expect(about.classes()).toContain('text-text')
+    })
+
+    it('About keeps its visible label at every width', () => {
+      // It outranks the tour button (Task 8), so it must never collapse to
+      // an icon the way that one does below md.
+      const wrapper = mountHeader()
+      const about = wrapper.get('[data-header-actions] a[href="/about"]')
+      const label = about.get('[data-about-label]')
+      expect(label.text()).toBe('About')
+      expect(label.classes().some(c => c.endsWith(':hidden') || c === 'hidden')).toBe(false)
+    })
+
+    it('About is the last control in the cluster (the end position)', () => {
+      const wrapper = mountHeader()
+      const group = wrapper.get('[data-header-actions]')
+      const last = group.element.lastElementChild as HTMLElement
+      expect(last.getAttribute('href')).toBe('/about')
+    })
+
+    it('About still meets the 44px tap-target floor', () => {
+      const wrapper = mountHeader()
+      const about = wrapper.get('[data-header-actions] a[href="/about"]')
+      expect(about.classes()).toContain('min-h-11')
+    })
+
+    it('the Guided tour button sits before About, so About keeps the end position', () => {
+      const wrapper = mountHeader()
+      const group = wrapper.get('[data-header-actions]')
+      const children = Array.from(group.element.children) as HTMLElement[]
+      const tourIndex = children.findIndex(c => c.hasAttribute('data-tour-open'))
+      const aboutIndex = children.findIndex(c => c.getAttribute('href') === '/about')
+      expect(tourIndex).toBeGreaterThanOrEqual(0)
+      expect(tourIndex).toBeLessThan(aboutIndex)
+    })
+
+    it('the Guided tour button is an outline, never a rose fill', () => {
+      // Rose is the focus semantic; spending it on a permanent button blurs
+      // what "current" means in the sidebar and on the focused panel.
+      const wrapper = mountHeader()
+      const btn = wrapper.get('[data-tour-open]')
+      expect(btn.classes()).toContain('border')
+      expect(btn.classes().some(c => c.startsWith('bg-brand'))).toBe(false)
+    })
+
+    it('the Guided tour label collapses to screen-reader-only below md', () => {
+      const wrapper = mountHeader()
+      expect(wrapper.get('[data-tour-label]').classes()).toContain('max-md:sr-only')
+    })
+
+    it('emits startTour when pressed', async () => {
+      const wrapper = mountHeader()
+      await wrapper.get('[data-tour-open]').trigger('click')
+      expect(wrapper.emitted('startTour')).toHaveLength(1)
+    })
   })
 })

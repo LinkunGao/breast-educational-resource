@@ -81,6 +81,7 @@ const neighbours = computed<{ previous?: Stop, next?: Stop }>(() => {
        broke long headings across three lines. -->
   <nav
     v-if="neighbours.previous || neighbours.next"
+    data-tour="prev-next"
     aria-label="Previous and next view"
     class="@container border-t border-border px-6 py-6"
   >
@@ -92,8 +93,8 @@ const neighbours = computed<{ previous?: Stop, next?: Stop }>(() => {
         <NuxtLink
           :to="neighbours.previous.to"
           class="group flex h-full flex-col rounded-card border border-border bg-surface p-4
-                 transition-[box-shadow,border-color,transform] duration-200
-                 hover:-translate-y-px hover:border-border-strong hover:shadow-sm"
+                 shadow-sm transition-[box-shadow,border-color,transform] duration-200
+                 hover:-translate-y-px hover:border-border-strong hover:shadow-md"
         >
           <span
             class="flex items-center gap-1.5 text-caption font-bold uppercase tracking-[0.14em]"

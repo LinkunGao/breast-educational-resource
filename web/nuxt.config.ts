@@ -1,7 +1,10 @@
+import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import { publicUrl } from './app/composables/assetUrl'
 import { enabledCases } from './content/cases'
 import { LEGACY_ROUTES } from './content/legacyRoutes'
+import { readAppVersion } from './version'
 
 // Mirrors @nuxt/schema's own default resolution for `app.baseURL` (it reads
 // this same env var with this same fallback). Needed at config-eval time
@@ -10,6 +13,17 @@ import { LEGACY_ROUTES } from './content/legacyRoutes'
 // so the apple-touch-icon link below has to be made subpath-aware by hand,
 // same trap `assetBase` documents above.
 const appBaseURL = process.env.NUXT_APP_BASE_URL || '/'
+
+// Resolve package.json path; import.meta.url may not have file: scheme in vitest
+function getPkgPath(): string {
+  try {
+    return fileURLToPath(new URL('./package.json', import.meta.url))
+  }
+  catch {
+    // Fallback for vitest environment where import.meta.url lacks file: scheme
+    return resolve(process.cwd(), 'package.json')
+  }
+}
 
 export default defineNuxtConfig({
   compatibilityDate: '2026-07-28',
@@ -43,6 +57,11 @@ export default defineNuxtConfig({
       // live somewhere else entirely, in which case give an absolute URL
       // (e.g. `https://cdn.example/modelView/`), which is used verbatim.
       assetBase: '/modelView/',
+      // Displayed in the sidebar footer and on the About page. Read from
+      // package.json at build time so there is one source of truth.
+      // Resolved here, where import.meta.url really is a file: URL --
+      // under Vitest it is not, which is why version.ts takes a path.
+      appVersion: readAppVersion(getPkgPath()),
     },
   },
 

@@ -36,7 +36,7 @@ export interface CopperCamera {
   updateProjectionMatrix: () => void
   /**
    * Vertical field of view in degrees. Not used by copper3d's own view
-   * presets -- `fitToView` reads it to work out how far back the camera
+   * presets -- `fitView` reads it to work out how far back the camera
    * has to sit for the object to fill the frame. Present because the
    * underlying object is a three `PerspectiveCamera`; declared here
    * because this type is the app's whole view of it.
@@ -47,19 +47,14 @@ export interface CopperCamera {
 /**
  * `Copper3dTrackballControls` -- copper3d's own TrackballControls variant,
  * which is what the legacy app used everywhere (`controls: "copper3d"`,
- * frontend/plugins/copper.js:20).
- *
- * `copperSceneOnDemond` builds `new OrbitControls(...)` in its constructor
- * and ignores the renderer's `controls` option entirely (that option is read
- * only by the sibling `copperScene` class, dist/bundle.esm.js:83629-83637).
- * So the trackball is installed by REPLACING `scene.controls` after
- * construction -- see `installTrackballControls`. That is safe because
- * `copperSceneOnDemond` reads `this.controls` fresh on every use
- * (`render`/`onWindowResize` call `this.controls.update()`, `loadGltf` writes
- * `this.controls.maxDistance`) and never captures the instance anywhere
- * except the one `change` listener the installer re-registers.
+ * frontend/plugins/copper.js:20) and what
+ * `createScene(name, { controls: 'copper3d' })` builds.
  *
  * Shaped accordingly: `noRotate`/`noPan`, not `enableRotate`/`enablePan`.
+ * They are opposite spellings belonging to different controls classes and
+ * writing the wrong pair lands as an unread field, which is how every flat
+ * view stayed rotatable for so long -- prefer copper3d's `setRotateEnabled` /
+ * `setPanEnabled`, which pick the right one.
  */
 export interface CopperControls {
   rotateSpeed: number
@@ -79,6 +74,13 @@ export interface CopperControls {
    * not an oversight.
    */
   staticMoving: boolean
+  /**
+   * copper3d 3.9.0. Makes the input handlers drive the camera themselves
+   * rather than only recording positions for the next `update()`. Required
+   * for on-demand rendering, and set for you by
+   * `createScene(name, { controls: 'copper3d' })`.
+   */
+  updateOnInput: boolean
   /**
    * TrackballControls caches the canvas's page-relative box in `screen` and
    * only recomputes it here -- unlike OrbitControls, which measures per
@@ -107,13 +109,12 @@ export interface CopperControls {
    * outgoing scene and `true` on the incoming one at every switch.
    */
   enabled: boolean
-  /** Re-registering the scene's own `requestRenderIfNotRequested` is what
-   * keeps on-demand rendering working after the controls are swapped; see
-   * `installTrackballControls`. */
+  /** The scene's constructor registers its own `requestRenderIfNotRequested`
+   * here; that listener is what keeps on-demand rendering alive. */
   addEventListener?: (type: 'change', listener: () => void) => void
   /** Detaches the pointer/wheel listeners the constructor put on the shared
-   * canvas. Called on the OrbitControls instance being replaced -- leaving
-   * it live would give every drag two controls to drive. */
+   * canvas. NOT called on eviction: it ends in
+   * `domElement.style.touchAction = ''`, and every scene shares one canvas. */
   dispose?: () => void
   /**
    * From three's `EventDispatcher`, which `Controls` extends. The one
@@ -142,17 +143,19 @@ export interface NrrdSlice {
 }
 
 /**
- * One of copper3d's three nrrd slice planes. `name` and (for the x/y planes
- * only -- see useModalityScene's `disposeUnusedSlicePlane`) `geometry`/
- * `material` are the only fields read or written here; the object is
- * otherwise opaque and is only ever handed straight back to copper3d
- * (`addObject`, `pickSpecifiedModel`), so this deliberately does not model
- * three's `Mesh` in full -- see this file's header on why no `three` type
- * may cross this boundary. `geometry`/`material` are duck-typed the exact
- * same way `SceneObjectChild`'s already are below, not imported.
+ * One of copper3d's three nrrd slice planes. Only the fields below are read
+ * or written here; the object is otherwise opaque and is handed straight back
+ * to copper3d (`addObject`, `pickSpecifiedModel`), so this deliberately does
+ * not model three's `Mesh` in full -- see this file's header on why no
+ * `three` type may cross this boundary. `geometry`/`material` are duck-typed
+ * the exact same way `SceneObjectChild`'s already are below, not imported.
  */
 export interface NrrdMesh {
   name: string
+  /** three's `Object3D.traverse`, which is how `disposeObject3D` frees the
+   *  x/y planes this app never displays. */
+  traverse: (fn: (child: SceneObjectChild) => void) => void
+  isMesh?: boolean
   geometry?: { dispose: () => void }
   /** `Material.dispose()` does not cascade into `map`: a slice plane's
    * material wraps a canvas-backed `Texture` (its `map`) that needs its own
@@ -173,7 +176,7 @@ export interface NrrdVolume {
   /**
    * three's `Volume.computeMinMax()` result, cached on the instance. The
    * display window is set to exactly these (bundle.esm.js:61725), which is
-   * why the tissue comes out dark -- see `sliceExposure.ts`.
+   * why the tissue comes out dark -- see `ts/Utils/volumeExposure.ts`.
    */
   min: number
   max: number
@@ -301,22 +304,50 @@ export interface CopperScene extends CopperBaseScene {
     loadingBar: LoadingBar,
     segmentation: boolean,
     callback: (volume: NrrdVolume, meshes: NrrdMeshes, slices: { z: NrrdSlice }) => void,
-    opts?: { openGui?: boolean },
+    opts?: {
+      openGui?: boolean
+      /**
+       * copper3d 3.9.0. Which slice planes to extract; defaults to all
+       * three. `extractSlice` walks the whole volume per axis and the result
+       * is retained on `volume.sliceList` for the volume's lifetime, so an
+       * axis nothing displays is a full pass over a 10-50MB buffer plus a
+       * slice plane that is never freed.
+       *
+       * The omitted axes come back `undefined` on `meshes`/`slices` --
+       * copper3d's own types still declare all three, so a caller that
+       * narrows this is responsible for reading only what it asked for.
+       * `NrrdMeshes` below is narrowed to `z` for exactly that reason.
+       */
+      axes?: readonly ('x' | 'y' | 'z')[]
+      /** copper3d 3.9.0. Fires in addition to the built-in loading bar.
+       *  `total` is 0 when the server sent no Content-Length. */
+      onProgress?: (event: ProgressEvent) => void
+      /** copper3d 3.9.0. Before it there was no error channel at all, and a
+       *  failed volume was indistinguishable from a slow one. */
+      onError?: (error: unknown) => void
+    },
   ) => void
   /**
-   * NOT `loadPureGLB`. `copperSceneOnDemond` (Scene/copperSceneOnDemond.d.ts:9,
-   * dist/bundle.esm.js:84295-84319) only exposes `loadGltf(url, callback)` --
-   * no `opts`/`onError`. `loadPureGLB` (with the color/enhanceMaterial/onError
-   * signature) exists only on the sibling `copperScene` class
-   * (Scene/copperScene.d.ts:21, dist/bundle.esm.js:83678), which
-   * `copperRendererOnDemond.createScene()` never constructs -- confirmed by
-   * reading its implementation (dist/bundle.esm.js:84344-84355), which always
-   * does `new copperSceneOnDemond(...)`. Both `loadGltf` and `loadPureGLB`
-   * route through the same `copperGltfLoader(this.renderer)` factory
-   * (Loader/copperGltfLoader.d.ts:3), so Draco decoding is unaffected --
-   * only `loadPureGLB`'s post-load PBR material tweaks are unavailable here.
+   * Recentres the group on the origin (every preset in `public/modelView/**`
+   * targets `[0,0,0]`), bounds the dolly with `controls.maxDistance`, and
+   * adds it to the scene. Its own "frame the new model" camera write only
+   * runs while copper3d's `cameraPositionFlag` is unset -- `load()` applies
+   * the view preset immediately afterwards anyway, and by the time §7.1's
+   * morph runs `loadView` has already set the flag.
+   *
+   * `opts` is copper3d 3.9.0. Before it, the third argument three's
+   * `GLTFLoader.load` treats as *onProgress* held an empty function named
+   * `error`, and there was no fourth -- so a 404, a CORS refusal or a
+   * malformed GLB invoked nothing at all and the load simply hung.
    */
-  loadGltf: (url: string, callback?: (content: SceneObject) => void) => void
+  loadGltf: (
+    url: string,
+    callback?: (content: SceneObject) => void,
+    opts?: {
+      onProgress?: (event: ProgressEvent) => void
+      onError?: (error: unknown) => void
+    },
+  ) => void
   /**
    * Not `loadViewUrl`. That method (Scene/baseScene.js:77-87) is a raw
    * `XMLHttpRequest` with no callback, event, or promise of any kind --
@@ -405,12 +436,23 @@ export interface CopperRenderer {
    */
   getSceneByName: (name: string) => CopperScene | undefined
   /**
-   * `createScene(name)` (Renderer/copperRendererOnDemond.js:25-33) checks
-   * `sceneMap[name]` and, if unset, synchronously constructs the new scene
-   * and stores it there *before* returning -- registration happens whether
-   * or not any content ever successfully loads into that scene afterward.
+   * `createScene(name)` checks `sceneMap[name]` and, if unset, synchronously
+   * constructs the new scene and stores it there *before* returning --
+   * registration happens whether or not any content ever successfully loads
+   * into that scene afterward.
+   *
+   * `opt` is copper3d 3.9.0. `{ controls: 'copper3d' }` builds the scene
+   * with `Copper3dTrackballControls` (and turns on its `updateOnInput`)
+   * instead of the default `OrbitControls`; before 3.9.0 this class
+   * hardcoded OrbitControls and the instance had to be swapped out
+   * afterwards. The renderer's own `options.controls` is deliberately not
+   * consulted -- it never had any effect here, so honouring it now would
+   * change behaviour for anyone who set it and never noticed.
    */
-  createScene: (name: string) => CopperScene | undefined
+  createScene: (
+    name: string,
+    opt?: { controls?: 'copper3d' | 'orbit' | 'trackball' },
+  ) => CopperScene | undefined
   /**
    * `copperRendererOnDemond.sceneMap` (Renderer/copperRendererOnDemond.js:
    * 2-3,15-16,25-33) is declared `private` in the `.d.ts`
@@ -454,28 +496,21 @@ export interface CopperRenderer {
   dispose: () => void
 }
 
-/** The parts of `import('copper3d')` we use. */
+/**
+ * The parts of `import('copper3d')` reached through the module handle rather
+ * than as plain imports -- the classes, which have to be constructed against
+ * copper3d's own copy of three, and the loading bar `loadNrrd` writes into.
+ *
+ * Everything that is a free function (`fitView`, `beginGesture`,
+ * `addVolumeBoundingBox`, the dispose and crossfade helpers, ...) is imported
+ * normally through `copperExtras.ts` instead.
+ */
 export interface CopperModule {
   copperRendererOnDemond: new (
     container: HTMLDivElement,
     options?: Record<string, unknown>,
   ) => CopperRenderer
   loading: (svg?: string) => LoadingBar
-  /** copper3d's own TrackballControls variant, a named export
-   * (bundle.esm.js:105359). Taken from the module rather than from
-   * `three/examples/jsm/controls/TrackballControls.js` so the controls and
-   * the camera they drive come from the same copy of three -- the one thing
-   * `loadGltfModel`'s header warns is not guaranteed to interoperate. */
-  Copper3dTrackballControls: new (
-    camera: CopperCamera,
-    domElement: HTMLElement,
-  ) => CopperControls
-  /**
-   * Adds a `BoxHelper` around `boxCube`, transformed into the volume's own
-   * space (bundle.esm.js `addBoxHelper`). This is the bounding box the
-   * legacy app drew around every NRRD slice plane.
-   */
-  addBoxHelper: (scene: CopperScene, volume: { matrix: unknown }, boxCube?: unknown) => void
 }
 
 /** useCopperStage's return contract; Tasks 8-10 depend on it. */

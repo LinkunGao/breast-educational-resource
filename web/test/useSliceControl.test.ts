@@ -199,6 +199,42 @@ describe('useSliceControl', () => {
   })
 
   /**
+   * A repaint is not a frame. This redraws the slice's backing canvas, and
+   * under on-demand rendering nothing uploads that texture unless a frame is
+   * asked for -- the stage keeps showing the previous slice.
+   *
+   * The drag used to ride useCopperStage's input pump for this. That pump is
+   * gone (copper3d 3.9.0 fixed the camera deadlock it existed for at the
+   * source), and a scrub suppresses rotation for its whole gesture anyway,
+   * so the controls dispatch no `change` either. Nothing was left to
+   * schedule the frame and the image stopped updating mid-drag.
+   */
+  it('asks for a frame after repainting, since a repaint is not a frame', () => {
+    const frames = makeFrameQueue()
+    const scene = makeScene(true)
+    const { el } = mountControl(shallowRef(scene), shallowRef(makeSliceState({ index: 10 })), instantRun())
+
+    el.dispatchEvent(pointer('pointerdown', { clientY: 100 }))
+    el.dispatchEvent(pointer('pointermove', { clientY: 140 }))
+    frames.flushFrame()
+
+    expect(scene.requestRenderIfNotRequested).toHaveBeenCalled()
+  })
+
+  it('does not ask for a frame when the slice number did not change', () => {
+    const frames = makeFrameQueue()
+    const scene = makeScene(true)
+    const { el } = mountControl(shallowRef(scene), shallowRef(makeSliceState({ index: 10 })), instantRun())
+
+    el.dispatchEvent(pointer('pointerdown', { clientY: 100 }))
+    // 1px at 0.25 slices/px rounds back to the slice already on screen.
+    el.dispatchEvent(pointer('pointermove', { clientY: 101 }))
+    frames.flushFrame()
+
+    expect(scene.requestRenderIfNotRequested).not.toHaveBeenCalled()
+  })
+
+  /**
    * The drag distance still accumulates across moves -- four 1px moves at
    * 0.25 slices each are one whole slice, not nothing -- but the PAINTED
    * index is always a whole slice, and only one repaint happens per frame
